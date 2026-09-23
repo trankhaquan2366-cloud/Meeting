@@ -1,0 +1,16 @@
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\bin\Debug\net11.0\MyProject.Application.deps.json
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\bin\Debug\net11.0\MyProject.Application.dll
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\bin\Debug\net11.0\MyProject.Application.pdb
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\bin\Debug\net11.0\MyProject.Domain.dll
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\bin\Debug\net11.0\MyProject.Domain.pdb
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.csproj.AssemblyReference.cache
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.AssemblyInfoInputs.cache
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.AssemblyInfo.cs
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.csproj.CoreCompileInputs.cache
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.sourcelink.json
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProjec.601C7CDF.Up2Date
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.dll
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\refint\MyProject.Application.dll
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\MyProject.Application.pdb
+C:\Users\ADMIN\Desktop\Meeting-\MyProject.Application\obj\Debug\net11.0\ref\MyProject.Application.dll
