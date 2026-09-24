@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoomSync - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- CDN Thư viện FullCalendar -->
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+</head>
+<body>
+
+    <!-- Header Navigation với Thanh User Profile Xịn Xò -->
+    <header class="navbar">
+        <div class="logo">
+            <span class="logo-icon">RS</span>
+            <h2>RoomSync</h2>
+        </div>
+
+        <div class="user-profile">
+            <div class="avatar">A</div>
+            <div class="user-details">
+                <span class="user-name" id="userGreeting">Admin User</span>
+                <span class="user-role">Quản trị viên</span>
+            </div>
+            <button onclick="logout()" class="btn-logout" title="Đăng xuất khỏi hệ thống">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+                Đăng xuất
+            </button>
+        </div>
+    </header>
+
+    <div class="container">
+        
+        <!-- SECTION 1: DANH SÁCH PHÒNG HỌP -->
+        <div class="section-header">
+            <h2>Danh Sách Phòng Họp</h2>
+            <button id="addRoomBtn" onclick="openModal()" class="btn-primary" style="display: none; width: auto;">
+                + Thêm Phòng (Admin)
+            </button>
+        </div>
+
+        <div class="grid-rooms" id="roomList">
+            <!-- Render danh sách phòng qua JS -->
+        </div>
+
+        <!-- SECTION 2: FORM ĐẶT LỊCH PHÒNG HỌP -->
+        <div class="booking-card">
+            <h2>Đặt Lịch Phòng Họp</h2>
+            <form id="bookingForm" style="margin-top: 16px;">
+                <div class="form-group">
+                    <label>Tiêu đề cuộc họp</label>
+                    <input type="text" id="bookTitle" class="form-control" placeholder="Ví dụ: Họp Sprint Review Quý 3..." required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group flex-1">
+                        <label>Chọn phòng</label>
+                        <select id="bookRoomSelect" class="form-control" required>
+                            <option value="">-- Chọn phòng --</option>
+                        </select>
+                    </div>
+                    <div class="form-group flex-1">
+                        <label>Ngày họp</label>
+                        <input type="date" id="bookDate" class="form-control" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group flex-1">
+                        <label>Giờ bắt đầu</label>
+                        <input type="time" id="bookStartTime" class="form-control" value="09:00" required>
+                    </div>
+                    <div class="form-group flex-1">
+                        <label>Giờ kết thúc</label>
+                        <input type="time" id="bookEndTime" class="form-control" value="10:30" required>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary" style="width: auto; padding: 12px 28px;">
+                    Xác Nhận Đặt Lịch
+                </button>
+            </form>
+        </div>
+
+        <!-- SECTION 3: TỜ LỊCH HỌP DẠNG TUẦN / NGÀY -->
+        <div class="calendar-card">
+            <h2>Tờ Lịch Họp (Xem Theo Tuần/Ngày)</h2>
+            <div id="calendar" style="margin-top: 16px;"></div>
+        </div>
+
+    </div>
+
+    <!-- Modal Thêm Phòng dành cho Admin -->
+    <div id="addRoomModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Thêm Phòng Họp Mới</h3>
+            <form id="addRoomForm" style="margin-top: 12px;">
+                <div class="form-group">
+                    <label>Tên phòng</label>
+                    <input type="text" id="newRoomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B" required>
+                </div>
+                <div class="form-group">
+                    <label>Vị trí / Tầng</label>
+                    <input type="text" id="newRoomFloor" class="form-control" placeholder="Ví dụ: Tầng 4" required>
+                </div>
+                <div class="form-group">
+                    <label>Sức chứa</label>
+                    <input type="text" id="newRoomCapacity" class="form-control" placeholder="Ví dụ: 10-15 người" required>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" onclick="closeModal()" class="btn-outline">Hủy</button>
+                    <button type="submit" class="btn-primary" style="width: auto;">Thêm Phòng</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SCRIPT CHÍNH XỬ LÝ DASHBOARD -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

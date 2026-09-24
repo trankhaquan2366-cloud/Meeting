@@ -4,82 +4,62 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Đăng Nhập & Đăng Ký</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-
     <div class="login-container">
         <div class="login-card">
-            <!-- Brand Logo -->
             <div class="brand-logo">
                 <div class="logo-icon">RS</div>
                 <h2>RoomSync</h2>
             </div>
 
-            <!-- Tab Switcher (Đăng nhập / Đăng ký) -->
             <div class="tab-header">
                 <button id="tabLoginBtn" class="tab-btn active" onclick="switchTab('login')">Đăng Nhập</button>
                 <button id="tabRegisterBtn" class="tab-btn" onclick="switchTab('register')">Đăng Ký</button>
             </div>
 
-            <!-- FORM 1: ĐĂNG NHẬP -->
             <form id="loginForm">
                 <h3 style="font-size: 18px; margin-bottom: 4px;">Đăng nhập vào tài khoản</h3>
                 <p style="color: #64748b; font-size: 13px; margin-bottom: 16px;">Chào mừng trở lại. Nhập thông tin để tiếp tục.</p>
-
+                
                 <div class="form-group">
                     <label>Email công ty</label>
                     <input type="email" id="loginEmail" class="form-control" placeholder="ten@congty.com" required>
                 </div>
-
+                
                 <div class="form-group">
                     <label>Mật khẩu</label>
                     <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required>
                 </div>
-
-                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 20px;">
-                    <label><input type="checkbox"> Ghi nhớ đăng nhập</label>
-                    <a href="#" style="color: #2563eb; text-decoration: none;">Quên mật khẩu?</a>
-                </div>
-
+                
                 <button type="submit" class="btn-primary">Đăng Nhập</button>
             </form>
 
-            <!-- FORM 2: ĐĂNG KÝ (Ẩn mặc định) -->
             <form id="registerForm" style="display: none;">
                 <h3 style="font-size: 18px; margin-bottom: 4px;">Tạo tài khoản mới</h3>
                 <p style="color: #64748b; font-size: 13px; margin-bottom: 16px;">Điền thông tin để đăng ký sử dụng RoomSync.</p>
-
+                
                 <div class="form-group">
                     <label>Họ và tên</label>
                     <input type="text" id="regFullName" class="form-control" placeholder="Nguyễn Văn A" required>
                 </div>
-
+                
                 <div class="form-group">
                     <label>Email công ty</label>
                     <input type="email" id="regEmail" class="form-control" placeholder="ten@congty.com" required>
                 </div>
-
+                
                 <div class="form-group">
                     <label>Mật khẩu</label>
                     <input type="password" id="regPassword" class="form-control" placeholder="Tối thiểu 6 ký tự" required minlength="6">
                 </div>
-
-                <div class="form-group">
-                    <label>Xác nhận mật khẩu</label>
-                    <input type="password" id="regConfirmPassword" class="form-control" placeholder="Nhập lại mật khẩu" required minlength="6">
-                </div>
-
+                
                 <button type="submit" class="btn-primary" style="background-color: #16a34a;">Tạo Tài Khoản</button>
             </form>
-
-            <p style="text-align: center; font-size: 12px; color: #64748b; margin-top: 20px;">
-                Cần trợ giúp? <a href="#" style="color: #2563eb;">Liên hệ quản trị viên</a>
-            </p>
         </div>
-        <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">© 2026 RoomSync Inc. Bảo lưu mọi quyền.</p>
     </div>
 
-    <script src="js/login.js"></script>
+    <script src="/static/js/login.js"></script>
 </body>
 </html>
