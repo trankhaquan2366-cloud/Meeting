@@ -4,7 +4,7 @@ from app.core.database import Base
 
 
 class User(Base):
-    """Người dùng hệ thống."""
+    """Model đại diện cho bảng người dùng trong hệ thống."""
 
     __tablename__ = "users"
 
@@ -15,8 +15,8 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False, comment="Mật khẩu đã băm (PBKDF2-SHA256)")
     role = Column(String(20), nullable=False, default="user", comment="Vai trò: admin/user")
     is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} username={self.username!r}>"

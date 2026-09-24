@@ -2,22 +2,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
+import app.models  # Đảm bảo tất cả models (User, Room, Meeting) được đăng ký trước khi tạo bảng
+from app.routers import auth
 
-# Import models de create_all nhan biet cac bang (users/rooms/meetings)
-import app.models  # noqa: F401
-
-# Tao cac bang DB neu chua ton tai (schema cu the trong schema.sql)
+# Tự động tạo các bảng trong MySQL nếu chưa tồn tại
 Base.metadata.create_all(bind=engine)
 
-from app.routers import auth  # noqa: E402
-
+# Khởi tạo ứng dụng FastAPI
 app = FastAPI(
     title="Meeting Management System API",
     description="Hệ thống quản lý phòng họp và lịch họp",
     version="1.0.0",
 )
 
-# Cau hinh CORS de cho phép Frontend truy cap
+# Cấu hình CORS cho phép kết nối từ Frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,6 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Kết nối các Router API
 app.include_router(auth.router)
 
 
