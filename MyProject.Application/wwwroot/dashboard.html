@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>RoomSync - Quản Lý Phòng Họp</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Thư viện Lịch FullCalendar JS & CSS -->
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Quản Lý Phòng Họp</h1>
+
+        <!-- SECTION 1: DANH SÁCH PHÒNG HỌP -->
+        <h2 style="margin-top: 24px;">Danh Sách Phòng</h2>
+        <div class="grid-rooms" id="roomList">
+            <!-- Dữ liệu phòng sẽ tự động sinh ra từ JS -->
+        </div>
+
+        <!-- SECTION 2: FORM ĐẶT PHÒNG HỌP -->
+        <div style="background: white; padding: 24px; border-radius: 16px; margin-top: 40px; border: 1px solid #e2e8f0;">
+            <h2>Đặt Lịch Phòng Họp</h2>
+            <form id="bookingForm" style="margin-top: 16px;">
+                <div class="form-group">
+                    <label>Tiêu đề cuộc họp</label>
+                    <input type="text" id="bookTitle" class="form-control" placeholder="Ví dụ: Họp triển khai dự án" required>
+                </div>
+                <div style="display: flex; gap: 16px;" class="form-group">
+                    <div style="flex: 1;">
+                        <label>Chọn phòng</label>
+                        <select id="bookRoom" class="form-control" required></select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label>Ngày họp</label>
+                        <input type="date" id="bookDate" class="form-control" required>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 16px;" class="form-group">
+                    <div style="flex: 1;">
+                        <label>Giờ bắt đầu</label>
+                        <input type="time" id="startTime" class="form-control" required>
+                    </div>
+                    <div style="flex: 1;">
+                        <label>Giờ kết thúc</label>
+                        <input type="time" id="endTime" class="form-control" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary" style="width: auto; padding: 10px 24px;">Xác Nhận Đặt Lịch</button>
+            </form>
+        </div>
+
+        <!-- SECTION 3: TỜ LỊCH HỌP (XEM THEO TUẦN / NGÀY) -->
+        <h2 style="margin-top: 40px; margin-bottom: 16px;">Lịch Họp Chi Tiết</h2>
+        <div style="background: white; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0;">
+            <div id="calendar"></div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

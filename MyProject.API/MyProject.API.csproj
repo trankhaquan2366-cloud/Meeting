@@ -1,18 +1,35 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup>
-    <TargetFramework>net11.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-preview.2.26159.112" />
-  </ItemGroup>
+	<ItemGroup>
+	  <Content Remove="wwwroot\css\style.css" />
+	  <Content Remove="wwwroot\dashboard.html" />
+	  <Content Remove="wwwroot\index.html" />
+	  <Content Remove="wwwroot\js\app.js" />
+	  <Content Remove="wwwroot\js\login.js" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\MyProject.Application\MyProject.Application.csproj" />
-    <ProjectReference Include="..\MyProject.Infrastructure\MyProject.Infrastructure.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+	  <None Include="wwwroot\css\style.css" />
+	  <None Include="wwwroot\dashboard.html" />
+	  <None Include="wwwroot\index.html" />
+	  <None Include="wwwroot\js\app.js" />
+	  <None Include="wwwroot\js\login.js" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+		<PackageReference Include="Microsoft.OpenApi" Version="2.12.2" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\MyProject.Application\MyProject.Application.csproj" />
+		<ProjectReference Include="..\MyProject.Infrastructure\MyProject.Infrastructure.csproj" />
+	</ItemGroup>
 
 </Project>
