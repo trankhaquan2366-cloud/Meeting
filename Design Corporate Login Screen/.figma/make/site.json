@@ -1,0 +1,10 @@
+{
+  "description": "Streamline corporate meeting room bookings with a secure, user-friendly platform designed for efficient scheduling and management across devices.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

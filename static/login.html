@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập - Hệ thống Quản lý Phòng họp</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-card { background: #ffffff; padding: 2.5rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); width: 100%; max-width: 400px; }
+        .login-header { text-align: center; margin-bottom: 2rem; }
+        .login-header h2 { color: #1e293b; font-size: 1.75rem; font-weight: 700; margin-bottom: 0.5rem; }
+        .login-header p { color: #64748b; font-size: 0.9rem; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: #334155; font-size: 0.875rem; font-weight: 600; }
+        .form-group input { width: 100%; padding: 0.75rem 1rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; transition: border-color 0.2s; }
+        .form-group input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+        .btn-submit { width: 100%; padding: 0.85rem; background-color: #4f46e5; color: white; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background-color 0.2s; }
+        .btn-submit:hover { background-color: #4338ca; }
+        .alert-box { padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.875rem; margin-bottom: 1rem; display: none; }
+        .alert-error { background-color: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+        .alert-success { background-color: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    </style>
+</head>
+<body>
+
+    <div class="login-card">
+        <div class="login-header">
+            <h2>Đăng Nhập</h2>
+            <p>Hệ Thống Quản Lý Phòng Họp</p>
+        </div>
+
+        <div id="alertBox" class="alert-box"></div>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Tên đăng nhập</label>
+                <input type="text" id="username" placeholder="Nhập tên đăng nhập..." required>
+            </div>
+            <div class="form-group">
+                <label for="password">Mật khẩu</label>
+                <input type="password" id="password" placeholder="Nhập mật khẩu..." required>
+            </div>
+            <button type="submit" class="btn-submit" id="btnSubmit">Đăng Nhập</button>
+        </form>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const alertBox = document.getElementById('alertBox');
+        const btnSubmit = document.getElementById('btnSubmit');
+
+        function showAlert(message, isSuccess = false) {
+            alertBox.style.display = 'block';
+            alertBox.className = `alert-box ${isSuccess ? 'alert-success' : 'alert-error'}`;
+            alertBox.innerText = message;
+        }
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+
+            btnSubmit.innerText = "Đang xử lý...";
+            btnSubmit.disabled = true;
+            alertBox.style.display = 'none';
+
+            try {
+                // Gọi API Đăng nhập từ FastAPI
+                const response = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // 1. Lưu JWT Token và Vai trò vào localStorage (Chuẩn Luồng Kỹ Thuật)
+                    localStorage.setItem('access_token', data.access_token);
+                    localStorage.setItem('user_role', data.role);
+                    localStorage.setItem('username', data.username);
+
+                    showAlert(`Đăng nhập thành công! Vai trò: ${data.role.toUpperCase()}`, true);
+
+                    // 2. Phân quyền điều hướng màn hình dựa theo Role
+                    setTimeout(() => {
+                        if (data.role === 'admin') {
+                            alert("Chuyển hướng đến Màn hình Quản trị (Admin Dashboard)");
+                        } else {
+                            alert("Chuyển hướng đến Trang Danh sách phòng & Đặt lịch");
+                        }
+                    }, 1000);
+                } else {
+                    showAlert(data.detail || "Đăng nhập thất bại. Vui lòng thử lại!");
+                }
+            } catch (err) {
+                showAlert("Không thể kết nối đến Server Backend!");
+            } finally {
+                btnSubmit.innerText = "Đăng Nhập";
+                btnSubmit.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
