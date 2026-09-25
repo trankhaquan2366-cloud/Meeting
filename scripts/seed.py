@@ -29,7 +29,7 @@ ADMIN_ACCOUNT = {
     "email": "admin@example.com",
     "full_name": "Quản trị viên",
     "role": "admin",
-    "password": ADMIN_PASSWORD,
+    "password": "ADMIN_PASSWORD",
 }
 
 NORMAL_ACCOUNTS = [
