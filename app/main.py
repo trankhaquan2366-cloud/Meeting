@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
 import app.models  # Đảm bảo tất cả models (User, Room, Meeting) được đăng ký trước khi tạo bảng
-from app.routers import auth
+from app.routers import auth, meeting
 
 # Tự động tạo các bảng trong MySQL nếu chưa tồn tại
 Base.metadata.create_all(bind=engine)
@@ -26,7 +26,7 @@ app.add_middleware(
 
 # Kết nối các Router API
 app.include_router(auth.router)
-
+app.include_router(meeting.router)
 
 @app.get("/", tags=["Root"])
 def read_root():
