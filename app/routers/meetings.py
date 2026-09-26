@@ -22,10 +22,17 @@ def list_rooms(db: Session = Depends(get_db)):
 
 @router.post(
     "/book",
+ feature/meeting-api
+    response_model=List[MeetingResponse],  # <--- Đổi thành List[MeetingResponse]
+    status_code=status.HTTP_201_CREATED,
+    summary="Việc 2 & 3: Đặt phòng họp (Hỗ trợ đơn & định kỳ)",
+    description="Tạo cuộc họp mới hoặc chuỗi lịch định kỳ. Hệ thống sẽ tự động chặn và rollback toàn bộ nếu bị trùng khung giờ bất kỳ ngày nào."
+
     response_model=MeetingResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Việc 2 & 3: Đặt phòng họp (Có kiểm tra trùng lịch)",
     description="Tạo cuộc họp mới. Hệ thống sẽ tự động chặn nếu bị trùng khung giờ phòng họp."
+ main
 )
 def book_room(payload: MeetingCreateRequest, db: Session = Depends(get_db)):
     # Tạm thời chưa bắt buộc JWT token, để organizer_id=1 (Admin) thử nghiệm
