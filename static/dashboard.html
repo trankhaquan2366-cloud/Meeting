@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
+    <link rel="stylesheet" href="css/style.css?v=9">
+</head>
+<body>
+    <div class="app-layout" id="appLayout">
+        <!-- SIDEBAR CHUẨN GỌN GÀNG -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand" onclick="switchToOverview()" title="Quay về Trang chủ">
+                <span class="logo-icon">RS</span>
+                <span class="brand-name">RoomSync</span>
+            </div>
+            
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span class="nav-text">Tổng quan</span>
+                </a>
+                <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path></svg>
+                    <span class="nav-text">Phòng họp</span>
+                </a>
+                <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    <span class="nav-text">Đặt lịch của tôi</span>
+                </a>
+                <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span class="nav-text">Cài đặt</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-user" onclick="navigateToSettings()" title="Cài đặt tài khoản">
+                <div class="user-avatar" id="avatarText">N</div>
+                <div class="user-info">
+                    <span class="user-name" id="userNameDisplay">Nguyễn Minh Tuấn</span>
+                    <span class="user-role" id="userRoleBadge">Quản trị viên</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content" id="mainContent">
+            <!-- TOPBAR VỚI NÚT 3 GẠCH VÀ TÌM KIẾM -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <!-- NÚT 3 GẠCH CHUYÊN NGHIỆP TRÊN TOPBAR -->
+                    <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                    </button>
+                    
+                    <div class="search-box" id="topbarSearchContainer">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..." oninput="handleSearch()">
+                    </div>
+                </div>
+                
+                <div class="topbar-right">
+                    <div class="notification-wrapper">
+                        <button class="icon-btn" onclick="toggleNotificationPopup()" title="Thông báo">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                        </button>
+                        <div id="notificationPopup" class="notification-popup" style="display: none;">
+                            <h4>Thông báo mới</h4>
+                            <ul>
+                                <li>📌 Lịch họp Phòng Hội Đồng bắt đầu sau 15 phút.</li>
+                                <li>✅ Bạn đã đặt thành công Phòng Sáng Tạo.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="user-profile-header" onclick="navigateToSettings()" title="Bấm để vào Cài đặt">
+                        <div class="header-avatar" id="headerAvatarText">N</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content-body">
+                <!-- VIEW 1: TỔNG QUAN -->
+                <div id="viewOverview" class="tab-view">
+                    <!-- HERO BANNER TỔNG QUAN HOÀNH TRÁNG (400PX) -->
+                    <div class="hero-banner-overview">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Hệ thống Quản lý Doanh nghiệp</span>
+                            <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
+                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
+                            <div class="hero-actions">
+                                <button class="btn-hero-primary" onclick="scrollToRooms()">Đặt phòng ngay</button>
+                                <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="page-header" id="roomsSection">
+                        <div>
+                            <h2>Phòng họp hiện có</h2>
+                            <p class="subtitle" id="currentDateText">Đang tải...</p>
+                        </div>
+                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng phòng họp</span>
+                            <div class="stat-value" id="statTotal">0</div>
+                            <span class="stat-sub text-gray">+2 so với tháng trước</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Đang sử dụng</span>
+                            <div class="stat-value text-orange" id="statInUse">0</div>
+                            <span class="stat-sub text-orange" id="statCapacityText">0% công suất</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Còn trống hôm nay</span>
+                            <div class="stat-value text-green" id="statAvailable">0</div>
+                            <span class="stat-sub text-gray" id="statRatioText">trong 0 phòng</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Lượt đặt trong tuần</span>
+                            <div class="stat-value text-purple" id="statBookings">142</div>
+                            <span class="stat-sub text-gray">↑ 12% so với tuần trước</span>
+                        </div>
+                    </div>
+
+                    <div class="filter-wrapper">
+                        <div class="filter-left">
+                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span id="filterDateLabel">26/09/2026</span></button>
+                            <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
+                                <option value="all">Sức chứa ˅</option>
+                                <option value="small">Nhỏ (1 - 5 người)</option>
+                                <option value="medium">Vừa (6 - 12 người)</option>
+                                <option value="large">Lớn (15+ người)</option>
+                            </select>
+                            <div class="filter-chips">
+                                <button class="chip active" onclick="setFilter('all', this)">Tất cả</button>
+                                <button class="chip" onclick="setFilter('Màn hình', this)">Màn hình</button>
+                                <button class="chip" onclick="setFilter('Wifi', this)">Wifi</button>
+                                <button class="chip" onclick="setFilter('Video', this)">Video</button>
+                                <button class="chip" onclick="setFilter('Đồ uống', this)">Đồ uống</button>
+                            </div>
+                        </div>
+                        <div class="filter-right">
+                            <span class="status-summary"><strong id="summaryAvailable">0</strong> còn trống</span>
+                            <span class="status-summary"><strong id="summaryInUse">0</strong> đã đặt</span>
+                        </div>
+                    </div>
+
+                    <div class="room-grid" id="roomGridOverview"></div>
+                </div>
+
+                <!-- VIEW 2: PHÒNG HỌP (BANNER BAN NĂNG 220PX) -->
+                <div id="viewRooms" class="tab-view" style="display: none;">
+                    <div class="hero-banner-rooms">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Không gian làm việc</span>
+                            <h2>Danh Mục & Không Gian Phòng Họp</h2>
+                            <p>Khám phá hệ thống phòng họp được trang bị đầy đủ thiết bị công nghệ hiện đại.</p>
+                        </div>
+                    </div>
+
+                    <div class="page-header">
+                        <h2>Tất cả phòng họp</h2>
+                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
+
+                    <div class="room-grid" id="roomGridRooms"></div>
+                </div>
+
+                <!-- VIEW 3: ĐẶT LỊCH CỦA TÔI -->
+                <div id="viewMyBookings" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>Lịch họp đã đặt của tôi</h2>
+                    </div>
+                    <div class="table-card">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Phòng họp</th>
+                                    <th>Thời gian</th>
+                                    <th>Trạng thái</th>
+                                    <th>Hành động</th>
+                                </tr>
+                            </thead>
+                            <tbody id="myBookingsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- VIEW 4: CÀI ĐẶT -->
+                <div id="viewSettings" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>Cài đặt tài khoản</h2>
+                    </div>
+                    <div class="settings-card">
+                        <div class="settings-profile-header">
+                            <div class="user-avatar-large" id="settingsAvatar">N</div>
+                            <div>
+                                <h3 id="settingsName">Nguyễn Minh Tuấn</h3>
+                                <p id="settingsRole" class="subtitle">Quản trị viên</p>
+                            </div>
+                        </div>
+
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>Họ và tên</label>
+                                <input type="text" class="form-control" id="settingsInputName" value="Nguyễn Minh Tuấn">
+                            </div>
+                            <div class="form-group">
+                                <label>Email liên hệ</label>
+                                <input type="email" class="form-control" id="settingsInputEmail" value="admin@congty.com" readonly>
+                            </div>
+                            <button class="btn-save" onclick="alert('Đã cập nhật thông tin!')">Lưu thay đổi</button>
+                        </div>
+
+                        <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
+
+                        <div class="logout-section">
+                            <h4>Phiên đăng nhập</h4>
+                            <p class="subtitle" style="margin-bottom: 12px;">Bấm nút bên dưới để thoát khỏi hệ thống RoomSync.</p>
+                            <button onclick="logout()" class="btn-logout-danger">🚪 Đăng xuất khỏi hệ thống</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODALS -->
+    <div id="scheduleModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="scheduleRoomTitle">Lịch trình phòng họp</h3>
+            <p class="subtitle" style="margin-bottom: 16px;">Danh sách khung giờ hoạt động trong ngày</p>
+            <div id="timelineContainer" class="timeline-list"></div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" onclick="closeScheduleModal()" class="btn-cancel">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="bookModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="bookModalTitle">Đặt phòng họp</h3>
+            <form onsubmit="handleBookSubmit(event)">
+                <input type="hidden" id="bookRoomId">
+                <div class="form-group" style="margin-top: 12px;">
+                    <label>Khung giờ họp</label>
+                    <select id="bookTimeSlot" class="form-control" required>
+                        <option value="08:00 - 09:30">08:00 - 09:30</option>
+                        <option value="10:00 - 11:30">10:00 - 11:30</option>
+                        <option value="13:30 - 15:00">13:30 - 15:00</option>
+                        <option value="15:30 - 17:00">15:30 - 17:00</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Nội dung cuộc họp</label>
+                    <input type="text" id="bookPurpose" class="form-control" placeholder="Ví dụ: Họp báo cáo tiến độ" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeBookModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Xác nhận đặt</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="roomModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
+            <form id="roomForm" onsubmit="handleFormSubmit(event)">
+                <input type="hidden" id="editRoomId">
+                <div class="form-group">
+                    <label>Tên phòng họp</label>
+                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B" required>
+                </div>
+                <div class="form-group">
+                    <label>Vị trí (Tầng)</label>
+                    <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
+                </div>
+                <div class="form-group">
+                    <label>Sức chứa</label>
+                    <input type="text" id="roomCapacity" class="form-control" placeholder="Ví dụ: 8-10 người" required>
+                </div>
+                <div class="form-group">
+                    <label>Tiện ích (phân cách bằng dấu phẩy)</label>
+                    <input type="text" id="roomAmenities" class="form-control" placeholder="Màn hình, Wifi, Video, Đồ uống">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/app.js?v=9"></script>
+</body>
+</html>

@@ -1,23 +1,12 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+from fastapi.responses import Response
+from app.routers import auth, room
 
-from app.core.database import Base, engine
+app = FastAPI(title="RoomSync API")
 
-# Import models de create_all nhan biet cac bang (users/rooms/meetings)
-import app.models  # noqa: F401
-
-# Tao cac bang DB neu chua ton tai (schema cu the trong schema.sql)
-Base.metadata.create_all(bind=engine)
-
-from app.routers import auth  # noqa: E402
-
-app = FastAPI(
-    title="Meeting Management System API",
-    description="Hệ thống quản lý phòng họp và lịch họp",
-    version="1.0.0",
-)
-
-# Cau hinh CORS de cho phép Frontend truy cap
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,12 +15,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# BẮT BUỘC Phải include router auth ở đây
 app.include_router(auth.router)
+app.include_router(room.router)
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
 
-@app.get("/", tags=["Root"])
+if not STATIC_DIR.exists():
+    STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
+@app.get("/")
 def read_root():
-    return {
-        "status": "success",
-        "message": "API Hệ thống Quản lý Phòng họp đang hoạt động!",
-    }
+    return {"message": "Server RoomSync đang chạy!"}
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
