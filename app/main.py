@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-
+from app.routers import auth, rooms
 from app.core.database import Base, engine
 import app.models 
 from app.routers import auth, meetings
@@ -29,7 +29,7 @@ app.add_middleware(
 # Đăng ký các Router API
 app.include_router(auth.router)
 app.include_router(meetings.router)
-
+app.include_router(rooms.router)
 # Phục vụ file tĩnh từ thư mục static
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")

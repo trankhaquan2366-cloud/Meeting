@@ -1,8 +1,4 @@
- feature/meeting-api
 from datetime import datetime, timedelta
-
-from datetime import datetime
- main
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from fastapi import HTTPException, status
@@ -20,7 +16,6 @@ class MeetingService:
 
     @staticmethod
     def create_meeting(db: Session, payload: MeetingCreateRequest, organizer_id: int | None = None):
- feature/meeting-api
         """VIỆC 2 & 3: Đặt phòng đơn hoặc định kỳ + Chặn quá khứ + Kiểm tra chống trùng lịch toàn diện"""
 
         # 0. Kiểm tra thời gian bắt đầu không được ở trong quá khứ
@@ -31,9 +26,6 @@ class MeetingService:
                 detail="Không thể đặt lịch họp với thời gian bắt đầu nằm trong quá khứ!"
             )
 
-        """VIỆC 2 & 3: Đặt phòng + Kiểm tra chống trùng lịch"""
- main
-
         # 1. Kiểm tra phòng họp có tồn tại và active không
         room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
         if not room:
@@ -42,7 +34,6 @@ class MeetingService:
                 detail="Phòng họp không tồn tại hoặc đã bị khóa!"
             )
 
- feature/meeting-api
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
         start_date = payload.start_time
@@ -69,7 +60,7 @@ class MeetingService:
                 else:
                     break
 
-        # 3. Vòng lặp kiểm tra trùng phòng & quản lý Transaction (Rollback yêu cầu mới nếu dính bất kỳ ngày nào)
+        # 3. Vòng lặp kiểm tra trùng phòng & quản lý Transaction (Rollback nếu dính bất kỳ ngày nào)
         try:
             created_meetings = []
             
@@ -84,7 +75,7 @@ class MeetingService:
                     )
                 ).first()
 
-                # Nếu tìm thấy lịch trùng -> Rollback yêu cầu hiện tại, giữ nguyên các lịch cũ đã tồn tại trước đó
+                # Nếu tìm thấy lịch trùng -> Rollback yêu cầu hiện tại
                 if overlapping_meeting:
                     db.rollback()
                     date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
@@ -112,7 +103,7 @@ class MeetingService:
                 db.add(new_meeting)
                 created_meetings.append(new_meeting)
 
-            # Nếu mọi thứ đều mượt mà, tiến hành commit lưu tất cả vào database
+            # Tiến hành commit lưu tất cả vào database
             db.commit()
             for m in created_meetings:
                 db.refresh(m)
@@ -122,42 +113,3 @@ class MeetingService:
         except Exception as e:
             db.rollback()
             raise e
-
-        # 2. VIỆC 3: LOGIC CHỐNG TRÙNG LỊCH HỌP (OVERLAPPING CHECK)
-        # Tìm cuộc họp nào thuộc phòng này, chưa bị hủy (status != 'canceled')
-        # và có khoảng thời gian đè đan xen với khoảng thời gian mới đăng ký.
-        overlapping_meeting = db.query(Meeting).filter(
-            Meeting.room_id == payload.room_id,
-            Meeting.status != "canceled",
-            and_(
-                Meeting.start_time < payload.end_time,
-                Meeting.end_time > payload.start_time
-            )
-        ).first()
-
-        # Nếu tìm thấy dù chỉ 1 cuộc họp bị trùng -> Chặn lại ngay!
-        if overlapping_meeting:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Phòng họp '{room.name}' đã bị trùng lịch! "
-                       f"Đã có cuộc họp '{overlapping_meeting.title}' "
-                       f"từ {overlapping_meeting.start_time.strftime('%H:%M')} "
-                       f"đến {overlapping_meeting.end_time.strftime('%H:%M')}."
-            )
-
-        # 3. Tạo bản ghi đặt phòng mới nếu thỏa mãn điều kiện
-        new_meeting = Meeting(
-            title=payload.title,
-            description=payload.description,
-            room_id=payload.room_id,
-            organizer_id=organizer_id,
-            start_time=payload.start_time,
-            end_time=payload.end_time,
-            status="scheduled"
-        )
-
-        db.add(new_meeting)
-        db.commit()
-        db.refresh(new_meeting)
-        return new_meeting
- main
