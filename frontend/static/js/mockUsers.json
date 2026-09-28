@@ -1,0 +1,7 @@
+[
+  { "id": 1, "full_name": "Nguyễn Văn H", "email": "h.ai.nv@company.com" },
+  { "id": 2, "full_name": "Nguyễn Văn A", "email": "a.nguyen@company.com" },
+  { "id": 5, "full_name": "Trần Thị B", "email": "b.tran@company.com" },
+  { "id": 8, "full_name": "Lê Văn C", "email": "c.le@company.com" },
+  { "id": 12, "full_name": "Phạm Minh D", "email": "d.pham@company.com" }
+]
