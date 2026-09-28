@@ -1,6 +1,7 @@
 const API_BASE = "http://localhost:8000/api";
 let allRooms = [];
 let myBookings = [];
+let selectedRoomId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
@@ -44,6 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const filterDateLabel = document.getElementById('filterDateLabel');
     if (filterDateLabel) filterDateLabel.innerText = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+
+    // Set giá trị mặc định cho ô chọn ngày trong Modal Đặt phòng
+    const todayStr = now.toISOString().split('T')[0];
+    const bookingDateInput = document.querySelector('#bookingModal input[name="meeting_date"]');
+    if (bookingDateInput) bookingDateInput.value = todayStr;
 
     // Ẩn / hiện nút thêm phòng theo quyền Admin
     if (isAdmin) {
@@ -182,7 +188,7 @@ function renderRooms(rooms, isAdmin) {
                     <div class="amenities-tags">${amenitiesHTML}</div>
                     <div class="card-actions">
                         <button class="btn-schedule" onclick="openScheduleModal(${room.id})">Xem lịch</button>
-                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openBookModal(${room.id})"` : 'disabled'}>
+                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openBookingModal(${room.id})"` : 'disabled'}>
                             ${isAvailable ? 'Đặt ngay' : 'Hết chỗ'}
                         </button>
                         ${adminButtons}
@@ -244,58 +250,67 @@ function closeScheduleModal() {
     if (modal) modal.style.display = 'none';
 }
 
-function openBookModal(roomId) {
-    const roomIdInput = document.getElementById('bookRoomId');
-    if (roomIdInput) roomIdInput.value = roomId;
-
+/* --- MỞ & ĐÓNG MODAL ĐẶT PHÒNG (FIGMA UI) --- */
+function openBookingModal(roomId) {
+    selectedRoomId = roomId;
     const room = allRooms.find(r => r.id === roomId);
+
+    // Cập nhật tên phòng và thông tin phòng trên Modal
+    const roomNameEl = document.querySelector('#bookingModal .room-name');
+    const roomMetaEl = document.querySelector('#bookingModal .room-meta');
+    
     if (room) {
-        const titleEl = document.getElementById('bookModalTitle');
-        if (titleEl) titleEl.innerText = `Đặt ngay: ${room.name}`;
+        if (roomNameEl) roomNameEl.innerText = room.name;
+        if (roomMetaEl) {
+            const statusTxt = room.is_available !== false ? 'Còn trống' : 'Đã đặt';
+            const statusClass = room.is_available !== false ? 'status-available' : '';
+            roomMetaEl.innerHTML = `${room.capacity || '10 người'} · <span class="${statusClass}">${statusTxt}</span>`;
+        }
     }
-    const modal = document.getElementById('bookModal');
-    if (modal) modal.style.display = 'flex';
+
+    const modal = document.getElementById('bookingModal');
+    if (modal) {
+        modal.style.display = 'flex';
+    } else {
+        console.error("Không tìm thấy modal id='bookingModal'");
+    }
 }
 
-function closeBookModal() {
-    const modal = document.getElementById('bookModal');
+function closeBookingModal() {
+    const modal = document.getElementById('bookingModal');
     if (modal) modal.style.display = 'none';
 }
 
-async function handleBookSubmit(e) {
+/* Alias hỗ trợ tương thích mã cũ */
+function openBookModal(roomId) { openBookingModal(roomId); }
+function closeBookModal() { closeBookingModal(); }
+
+/* --- XỬ LÝ GỬI LỊCH ĐẶT PHÒNG --- */
+async function handleBookingSubmit(e) {
     e.preventDefault();
 
-    const roomIdEl = document.getElementById('bookRoomId');
-    const timeSlotEl = document.getElementById('bookTimeSlot');
-    const purposeEl = document.getElementById('bookPurpose') || document.getElementById('bookTitle');
-    const dateEl = document.getElementById('bookDate');
-    const recurrenceTypeEl = document.getElementById('bookRecurrenceType');
-    const recurrenceEndDateEl = document.getElementById('bookRecurrenceEndDate');
+    const form = e.target;
+    const title = form.querySelector('[name="title"]')?.value || 'Cuộc họp';
+    const meetingDate = form.querySelector('[name="meeting_date"]')?.value || new Date().toISOString().split('T')[0];
+    const startTime = form.querySelector('[name="start_time"]')?.value || '09:00';
+    const endTime = form.querySelector('[name="end_time"]')?.value || '10:00';
+    const description = form.querySelector('[name="description"]')?.value || '';
 
-    const roomId = roomIdEl ? roomIdEl.value : null;
-    const timeSlot = timeSlotEl ? timeSlotEl.value : "08:00 - 09:30";
-    const purpose = purposeEl ? purposeEl.value : "Họp";
-    const selectedDate = (dateEl && dateEl.value) ? dateEl.value : new Date().toISOString().split('T')[0];
+    const toggleBtn = document.getElementById('recurring-toggle');
+    const isRecurring = toggleBtn ? toggleBtn.classList.contains('toggle-on') : false;
 
-    const timeParts = timeSlot.split('-').map(s => s.trim());
-    const startStr = timeParts[0] || "08:00";
-    const endStr = timeParts[1] || "09:30";
-
-    const start_time = `${selectedDate}T${startStr}:00`;
-    const end_time = `${selectedDate}T${endStr}:00`;
-
-    const recurrenceType = recurrenceTypeEl ? recurrenceTypeEl.value : 'none';
-    const recurrenceEndDate = (recurrenceEndDateEl && recurrenceEndDateEl.value) ? `${recurrenceEndDateEl.value}T23:59:59` : null;
+    const start_time = `${meetingDate}T${startTime}:00`;
+    const end_time = `${meetingDate}T${endTime}:00`;
 
     const payload = {
-        title: purpose,
-        description: "Đặt từ giao diện web",
-        room_id: parseInt(roomId),
+        title: title,
+        description: description || "Đặt từ giao diện web",
+        room_id: parseInt(selectedRoomId),
         start_time: start_time,
         end_time: end_time,
-        is_recurring: recurrenceType !== 'none',
-        recurrence_type: recurrenceType,
-        recurrence_end_date: recurrenceEndDate
+        is_recurring: isRecurring,
+        recurrence_type: isRecurring ? 'weekly' : 'none',
+        recurrence_end_date: null
     };
 
     const token = localStorage.getItem('token') || '';
@@ -312,7 +327,7 @@ async function handleBookSubmit(e) {
 
         if (res.ok) {
             alert("Đã đặt lịch họp thành công!");
-            closeBookModal();
+            closeBookingModal();
             
             const role = localStorage.getItem('role') || 'user';
             fetchRooms(role === 'admin');
@@ -326,6 +341,8 @@ async function handleBookSubmit(e) {
         alert("Lỗi kết nối máy chủ!");
     }
 }
+
+function handleBookSubmit(e) { handleBookingSubmit(e); }
 
 /* ==========================================================================
    MY BOOKINGS MANAGEMENT
@@ -573,7 +590,7 @@ function logout() {
 }
 
 /* ==========================================================================
-   GLOBAL EXPORTS (Đảm bảo HTML inline event handlers gọi thành công)
+   GLOBAL EXPORTS
    ========================================================================== */
 window.toggleSidebar = toggleSidebar;
 window.switchToOverview = switchToOverview;
@@ -583,8 +600,11 @@ window.scrollToRooms = scrollToRooms;
 window.toggleNotificationPopup = toggleNotificationPopup;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
+window.openBookingModal = openBookingModal;
+window.closeBookingModal = closeBookingModal;
 window.openBookModal = openBookModal;
 window.closeBookModal = closeBookModal;
+window.handleBookingSubmit = handleBookingSubmit;
 window.handleBookSubmit = handleBookSubmit;
 window.cancelBooking = cancelBooking;
 window.handleSearch = handleSearch;

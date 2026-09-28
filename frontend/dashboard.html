@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <link rel="stylesheet" href="css/style.css?v=9">
+    <link rel="stylesheet" href="css/booking.css">
 </head>
 <body>
     <div class="app-layout" id="appLayout">
@@ -48,7 +49,6 @@
             <!-- TOPBAR VỚI NÚT 3 GẠCH VÀ TÌM KIẾM -->
             <header class="topbar">
                 <div class="topbar-left">
-                    <!-- NÚT 3 GẠCH CHUYÊN NGHIỆP TRÊN TOPBAR -->
                     <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                     </button>
@@ -82,7 +82,6 @@
             <div class="content-body">
                 <!-- VIEW 1: TỔNG QUAN -->
                 <div id="viewOverview" class="tab-view">
-                    <!-- HERO BANNER TỔNG QUAN HOÀNH TRÁNG (400PX) -->
                     <div class="hero-banner-overview">
                         <div class="hero-overlay"></div>
                         <div class="hero-content">
@@ -155,7 +154,7 @@
                     <div class="room-grid" id="roomGridOverview"></div>
                 </div>
 
-                <!-- VIEW 2: PHÒNG HỌP (BANNER BAN NĂNG 220PX) -->
+                <!-- VIEW 2: PHÒNG HỌP -->
                 <div id="viewRooms" class="tab-view" style="display: none;">
                     <div class="hero-banner-rooms">
                         <div class="hero-overlay"></div>
@@ -235,7 +234,7 @@
         </main>
     </div>
 
-    <!-- MODALS -->
+    <!-- MODAL XEM LỊCH TRÌNH -->
     <div id="scheduleModal" class="modal" style="display: none;">
         <div class="modal-content">
             <h3 id="scheduleRoomTitle">Lịch trình phòng họp</h3>
@@ -247,58 +246,7 @@
         </div>
     </div>
 
-  <div id="bookModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <h3 id="bookModalTitle">Đặt phòng họp</h3>
-        <form onsubmit="handleBookSubmit(event)">
-            <input type="hidden" id="bookRoomId">
-
-            <!-- Ô chọn ngày họp -->
-            <div class="form-group" style="margin-top: 12px;">
-                <label>Ngày họp</label>
-                <input type="date" id="bookDate" class="form-control" required>
-            </div>
-
-            <!-- Khung giờ họp -->
-            <div class="form-group">
-                <label>Khung giờ họp</label>
-                <select id="bookTimeSlot" class="form-control" required>
-                    <option value="08:00 - 09:30">08:00 - 09:30</option>
-                    <option value="10:00 - 11:30">10:00 - 11:30</option>
-                    <option value="13:30 - 15:00">13:30 - 15:00</option>
-                    <option value="15:30 - 17:00">15:30 - 17:00</option>
-                </select>
-            </div>
-
-            <!-- Nội dung cuộc họp -->
-            <div class="form-group">
-                <label>Nội dung cuộc họp</label>
-                <input type="text" id="bookPurpose" class="form-control" placeholder="Ví dụ: Họp báo cáo tiến độ" required>
-            </div>
-
-            <!-- Tùy chọn đặt lịch định kỳ -->
-            <div class="form-group">
-                <label>Lặp lại (Định kỳ)</label>
-                <select id="bookRecurrenceType" class="form-control">
-                    <option value="none">Không lặp lại</option>
-                    <option value="weekly">Hàng tuần</option>
-                    <option value="monthly">Hàng tháng</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label>Lặp lại cho đến ngày</label>
-                <input type="date" id="bookRecurrenceEndDate" class="form-control">
-            </div>
-
-            <div class="modal-actions">
-                <button type="button" onclick="closeBookModal()" class="btn-cancel">Hủy</button>
-                <button type="submit" class="btn-save">Xác nhận đặt</button>
-            </div>
-        </form>
-    </div>
-</div>
-
+    <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
     <div id="roomModal" class="modal" style="display: none;">
         <div class="modal-content">
             <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
@@ -326,6 +274,102 @@
                 </div>
             </form>
         </div>
+    </div>
+
+    <!-- MODAL ĐẶT PHÒNG HỌP (FIGMA UI) -->
+    <div class="page-shell" id="bookingModal">
+        <div class="ambient ambient-left"></div>
+        <div class="ambient ambient-right"></div>
+
+        <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booking-title">
+            <header class="modal-header">
+                <div>
+                    <p class="eyebrow">Lịch làm việc</p>
+                    <h1 id="booking-title" class="modal-title">Đặt lịch phòng họp</h1>
+                </div>
+                <button class="icon-button" type="button" aria-label="Đóng" onclick="closeBookingModal()">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </button>
+            </header>
+
+            <form class="booking-form" onsubmit="handleBookingSubmit(event)">
+                <!-- Tên cuộc họp (title) -->
+                <div class="form-field">
+                    <label class="field-label" for="meeting-title">Tên cuộc họp</label>
+                    <input id="meeting-title" class="text-control" name="title" placeholder="Nhập tên cuộc họp" required />
+                </div>
+
+                <!-- Chọn phòng (room_id) -->
+                <div class="form-field room-field">
+                    <label class="field-label" for="room-select">Chọn phòng</label>
+                    <div class="room-select">
+                        <div class="room-select-main">
+                            <span class="room-name">Phòng Orchid</span>
+                            <span class="room-meta">8 người · <span class="status-available">Còn trống</span></span>
+                        </div>
+                        <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                </div>
+
+                <!-- Thời gian (start_time & end_time) -->
+                <fieldset class="time-fieldset">
+                    <legend class="field-label">Thời gian</legend>
+                    <div class="time-grid">
+                        <div class="date-column">
+                            <span class="mini-label">Ngày</span>
+                            <div class="input-with-icon">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12H4V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                <input name="meeting_date" type="date" value="2026-09-30" required />
+                            </div>
+                        </div>
+                        <div class="time-column">
+                            <span class="mini-label">Bắt đầu</span>
+                            <div class="input-with-icon">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                <input name="start_time" type="time" value="09:00" required />
+                            </div>
+                        </div>
+                        <div class="time-column">
+                            <span class="mini-label">Kết thúc</span>
+                            <div class="input-with-icon">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                <input name="end_time" type="time" value="10:00" required />
+                            </div>
+                        </div>
+                    </div>
+                    <button class="availability-button" type="button">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4M10.5 7.5v3.2l2 1.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                        Tìm giờ trống
+                    </button>
+                </fieldset>
+
+                <!-- Cuộc họp lặp lại (is_recurring) -->
+                <div class="recurring-row">
+                    <div>
+                        <label class="recurring-label" for="recurring-toggle">Lặp lại cuộc họp</label>
+                        <p class="recurring-hint">Tự động tạo lịch theo chu kỳ</p>
+                    </div>
+                    <button id="recurring-toggle" class="toggle toggle-on" type="button" role="switch">
+                        <span class="toggle-thumb"></span>
+                    </button>
+                </div>
+
+                <!-- Mô tả (description) -->
+                <div class="form-field">
+                    <div class="label-row">
+                        <label class="field-label" for="description">Mô tả cuộc họp</label>
+                        <span class="optional">Không bắt buộc</span>
+                    </div>
+                    <textarea id="description" class="textarea-control" name="description" rows="3" placeholder="Nhập nội dung hoặc chương trình cuộc họp..."></textarea>
+                </div>
+
+                <!-- Footer Buttons -->
+                <footer class="modal-footer">
+                    <button class="button button-secondary" type="button" onclick="closeBookingModal()">Hủy</button>
+                    <button class="button button-primary" type="submit">Xác nhận đặt lịch</button>
+                </footer>
+            </form>
+        </section>
     </div>
 
     <script src="js/app.js?v=2"></script>
