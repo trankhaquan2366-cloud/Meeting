@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting
+from app.models.user import User  # Thêm import model User nếu chưa có
 from app.schemas.meeting import MeetingCreateRequest
 
 class MeetingService:
@@ -113,3 +114,81 @@ class MeetingService:
         except Exception as e:
             db.rollback()
             raise e
+
+    @staticmethod
+    def calculate_suggested_times(db: Session, participant_ids: list[int], date_str: str, duration_minutes: int):
+        """VIỆC CỦA LIÊM: Thuật toán truy vấn, so sánh lịch rảnh/bận để tìm khung giờ trống chung"""
+        
+        # KIỂM TRA: Đảm bảo tất cả user trong participant_ids phải tồn tại trong database
+        existing_users = db.query(User).filter(User.id.in_(participant_ids)).all()
+        existing_user_ids = {user.id for user in existing_users}
+        missing_ids = [uid for uid in participant_ids if uid not in existing_user_ids]
+        
+        if missing_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Không tìm thấy người tham gia với ID: {missing_ids}"
+            )
+
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        
+        # Khung giờ làm việc mặc định trong ngày: 08:00 - 12:00 và 13:00 - 17:00
+        work_start1 = datetime.combine(target_date, datetime.strptime("08:00", "%H:%M").time())
+        work_end1 = datetime.combine(target_date, datetime.strptime("12:00", "%H:%M").time())
+        work_start2 = datetime.combine(target_date, datetime.strptime("13:00", "%H:%M").time())
+        work_end2 = datetime.combine(target_date, datetime.strptime("17:00", "%H:%M").time())
+        
+        working_intervals = [(work_start1, work_end1), (work_start2, work_end2)]
+
+        # Lấy toàn bộ cuộc họp trong ngày, loại trừ trạng thái 'canceled'
+        day_start = datetime.combine(target_date, datetime.min.time())
+        day_end = datetime.combine(target_date, datetime.max.time())
+        
+        meetings = db.query(Meeting).filter(
+            Meeting.status != "canceled",
+            Meeting.start_time <= day_end,
+            Meeting.end_time >= day_start,
+            Meeting.organizer_id.in_(participant_ids)
+        ).all()
+
+        # Thu thập các khoảng thời gian bận
+        busy_intervals = [(m.start_time, m.end_time) for m in meetings]
+
+        # Sắp xếp và gộp các khoảng bận bị chồng chéo
+        busy_intervals.sort(key=lambda x: x[0])
+        merged_busy = []
+        for interval in busy_intervals:
+            if not merged_busy or merged_busy[-1][1] <= interval[0]:
+                merged_busy.append(interval)
+            else:
+                merged_busy[-1] = (merged_busy[-1][0], max(merged_busy[-1][1], interval[1]))
+
+        # Tính toán khoảng thời gian rảnh bằng cách trừ khoảng bận khỏi giờ làm việc
+        free_slots = []
+        for w_start, w_end in working_intervals:
+            current_start = w_start
+            for b_start, b_end in merged_busy:
+                if b_end <= current_start:
+                    continue
+                if b_start >= w_end:
+                    break
+                if b_start > current_start:
+                    free_slots.append((current_start, b_start))
+                current_start = max(current_start, b_end)
+            if current_start < w_end:
+                free_slots.append((current_start, w_end))
+
+        # Lọc ra các khoảng rảnh có độ dài >= duration_minutes
+        suggested_slots = []
+        duration_delta = timedelta(minutes=duration_minutes)
+        for f_start, f_end in free_slots:
+            slot_start = f_start
+            while slot_start + duration_delta <= f_end:
+                slot_end = slot_start + duration_delta
+                suggested_slots.append({
+                    "start_time": slot_start.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "end_time": slot_end.strftime("%Y-%m-%dT%H:%M:%S")
+                })
+                slot_start += timedelta(minutes=30)  # Bước nhảy gợi ý mỗi 30 phút
+
+        return {"suggested_slots": suggested_slots}
