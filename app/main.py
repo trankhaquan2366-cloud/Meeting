@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-
+from app.routers import auth, rooms, meetings
 from app.core.database import Base, engine, get_db
 from app.core.security import create_access_token
 from app.models.user import User
@@ -44,8 +44,8 @@ if FRONTEND_DIR.exists():
 
 # 3. ĐĂNG KÝ CÁC ROUTER API[cite: 6]
 app.include_router(auth.router, prefix="/api", tags=["auth"])
-app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
-app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
+app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])    # rooms.py KHÔNG có prefix
+app.include_router(meetings.router, prefix="/api", tags=["meetings"])
 
 # 4. API ĐĂNG NHẬP TRỰC TIẾP (Khớp tuyệt đối với login.js)
 class LoginSchema(BaseModel):

@@ -2,74 +2,62 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
 
 from app.core.database import get_db
-from app.core.security import get_current_user  # Hoặc hàm lấy user hiện tại từ token
+from app.core.security import get_current_user
 from app.models.meeting import Meeting
-from app.models.room import Room
+from app.models.user import User
+from app.schemas.room import RoomResponse
 from app.schemas.meeting import MeetingCreateRequest, MeetingResponse
+from app.services.meeting_service import MeetingService
 
-router = APIRouter(prefix="/api/meetings", tags=["Meetings Management"])
+router = APIRouter(prefix="/meetings", tags=["Meetings Management"])
 
 
 # ----------------------------------------------------
-# 1. ĐẶT LỊCH HỌP MỚI
+# 1. LẤY DANH SÁCH PHÒNG HỌP ĐANG HOẠT ĐỘNG
+# ----------------------------------------------------
+@router.get(
+    "/rooms",
+    response_model=List[RoomResponse],
+    summary="Lấy danh sách phòng họp",
+    description="Trả về danh sách các phòng họp đang sẵn sàng cho người dùng chọn."
+)
+def list_rooms(db: Session = Depends(get_db)):
+    return MeetingService.get_all_active_rooms(db)
+
+
+# ----------------------------------------------------
+# 2. ĐẶT LỊCH HỌP MỚI (HỖ TRỢ ĐƠN & ĐỊNH KỲ)
 # ----------------------------------------------------
 @router.post(
-    "/",
-    response_model=MeetingResponse,
+    "/book",
+    response_model=List[MeetingResponse],  # Trả về danh sách (chứa 1 hoặc nhiều cuộc họp nếu lặp lịch)
     status_code=status.HTTP_201_CREATED,
-    summary="Đặt lịch họp mới"
+    summary="Đặt lịch họp mới (Đơn & Định kỳ)",
+    description="Tạo cuộc họp mới hoặc chuỗi lịch định kỳ. Hệ thống tự động kiểm tra trùng lịch và rollback toàn bộ nếu có xung đột."
 )
 def create_meeting(
-    meeting_in: MeetingCreateRequest,
+    payload: MeetingCreateRequest,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    # 1. Kiểm tra phòng họp có tồn tại và đang hoạt động không
-    room = db.query(Room).filter(Room.id == meeting_in.room_id, Room.is_active == True).first()
-    if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Phòng họp không tồn tại hoặc đã ngừng hoạt động."
-        )
-
-    # 2. Kiểm tra xung đột lịch họp (Overlapping check)
-    overlapping_meeting = db.query(Meeting).filter(
-        Meeting.room_id == meeting_in.room_id,
-        Meeting.status != "cancelled",  # Bỏ qua lịch đã hủy
-        and_(
-            Meeting.start_time < meeting_in.end_time,
-            Meeting.end_time > meeting_in.start_time
-        )
-    ).first()
-
-    if overlapping_meeting:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Phòng họp đã bị trùng lịch trong khoảng thời gian này!"
-        )
-
-    # 3. Tạo cuộc họp mới
-    new_meeting = Meeting(
-        title=meeting_in.title,
-        description=meeting_in.description,
-        room_id=meeting_in.room_id,
-        organizer_id=current_user.id,  # Lấy ID người tạo từ Token đăng nhập
-        start_time=meeting_in.start_time,
-        end_time=meeting_in.end_time,
-        status="scheduled"
+    """
+    Sử dụng MeetingService để xử lý nghiệp vụ:
+    - Chặn đặt lịch trong quá khứ
+    - Kiểm tra phòng họp tồn tại & active
+    - Tự động tạo chuỗi cuộc họp nếu đặt lịch định kỳ (weekly/monthly)
+    - Kiểm tra chống trùng phòng họp & Rollback nếu phát hiện xung đột
+    """
+    return MeetingService.create_meeting(
+        db=db,
+        payload=payload,
+        organizer_id=current_user.id
     )
-
-    db.add(new_meeting)
-    db.commit()
-    db.refresh(new_meeting)
-    return new_meeting
 
 
 # ----------------------------------------------------
-# 2. LẤY DANH SÁCH CUỘC HỌP (Có bộ lọc)
+# 3. LẤY DANH SÁCH CUỘC HỌP (Có bộ lọc)
 # ----------------------------------------------------
 @router.get(
     "/",
@@ -82,7 +70,7 @@ def get_meetings(
     end_date: Optional[datetime] = Query(None, description="Lọc đến ngày"),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Meeting).filter(Meeting.status != "cancelled")
+    query = db.query(Meeting).filter(Meeting.status != "canceled")
 
     if room_id:
         query = query.filter(Meeting.room_id == room_id)
@@ -95,7 +83,7 @@ def get_meetings(
 
 
 # ----------------------------------------------------
-# 3. HỦY CUỘC HỌP
+# 4. HỦY CUỘC HỌP
 # ----------------------------------------------------
 @router.delete(
     "/{meeting_id}",
@@ -105,7 +93,7 @@ def get_meetings(
 def cancel_meeting(
     meeting_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
     if not meeting:
@@ -122,7 +110,7 @@ def cancel_meeting(
             detail="Bạn không có quyền hủy cuộc họp này."
         )
 
-    meeting.status = "cancelled"
+    meeting.status = "canceled"
     db.commit()
 
     return {"status": "success", "message": f"Đã hủy cuộc họp '{meeting.title}' thành công."}

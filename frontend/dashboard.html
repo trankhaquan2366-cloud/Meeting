@@ -247,31 +247,57 @@
         </div>
     </div>
 
-    <div id="bookModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h3 id="bookModalTitle">Đặt phòng họp</h3>
-            <form onsubmit="handleBookSubmit(event)">
-                <input type="hidden" id="bookRoomId">
-                <div class="form-group" style="margin-top: 12px;">
-                    <label>Khung giờ họp</label>
-                    <select id="bookTimeSlot" class="form-control" required>
-                        <option value="08:00 - 09:30">08:00 - 09:30</option>
-                        <option value="10:00 - 11:30">10:00 - 11:30</option>
-                        <option value="13:30 - 15:00">13:30 - 15:00</option>
-                        <option value="15:30 - 17:00">15:30 - 17:00</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Nội dung cuộc họp</label>
-                    <input type="text" id="bookPurpose" class="form-control" placeholder="Ví dụ: Họp báo cáo tiến độ" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" onclick="closeBookModal()" class="btn-cancel">Hủy</button>
-                    <button type="submit" class="btn-save">Xác nhận đặt</button>
-                </div>
-            </form>
-        </div>
+  <div id="bookModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <h3 id="bookModalTitle">Đặt phòng họp</h3>
+        <form onsubmit="handleBookSubmit(event)">
+            <input type="hidden" id="bookRoomId">
+
+            <!-- Ô chọn ngày họp -->
+            <div class="form-group" style="margin-top: 12px;">
+                <label>Ngày họp</label>
+                <input type="date" id="bookDate" class="form-control" required>
+            </div>
+
+            <!-- Khung giờ họp -->
+            <div class="form-group">
+                <label>Khung giờ họp</label>
+                <select id="bookTimeSlot" class="form-control" required>
+                    <option value="08:00 - 09:30">08:00 - 09:30</option>
+                    <option value="10:00 - 11:30">10:00 - 11:30</option>
+                    <option value="13:30 - 15:00">13:30 - 15:00</option>
+                    <option value="15:30 - 17:00">15:30 - 17:00</option>
+                </select>
+            </div>
+
+            <!-- Nội dung cuộc họp -->
+            <div class="form-group">
+                <label>Nội dung cuộc họp</label>
+                <input type="text" id="bookPurpose" class="form-control" placeholder="Ví dụ: Họp báo cáo tiến độ" required>
+            </div>
+
+            <!-- Tùy chọn đặt lịch định kỳ -->
+            <div class="form-group">
+                <label>Lặp lại (Định kỳ)</label>
+                <select id="bookRecurrenceType" class="form-control">
+                    <option value="none">Không lặp lại</option>
+                    <option value="weekly">Hàng tuần</option>
+                    <option value="monthly">Hàng tháng</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Lặp lại cho đến ngày</label>
+                <input type="date" id="bookRecurrenceEndDate" class="form-control">
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" onclick="closeBookModal()" class="btn-cancel">Hủy</button>
+                <button type="submit" class="btn-save">Xác nhận đặt</button>
+            </div>
+        </form>
     </div>
+</div>
 
     <div id="roomModal" class="modal" style="display: none;">
         <div class="modal-content">

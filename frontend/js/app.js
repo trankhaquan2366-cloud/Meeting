@@ -1,8 +1,6 @@
 const API_BASE = "http://localhost:8000/api";
 let allRooms = [];
-let myBookings = [
-    { id: 101, roomName: "Phòng Họp Sáng Tạo", timeSlot: "10:00 - 11:30", status: "Đã xác nhận" }
-];
+let myBookings = [];
 
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
@@ -12,30 +10,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const userName = localStorage.getItem('user_name') || 'Nguyễn Minh Tuấn';
-    const role = localStorage.getItem('role') || 'admin';
+    const role = localStorage.getItem('role') || 'user';
     const isAdmin = role === 'admin';
 
-    // Cập nhật thông tin giao diện
-    document.getElementById('userNameDisplay').innerText = userName;
-    document.getElementById('settingsName').innerText = userName;
-    document.getElementById('settingsInputName').value = userName;
+    // Cập nhật thông tin giao diện người dùng
+    const nameDisplay = document.getElementById('userNameDisplay');
+    if (nameDisplay) nameDisplay.innerText = userName;
+
+    const settingsName = document.getElementById('settingsName');
+    if (settingsName) settingsName.innerText = userName;
+
+    const settingsInputName = document.getElementById('settingsInputName');
+    if (settingsInputName) settingsInputName.value = userName;
     
     const initial = userName.charAt(0).toUpperCase();
-    document.getElementById('avatarText').innerText = initial;
-    document.getElementById('headerAvatarText').innerText = initial;
-    document.getElementById('settingsAvatar').innerText = initial;
+    ['avatarText', 'headerAvatarText', 'settingsAvatar'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerText = initial;
+    });
 
     const roleText = isAdmin ? 'Quản trị viên' : 'Nhân viên';
-    document.getElementById('userRoleBadge').innerText = roleText;
-    document.getElementById('settingsRole').innerText = roleText;
+    const roleBadge = document.getElementById('userRoleBadge');
+    if (roleBadge) roleBadge.innerText = roleText;
 
-    // Ngày tháng
+    const settingsRole = document.getElementById('settingsRole');
+    if (settingsRole) settingsRole.innerText = roleText;
+
+    // Ngày tháng hiển thị
     const now = new Date();
     const dateStr = `Thứ ${now.getDay() + 1}, ${now.getDate()} tháng ${now.getMonth() + 1} năm ${now.getFullYear()}`;
-    document.getElementById('currentDateText').innerText = `${dateStr} · Đang hiển thị danh sách phòng`;
-    document.getElementById('filterDateLabel').innerText = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+    const currentDateText = document.getElementById('currentDateText');
+    if (currentDateText) currentDateText.innerText = `${dateStr} · Đang hiển thị danh sách phòng`;
 
-    // Nút Thêm phòng
+    const filterDateLabel = document.getElementById('filterDateLabel');
+    if (filterDateLabel) filterDateLabel.innerText = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+
+    // Ẩn / hiện nút thêm phòng theo quyền Admin
     if (isAdmin) {
         const btn1 = document.getElementById('addRoomBtnOverview');
         const btn2 = document.getElementById('addRoomBtnRooms');
@@ -43,23 +53,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btn2) btn2.style.display = 'block';
     }
 
+    // Tải dữ liệu ban đầu
     fetchRooms(isAdmin);
-    renderMyBookings();
+    fetchMyBookings();
 });
 
-// THU GỌN / MỞ RỘNG SIDEBAR KHI BẤM NÚT 3 GẠCH TRÊN TOPBAR
+/* ==========================================================================
+   NAVIGATION & UI CONTROLS
+   ========================================================================== */
+
 function toggleSidebar() {
     const layout = document.getElementById('appLayout');
-    layout.classList.toggle('collapsed');
+    if (layout) layout.classList.toggle('collapsed');
 }
 
-// CHUYỂN VỀ TỔNG QUAN KHI BẤM LOGO RS ROOMSYNC
 function switchToOverview() {
     const overviewTab = document.getElementById('navOverview');
     switchMainTab('overview', overviewTab);
 }
 
-// CHUYỂN TAB CÁC MÀN HÌNH
 function switchMainTab(tabName, el) {
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
     if (el) el.classList.add('active');
@@ -69,16 +81,21 @@ function switchMainTab(tabName, el) {
     const searchContainer = document.getElementById('topbarSearchContainer');
 
     if (tabName === 'overview') {
-        document.getElementById('viewOverview').style.display = 'block';
+        const view = document.getElementById('viewOverview');
+        if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'flex';
     } else if (tabName === 'rooms') {
-        document.getElementById('viewRooms').style.display = 'block';
+        const view = document.getElementById('viewRooms');
+        if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'flex';
     } else if (tabName === 'my-bookings') {
-        document.getElementById('viewMyBookings').style.display = 'block';
+        const view = document.getElementById('viewMyBookings');
+        if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
+        fetchMyBookings();
     } else if (tabName === 'settings') {
-        document.getElementById('viewSettings').style.display = 'block';
+        const view = document.getElementById('viewSettings');
+        if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
     }
 }
@@ -93,11 +110,20 @@ function scrollToRooms() {
     if (elem) elem.scrollIntoView({ behavior: 'smooth' });
 }
 
-// FETCH DANH SÁCH PHÒNG
+function toggleNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (popup) {
+        popup.style.display = (popup.style.display === 'none' || !popup.style.display) ? 'block' : 'none';
+    }
+}
+
+/* ==========================================================================
+   ROOM MANAGEMENT & FETCH
+   ========================================================================== */
+
 async function fetchRooms(isAdmin) {
     try {
-        const token = localStorage.getItem('token');
-        // Thay đổi quan trọng: Đã thêm dấu / vào cuối URL để tránh lỗi 404
+        const token = localStorage.getItem('token') || '';
         const res = await fetch(`${API_BASE}/rooms/`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -112,7 +138,6 @@ async function fetchRooms(isAdmin) {
     }
 }
 
-// RENDER PHÒNG
 function renderRooms(rooms, isAdmin) {
     const gridOverview = document.getElementById('roomGridOverview');
     const gridRooms = document.getElementById('roomGridRooms');
@@ -124,18 +149,17 @@ function renderRooms(rooms, isAdmin) {
 
         let amenitiesHTML = '';
         if (room.amenities) {
-             let amenitiesList = room.amenities;
-             // Nếu amenities được lưu trữ là chuỗi, chúng ta split nó ra
-             if (typeof amenitiesList === 'string') {
-                 try {
-                     amenitiesList = JSON.parse(amenitiesList);
-                 } catch (e) {
-                     amenitiesList = [amenitiesList];
-                 }
-             }
-             if (Array.isArray(amenitiesList)) {
-                 amenitiesHTML = amenitiesList.map(a => `<span class="tag">📺 ${a}</span>`).join(' ');
-             }
+            let amenitiesList = room.amenities;
+            if (typeof amenitiesList === 'string') {
+                try {
+                    amenitiesList = JSON.parse(amenitiesList);
+                } catch (e) {
+                    amenitiesList = [amenitiesList];
+                }
+            }
+            if (Array.isArray(amenitiesList)) {
+                amenitiesHTML = amenitiesList.map(a => `<span class="tag">📺 ${a}</span>`).join(' ');
+            }
         }
         
         let adminButtons = '';
@@ -172,64 +196,156 @@ function renderRooms(rooms, isAdmin) {
     if (gridRooms) gridRooms.innerHTML = htmlContent;
 }
 
-// MODALS
+function updateStats(rooms) {
+    const total = rooms.length;
+    const availableCount = rooms.filter(r => r.is_available !== false).length;
+    const inUseCount = rooms.filter(r => r.is_available === false).length;
+    const capacityPercent = total > 0 ? Math.round((inUseCount / total) * 100) : 0;
+
+    const setTxt = (id, val) => { const el = document.getElementById(id); if(el) el.innerText = val; };
+
+    setTxt('statTotal', total);
+    setTxt('statAvailable', availableCount);
+    setTxt('statInUse', inUseCount);
+    setTxt('statCapacityText', `${capacityPercent}% công suất`);
+    setTxt('statRatioText', `trong ${total} phòng`);
+
+    setTxt('summaryAvailable', availableCount);
+    setTxt('summaryInUse', inUseCount);
+}
+
+/* ==========================================================================
+   BOOKING & SCHEDULE MODALS
+   ========================================================================== */
+
 function openScheduleModal(roomId) {
     const room = allRooms.find(r => r.id === roomId);
     if (!room) return;
 
-    document.getElementById('scheduleRoomTitle').innerText = `Lịch trình: ${room.name}`;
-    const container = document.getElementById('timelineContainer');
+    const titleEl = document.getElementById('scheduleRoomTitle');
+    if (titleEl) titleEl.innerText = `Lịch trình: ${room.name}`;
 
-    const isAvail = room.is_available !== false;
-    container.innerHTML = `
-        <div class="timeline-item"><span>08:00 - 09:30</span><span class="time-free">Còn trống</span></div>
-        <div class="timeline-item"><span>10:00 - 11:30</span><span class="${isAvail ? 'time-free' : 'time-busy'}">${isAvail ? 'Còn trống' : 'Đã có cuộc họp'}</span></div>
-        <div class="timeline-item"><span>13:30 - 15:00</span><span class="time-free">Còn trống</span></div>
-        <div class="timeline-item"><span>15:30 - 17:00</span><span class="time-free">Còn trống</span></div>
-    `;
-    document.getElementById('scheduleModal').style.display = 'flex';
+    const container = document.getElementById('timelineContainer');
+    if (container) {
+        const isAvail = room.is_available !== false;
+        container.innerHTML = `
+            <div class="timeline-item"><span>08:00 - 09:30</span><span class="time-free">Còn trống</span></div>
+            <div class="timeline-item"><span>10:00 - 11:30</span><span class="${isAvail ? 'time-free' : 'time-busy'}">${isAvail ? 'Còn trống' : 'Đã có cuộc họp'}</span></div>
+            <div class="timeline-item"><span>13:30 - 15:00</span><span class="time-free">Còn trống</span></div>
+            <div class="timeline-item"><span>15:30 - 17:00</span><span class="time-free">Còn trống</span></div>
+        `;
+    }
+    const modal = document.getElementById('scheduleModal');
+    if (modal) modal.style.display = 'flex';
 }
 
 function closeScheduleModal() {
-    document.getElementById('scheduleModal').style.display = 'none';
+    const modal = document.getElementById('scheduleModal');
+    if (modal) modal.style.display = 'none';
 }
 
 function openBookModal(roomId) {
-    document.getElementById('bookRoomId').value = roomId;
+    const roomIdInput = document.getElementById('bookRoomId');
+    if (roomIdInput) roomIdInput.value = roomId;
+
     const room = allRooms.find(r => r.id === roomId);
     if (room) {
-        document.getElementById('bookModalTitle').innerText = `Đặt ngay: ${room.name}`;
+        const titleEl = document.getElementById('bookModalTitle');
+        if (titleEl) titleEl.innerText = `Đặt ngay: ${room.name}`;
     }
-    document.getElementById('bookModal').style.display = 'flex';
+    const modal = document.getElementById('bookModal');
+    if (modal) modal.style.display = 'flex';
 }
 
 function closeBookModal() {
-    document.getElementById('bookModal').style.display = 'none';
+    const modal = document.getElementById('bookModal');
+    if (modal) modal.style.display = 'none';
 }
 
-function handleBookSubmit(e) {
+async function handleBookSubmit(e) {
     e.preventDefault();
-    const roomId = document.getElementById('bookRoomId').value;
-    const timeSlot = document.getElementById('bookTimeSlot').value;
-    const purpose = document.getElementById('bookPurpose').value;
 
-    const room = allRooms.find(r => r.id == roomId);
-    if (room) {
-        room.is_available = false;
-        myBookings.push({
-            id: Date.now(),
-            roomName: room.name,
-            timeSlot: timeSlot,
-            status: "Đã xác nhận"
+    const roomIdEl = document.getElementById('bookRoomId');
+    const timeSlotEl = document.getElementById('bookTimeSlot');
+    const purposeEl = document.getElementById('bookPurpose') || document.getElementById('bookTitle');
+    const dateEl = document.getElementById('bookDate');
+    const recurrenceTypeEl = document.getElementById('bookRecurrenceType');
+    const recurrenceEndDateEl = document.getElementById('bookRecurrenceEndDate');
+
+    const roomId = roomIdEl ? roomIdEl.value : null;
+    const timeSlot = timeSlotEl ? timeSlotEl.value : "08:00 - 09:30";
+    const purpose = purposeEl ? purposeEl.value : "Họp";
+    const selectedDate = (dateEl && dateEl.value) ? dateEl.value : new Date().toISOString().split('T')[0];
+
+    const timeParts = timeSlot.split('-').map(s => s.trim());
+    const startStr = timeParts[0] || "08:00";
+    const endStr = timeParts[1] || "09:30";
+
+    const start_time = `${selectedDate}T${startStr}:00`;
+    const end_time = `${selectedDate}T${endStr}:00`;
+
+    const recurrenceType = recurrenceTypeEl ? recurrenceTypeEl.value : 'none';
+    const recurrenceEndDate = (recurrenceEndDateEl && recurrenceEndDateEl.value) ? `${recurrenceEndDateEl.value}T23:59:59` : null;
+
+    const payload = {
+        title: purpose,
+        description: "Đặt từ giao diện web",
+        room_id: parseInt(roomId),
+        start_time: start_time,
+        end_time: end_time,
+        is_recurring: recurrenceType !== 'none',
+        recurrence_type: recurrenceType,
+        recurrence_end_date: recurrenceEndDate
+    };
+
+    const token = localStorage.getItem('token') || '';
+
+    try {
+        const res = await fetch(`${API_BASE}/meetings/book`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
         });
 
-        alert(`Đặt phòng thành công cho mục đích: ${purpose}!`);
-        closeBookModal();
+        if (res.ok) {
+            alert("Đã đặt lịch họp thành công!");
+            closeBookModal();
+            
+            const role = localStorage.getItem('role') || 'user';
+            fetchRooms(role === 'admin');
+            fetchMyBookings();
+        } else {
+            const err = await res.json();
+            alert(`Lỗi đặt phòng: ${err.detail || 'Không thể đặt phòng vào khung giờ này'}`);
+        }
+    } catch (err) {
+        console.error("Lỗi đặt phòng:", err);
+        alert("Lỗi kết nối máy chủ!");
+    }
+}
 
-        const role = localStorage.getItem('role') || 'user';
-        renderRooms(allRooms, role === 'admin');
-        updateStats(allRooms);
-        renderMyBookings();
+/* ==========================================================================
+   MY BOOKINGS MANAGEMENT
+   ========================================================================== */
+
+async function fetchMyBookings() {
+    const token = localStorage.getItem('token') || '';
+    if (!token) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/meetings/`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+            myBookings = await res.json();
+            renderMyBookings();
+        }
+    } catch (err) {
+        console.error("Lỗi lấy danh sách lịch họp:", err);
     }
 }
 
@@ -237,35 +353,62 @@ function renderMyBookings() {
     const tbody = document.getElementById('myBookingsTableBody');
     if (!tbody) return;
 
-    if (myBookings.length === 0) {
+    if (!myBookings || myBookings.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#94a3b8;">Bạn chưa đăng ký lịch họp nào.</td></tr>';
         return;
     }
 
-    tbody.innerHTML = myBookings.map(b => `
-        <tr>
-            <td><strong>${b.roomName}</strong></td>
-            <td>${b.timeSlot}</td>
-            <td><span class="tag" style="background:#dcfce7; color:#15803d;">${b.status}</span></td>
-            <td><button class="btn-admin-action btn-admin-delete" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = myBookings.map(b => {
+        const startTime = new Date(b.start_time).toLocaleString('vi-VN');
+        const endTime = new Date(b.end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+        return `
+            <tr>
+                <td><strong>${b.title || b.roomName || 'Cuộc họp'}</strong></td>
+                <td>${startTime} - ${endTime}</td>
+                <td><span class="tag" style="background:#dcfce7; color:#15803d;">${b.status || 'Đã xác nhận'}</span></td>
+                <td><button class="btn-admin-action btn-admin-delete" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
+            </tr>
+        `;
+    }).join('');
 }
 
-function cancelBooking(bookingId) {
-    if (confirm("Bạn có muốn hủy lịch họp này không?")) {
-        myBookings = myBookings.filter(b => b.id !== bookingId);
-        renderMyBookings();
+async function cancelBooking(meetingId) {
+    if (!confirm("Bạn có chắc chắn muốn hủy lịch họp này?")) return;
+
+    const token = localStorage.getItem('token') || '';
+    try {
+        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+            alert("Đã hủy lịch họp!");
+            fetchMyBookings();
+            fetchRooms(localStorage.getItem('role') === 'admin');
+        } else {
+            const err = await res.json();
+            alert(`Lỗi hủy phòng: ${err.detail || 'Không thể hủy!'}`);
+        }
+    } catch (err) {
+        alert("Lỗi kết nối máy chủ!");
     }
 }
 
-// LỌC VÀ TÌM KIẾM
+/* ==========================================================================
+   SEARCH & FILTERING
+   ========================================================================== */
+
 function handleSearch() { applyFilters(); }
 function filterToday() { alert("Đã đồng bộ lịch họp hôm nay!"); }
 
 function applyFilters() {
-    const query = document.getElementById('searchInput').value.toLowerCase();
-    const cap = document.getElementById('capacitySelect').value;
+    const searchInput = document.getElementById('searchInput');
+    const capSelect = document.getElementById('capacitySelect');
+
+    const query = searchInput ? searchInput.value.toLowerCase() : '';
+    const cap = capSelect ? capSelect.value : 'all';
 
     let filtered = allRooms.filter(r => 
         r.name.toLowerCase().includes(query) || 
@@ -288,81 +431,74 @@ function applyFilters() {
 
 function setFilter(amenity, btn) {
     document.querySelectorAll('.chip').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+    if (btn) btn.classList.add('active');
 
     const role = localStorage.getItem('role') || 'user';
     if (amenity === 'all') {
         renderRooms(allRooms, role === 'admin');
     } else {
-        const filtered = allRooms.filter(r => (r.amenities || []).includes(amenity));
+        const filtered = allRooms.filter(r => {
+            if (!r.amenities) return false;
+            if (Array.isArray(r.amenities)) return r.amenities.includes(amenity);
+            if (typeof r.amenities === 'string') return r.amenities.includes(amenity);
+            return false;
+        });
         renderRooms(filtered, role === 'admin');
     }
 }
 
-function toggleNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
-}
+/* ==========================================================================
+   ADMIN ACTIONS (ADD / EDIT / DELETE ROOMS)
+   ========================================================================== */
 
-function updateStats(rooms) {
-    const total = rooms.length;
-    const availableCount = rooms.filter(r => r.is_available !== false).length;
-    const inUseCount = rooms.filter(r => r.is_available === false).length;
-    const capacityPercent = total > 0 ? Math.round((inUseCount / total) * 100) : 0;
-
-    document.getElementById('statTotal').innerText = total;
-    document.getElementById('statAvailable').innerText = availableCount;
-    document.getElementById('statInUse').innerText = inUseCount;
-    document.getElementById('statCapacityText').innerText = `${capacityPercent}% công suất`;
-    document.getElementById('statRatioText').innerText = `trong ${total} phòng`;
-
-    document.getElementById('summaryAvailable').innerText = availableCount;
-    document.getElementById('summaryInUse').innerText = inUseCount;
-}
-
-// ADMIN MODAL
 function openRoomModal() {
-    document.getElementById('modalTitle').innerText = 'Thêm Phòng Họp Mới';
-    document.getElementById('editRoomId').value = '';
-    document.getElementById('roomForm').reset();
-    document.getElementById('roomModal').style.display = 'flex';
+    const modalTitle = document.getElementById('modalTitle');
+    if (modalTitle) modalTitle.innerText = 'Thêm Phòng Họp Mới';
+
+    const editId = document.getElementById('editRoomId');
+    if (editId) editId.value = '';
+
+    const form = document.getElementById('roomForm');
+    if (form) form.reset();
+
+    const modal = document.getElementById('roomModal');
+    if (modal) modal.style.display = 'flex';
 }
 
 function openEditModal(roomId) {
     const room = allRooms.find(r => r.id === roomId);
     if (!room) return;
 
-    document.getElementById('modalTitle').innerText = 'Sửa Thông Tin Phòng Họp';
+    const modalTitle = document.getElementById('modalTitle');
+    if (modalTitle) modalTitle.innerText = 'Sửa Thông Tin Phòng Họp';
+
     document.getElementById('editRoomId').value = room.id;
     document.getElementById('roomName').value = room.name;
     document.getElementById('roomLocation').value = room.location || '';
     document.getElementById('roomCapacity').value = room.capacity || '';
     
-    // Xử lý amenities để hiển thị
     let amenitiesStr = '';
     if (room.amenities) {
         if (typeof room.amenities === 'string') {
             try {
                 let parsed = JSON.parse(room.amenities);
-                if(Array.isArray(parsed)){
-                    amenitiesStr = parsed.join(', ');
-                } else {
-                   amenitiesStr = room.amenities; 
-                }
+                amenitiesStr = Array.isArray(parsed) ? parsed.join(', ') : room.amenities;
             } catch (e) {
-                 amenitiesStr = room.amenities;
+                amenitiesStr = room.amenities;
             }
         } else if (Array.isArray(room.amenities)) {
-             amenitiesStr = room.amenities.join(', ');
+            amenitiesStr = room.amenities.join(', ');
         }
     }
     
     document.getElementById('roomAmenities').value = amenitiesStr;
-    document.getElementById('roomModal').style.display = 'flex';
+    const modal = document.getElementById('roomModal');
+    if (modal) modal.style.display = 'flex';
 }
 
 function closeRoomModal() {
-    document.getElementById('roomModal').style.display = 'none';
+    const modal = document.getElementById('roomModal');
+    if (modal) modal.style.display = 'none';
 }
 
 async function handleFormSubmit(e) {
@@ -379,7 +515,6 @@ async function handleFormSubmit(e) {
     };
 
     const method = editId ? 'PUT' : 'POST';
-    // Thay đổi quan trọng: Đã thêm dấu / vào cuối URL để tránh lỗi 404
     const url = editId ? `${API_BASE}/rooms/${editId}/` : `${API_BASE}/rooms/`;
 
     try {
@@ -395,7 +530,7 @@ async function handleFormSubmit(e) {
         if (res.ok) {
             closeRoomModal();
             const role = localStorage.getItem('role') || 'user';
-            fetchRooms(role === 'admin'); // Refresh list sau khi thành công
+            fetchRooms(role === 'admin');
             alert(editId ? "Cập nhật phòng thành công!" : "Thêm phòng thành công!");
         } else {
             const err = await res.json();
@@ -412,7 +547,6 @@ async function deleteRoom(roomId) {
     const token = localStorage.getItem('token') || '';
 
     try {
-        // Thay đổi quan trọng: Đã thêm dấu / vào cuối URL để tránh lỗi 404
         const res = await fetch(`${API_BASE}/rooms/${roomId}/`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
@@ -426,7 +560,7 @@ async function deleteRoom(roomId) {
             alert("Xóa phòng thành công!");
         } else {
             const err = await res.json();
-             alert(err.detail || "Thao tác thất bại!");
+            alert(err.detail || "Thao tác thất bại!");
         }
     } catch (err) {
         alert("Lỗi máy chủ!");
@@ -437,3 +571,29 @@ function logout() {
     localStorage.clear();
     window.location.href = 'index.html';
 }
+
+/* ==========================================================================
+   GLOBAL EXPORTS (Đảm bảo HTML inline event handlers gọi thành công)
+   ========================================================================== */
+window.toggleSidebar = toggleSidebar;
+window.switchToOverview = switchToOverview;
+window.switchMainTab = switchMainTab;
+window.navigateToSettings = navigateToSettings;
+window.scrollToRooms = scrollToRooms;
+window.toggleNotificationPopup = toggleNotificationPopup;
+window.openScheduleModal = openScheduleModal;
+window.closeScheduleModal = closeScheduleModal;
+window.openBookModal = openBookModal;
+window.closeBookModal = closeBookModal;
+window.handleBookSubmit = handleBookSubmit;
+window.cancelBooking = cancelBooking;
+window.handleSearch = handleSearch;
+window.filterToday = filterToday;
+window.applyFilters = applyFilters;
+window.setFilter = setFilter;
+window.openRoomModal = openRoomModal;
+window.openEditModal = openEditModal;
+window.closeRoomModal = closeRoomModal;
+window.handleFormSubmit = handleFormSubmit;
+window.deleteRoom = deleteRoom;
+window.logout = logout;
