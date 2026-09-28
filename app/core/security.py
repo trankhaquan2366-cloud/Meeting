@@ -1,7 +1,9 @@
+import os
 import hashlib
 import secrets
 from datetime import datetime, timedelta
 from typing import Any, Dict
+from dotenv import load_dotenv
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -10,8 +12,15 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.user import User
 
+# Tải các biến môi trường từ file .env
+load_dotenv()
+
 # Cấu hình Token & PBKDF2
-SECRET_KEY = "YOUR_SUPER_SECRET_KEY_FOR_MEETING_MANAGEMENT_SYSTEM"
+# Đọc SECRET_KEY từ biến môi trường thay vì hardcode
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("Lỗi: Chưa cấu hình SECRET_KEY trong file .env!")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # Token có hiệu lực trong 24 giờ
 DEFAULT_ITERATIONS = 100_000

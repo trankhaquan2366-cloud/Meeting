@@ -1,29 +1,25 @@
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from pydantic import BaseModel, Field, model_validator
+from typing import Optional
 
+# 1. Khai báo Schema cho dữ liệu tạo cuộc họp mới
 class MeetingCreateRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200, description="Tiêu đề cuộc họp")
-    description: str | None = Field(None, description="Nội dung cuộc họp")
-    room_id: int = Field(..., description="ID phòng họp")
-    start_time: datetime = Field(..., description="Thời gian bắt đầu (YYYY-MM-DD HH:MM:SS)")
-    end_time: datetime = Field(..., description="Thời gian kết thúc (YYYY-MM-DD HH:MM:SS)")
+    title: str
+    description: Optional[str] = None
+    room_id: int
+    start_time: datetime
+    end_time: datetime
+    is_recurring: Optional[bool] = False
 
-    @model_validator(mode="after")
-    def validate_times(self):
-        if self.end_time <= self.start_time:
-            raise ValueError("Thời gian kết thúc phải lớn hơn thời gian bắt đầu!")
-        return self
-
+# 2. Khai báo Schema phản hồi trả về cho Client
 class MeetingResponse(BaseModel):
     id: int
     title: str
-    description: str | None = None
+    description: Optional[str] = None
     room_id: int
-    organizer_id: int | None = None
+    user_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
-    status: str
-    created_at: datetime
+    is_recurring: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

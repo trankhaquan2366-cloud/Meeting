@@ -10,10 +10,48 @@ from app.models.room import Room
 from app.models.meeting import Meeting
 from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 
-router = APIRouter(prefix="/api/rooms", tags=["Rooms Management"])
+# Khởi tạo APIRouter (KHÔNG thêm prefix ở đây vì đã có prefix="/api/rooms" ở main.py)
+router = APIRouter()
+
+# GET /api/rooms/: Lấy danh sách tất cả phòng
+@router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
+def get_all_rooms(db: Session = Depends(get_db)):
+    return db.query(Room).all()
 
 
-# POST /api/rooms: Thêm phòng mới (Chỉ Admin)
+# GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian
+@router.get("/available", response_model=List[RoomResponse], summary="Tìm phòng trống")
+def get_available_rooms(
+    start_time: datetime,
+    end_time: datetime,
+    db: Session = Depends(get_db)
+):
+    # 1. Kiểm tra thời gian đầu vào hợp lệ
+    if start_time >= end_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Thời gian kết thúc phải lớn hơn thời gian bắt đầu."
+        )
+
+    # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
+    busy_rooms_query = db.query(Meeting.room_id).filter(
+        Meeting.status != "canceled",  # Bỏ qua các cuộc họp đã hủy
+        and_(
+            Meeting.start_time < end_time,
+            Meeting.end_time > start_time
+        )
+    ).subquery()
+
+    # 3. Lấy danh sách phòng ĐANG HOẠT ĐỘNG và KHÔNG BỊ TRÙNG LỊCH
+    available_rooms = db.query(Room).filter(
+        Room.is_active == True,
+        Room.id.notin_(busy_rooms_query)
+    ).all()
+
+    return available_rooms
+
+
+# POST /api/rooms/: Thêm phòng mới (Chỉ Admin)
 @router.post("/", response_model=RoomResponse, status_code=status.HTTP_201_CREATED, summary="Thêm phòng mới (Admin)")
 def create_room(
     room_in: RoomCreate,
@@ -42,7 +80,7 @@ def create_room(
     return new_room
 
 
-# PUT /api/rooms/{id}: Cập nhật thông tin phòng (Chỉ Admin)
+# PUT /api/rooms/{room_id}: Cập nhật thông tin phòng (Chỉ Admin)
 @router.put("/{room_id}", response_model=RoomResponse, status_code=status.HTTP_200_OK, summary="Cập nhật phòng (Admin)")
 def update_room(
     room_id: int,
@@ -65,7 +103,7 @@ def update_room(
     return room
 
 
-# DELETE /api/rooms/{id}: Xóa (ẩn - soft delete) phòng (Chỉ Admin)
+# DELETE /api/rooms/{room_id}: Xóa (ẩn - soft delete) phòng (Chỉ Admin)
 @router.delete("/{room_id}", status_code=status.HTTP_200_OK, summary="Xóa/Ẩn phòng (Admin)")
 def delete_room(
     room_id: int,
@@ -82,42 +120,3 @@ def delete_room(
     db.commit()
     
     return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}
-
-
-# GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian
-@router.get("/available", response_model=List[RoomResponse], summary="Tìm phòng trống")
-def get_available_rooms(
-    start_time: datetime,
-    end_time: datetime,
-    db: Session = Depends(get_db)
-):
-    # 1. Kiểm tra thời gian đầu vào hợp lệ
-    if start_time >= end_time:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Thời gian kết thúc phải lớn hơn thời gian bắt đầu."
-        )
-
-    # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH (Đã có người đặt trong khoảng thời gian này)
-    # Thuật toán Overlapping: (Meeting.start_time < end_time) VÀ (Meeting.end_time > start_time)
-    busy_rooms_query = db.query(Meeting.room_id).filter(
-        Meeting.status != "canceled",  # Bỏ qua các cuộc họp đã hủy
-        and_(
-            Meeting.start_time < end_time,
-            Meeting.end_time > start_time
-        )
-    ).subquery()
-
-    # 3. Lấy danh sách phòng ĐANG HOẠT ĐỘNG và KHÔNG NẰM TRONG danh sách bị trùng lịch
-    available_rooms = db.query(Room).filter(
-        Room.is_active == True,
-        Room.id.notin_(busy_rooms_query)
-    ).all()
-
-    return available_rooms
-
-
-# GET /api/rooms: API Lấy toàn bộ danh sách phòng
-@router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
-def get_all_rooms(db: Session = Depends(get_db)):
-    return db.query(Room).all()

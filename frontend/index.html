@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoomSync - Đăng Nhập & Đăng Ký</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="brand-logo">
+                <div class="logo-icon">RS</div>
+                <h2>RoomSync</h2>
+            </div>
+
+            <div class="tab-header">
+                <button id="tabLoginBtn" class="tab-btn active" onclick="switchTab('login')">Đăng Nhập</button>
+                <button id="tabRegisterBtn" class="tab-btn" onclick="switchTab('register')">Đăng Ký</button>
+            </div>
+
+            <!-- FORM ĐĂNG NHẬP -->
+            <form id="loginForm">
+                <h3 style="font-size: 18px; margin-bottom: 4px;">Đăng nhập tài khoản</h3>
+                <p style="color: #64748b; font-size: 13px; margin-bottom: 16px;">Nhập thông tin đăng nhập của bạn.</p>
+                
+                <div class="form-group">
+                    <label>Email công ty</label>
+                    <input type="email" id="loginEmail" class="form-control" placeholder="admin@congty.com" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Mật khẩu</label>
+                    <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required>
+                </div>
+                
+                <button type="submit" class="btn-primary">Đăng Nhập</button>
+            </form>
+
+            <!-- FORM ĐĂNG KÝ -->
+            <form id="registerForm" style="display: none;">
+                <h3 style="font-size: 18px; margin-bottom: 4px;">Tạo tài khoản mới</h3>
+                <p style="color: #64748b; font-size: 13px; margin-bottom: 16px;">Đăng ký để trải nghiệm hệ thống đặt phòng.</p>
+                
+                <div class="form-group">
+                    <label>Họ và tên</label>
+                    <input type="text" id="regFullName" class="form-control" placeholder="Nguyễn Văn A" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Email công ty</label>
+                    <input type="email" id="regEmail" class="form-control" placeholder="ten@congty.com" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Mật khẩu</label>
+                    <input type="password" id="regPassword" class="form-control" placeholder="Tối thiểu 6 ký tự" required minlength="6">
+                </div>
+                
+                <button type="submit" class="btn-primary" style="background-color: #16a34a;">Đăng Ký Tài Khoản</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/login.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import relationship
-
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
 from app.core.database import Base
 
 
@@ -12,7 +12,8 @@ class Meeting(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String(200), nullable=False, index=True, comment="Tiêu đề cuộc họp")
     description = Column(Text, nullable=True, comment="Nội dung cuộc họp")
-    
+    is_recurring = Column(Boolean, nullable=False, default=False, comment="Có phải lịch định kỳ không")
+    recurring_type = Column(String(20), nullable=True, comment="Loại định kỳ: weekly, monthly...")
     room_id = Column(
         Integer,
         ForeignKey("rooms.id", ondelete="CASCADE"),
