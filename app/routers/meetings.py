@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.meeting import Meeting
+from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.room import RoomResponse
 from app.schemas.meeting import MeetingCreateRequest, MeetingResponse
@@ -14,9 +14,6 @@ from app.services.meeting_service import MeetingService
 router = APIRouter(prefix="/meetings", tags=["Meetings Management"])
 
 
-# ----------------------------------------------------
-# 1. LẤY DANH SÁCH PHÒNG HỌP ĐANG HOẠT ĐỘNG
-# ----------------------------------------------------
 @router.get(
     "/rooms",
     response_model=List[RoomResponse],
@@ -27,12 +24,9 @@ def list_rooms(db: Session = Depends(get_db)):
     return MeetingService.get_all_active_rooms(db)
 
 
-# ----------------------------------------------------
-# 2. ĐẶT LỊCH HỌP MỚI (HỖ TRỢ ĐƠN & ĐỊNH KỲ)
-# ----------------------------------------------------
 @router.post(
     "/book",
-    response_model=List[MeetingResponse],  # Trả về danh sách (chứa 1 hoặc nhiều cuộc họp nếu lặp lịch)
+    response_model=List[MeetingResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Đặt lịch họp mới (Đơn & Định kỳ)",
     description="Tạo cuộc họp mới hoặc chuỗi lịch định kỳ. Hệ thống tự động kiểm tra trùng lịch và rollback toàn bộ nếu có xung đột."
@@ -42,13 +36,6 @@ def create_meeting(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Sử dụng MeetingService để xử lý nghiệp vụ:
-    - Chặn đặt lịch trong quá khứ
-    - Kiểm tra phòng họp tồn tại & active
-    - Tự động tạo chuỗi cuộc họp nếu đặt lịch định kỳ (weekly/monthly)
-    - Kiểm tra chống trùng phòng họp & Rollback nếu phát hiện xung đột
-    """
     return MeetingService.create_meeting(
         db=db,
         payload=payload,
@@ -56,9 +43,6 @@ def create_meeting(
     )
 
 
-# ----------------------------------------------------
-# 3. LẤY DANH SÁCH CUỘC HỌP (Có bộ lọc)
-# ----------------------------------------------------
 @router.get(
     "/",
     response_model=List[MeetingResponse],
@@ -82,9 +66,41 @@ def get_meetings(
     return query.all()
 
 
-# ----------------------------------------------------
-# 4. HỦY CUỘC HỌP
-# ----------------------------------------------------
+@router.get(
+    "/history",
+    response_model=List[MeetingResponse],
+    summary="Lịch sử cuộc họp",
+    description="Chỉ trả về cuộc họp đã kết thúc mà người dùng tham gia (organizer hoặc participant), sắp xếp end_time giảm dần.",
+)
+def get_meeting_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    now = datetime.utcnow()
+
+    participant_meeting_ids = (
+        db.query(MeetingParticipant.meeting_id)
+        .filter(MeetingParticipant.user_id == current_user.id)
+        .subquery()
+    )
+
+    query = (
+        db.query(Meeting)
+        .filter(
+            Meeting.end_time < now,
+            Meeting.status != "canceled",
+            (
+                (Meeting.organizer_id == current_user.id)
+                | Meeting.id.in_(participant_meeting_ids)
+            ),
+        )
+        .distinct()
+        .order_by(Meeting.end_time.desc())
+    )
+
+    return query.all()
+
+
 @router.delete(
     "/{meeting_id}",
     status_code=status.HTTP_200_OK,
@@ -102,7 +118,6 @@ def cancel_meeting(
             detail="Không tìm thấy cuộc họp."
         )
 
-    # Chỉ người tạo (organizer) hoặc Admin mới có quyền hủy
     is_admin = getattr(current_user, "role", "") == "admin"
     if meeting.organizer_id != current_user.id and not is_admin:
         raise HTTPException(
