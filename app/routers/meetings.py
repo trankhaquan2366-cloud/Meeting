@@ -8,7 +8,12 @@ from app.core.security import get_current_user
 from app.models.meeting import Meeting
 from app.models.user import User
 from app.schemas.room import RoomResponse
-from app.schemas.meeting import MeetingCreateRequest, MeetingResponse
+from app.schemas.meeting import (
+    MeetingCreateRequest, 
+    MeetingResponse, 
+    SuggestTimeRequest, 
+    SuggestTimeResponse
+)
 from app.services.meeting_service import MeetingService
 
 router = APIRouter(prefix="/meetings", tags=["Meetings Management"])
@@ -114,3 +119,24 @@ def cancel_meeting(
     db.commit()
 
     return {"status": "success", "message": f"Đã hủy cuộc họp '{meeting.title}' thành công."}
+
+
+# ----------------------------------------------------
+# 5. GỢI Ý KHUNG GIỜ TRỐNG CHO NHÓM THAM GIA
+# ----------------------------------------------------
+@router.post(
+    "/suggest-times",
+    response_model=SuggestTimeResponse,
+    summary="Gợi ý khung giờ trống",
+    description="Phân tích lịch bận của danh sách người tham gia để đề xuất các khoảng thời gian trống chung trong ngày."
+)
+def suggest_meeting_times(
+    payload: SuggestTimeRequest,
+    db: Session = Depends(get_db)
+):
+    return MeetingService.calculate_suggested_times(
+        db=db,
+        participant_ids=payload.participant_ids,
+        date_str=payload.date,
+        duration_minutes=payload.duration_minutes
+    )
