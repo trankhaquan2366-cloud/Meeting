@@ -1,75 +1,83 @@
-import os
-import hashlib
-import secrets
-from datetime import datetime, timedelta
+﻿from datetime import datetime, timedelta
 from typing import Any, Dict
+import hashlib
+import os
+import secrets
+
 from dotenv import load_dotenv
-from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.user import User
 
-# Tải các biến môi trường từ file .env
 load_dotenv()
 
-# Cấu hình Token & PBKDF2
-# Đọc SECRET_KEY từ biến môi trường thay vì hardcode
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
-    raise ValueError("Lỗi: Chưa cấu hình SECRET_KEY trong file .env!")
+    raise ValueError("SECRET_KEY is not configured")
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # Token có hiệu lực trong 24 giờ
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 DEFAULT_ITERATIONS = 100_000
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
-# --- LOGIC BĂM MẬT KHẨU BẰNG HASHLIB ---
 def hash_password(plain_password: str, salt: str | None = None, iterations: int = DEFAULT_ITERATIONS) -> str:
-    """Băm mật khẩu bằng PBKDF2-HMAC-SHA256."""
-    if salt is None:
-        salt = secrets.token_hex(12)
-    dk = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), iterations)
-    return f"pbkdf2_sha256${iterations}${salt}${dk.hex()}"
+    """Return a PBKDF2-HMAC-SHA256 password hash."""
+    salt = salt or secrets.token_hex(12)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), iterations
+    )
+    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Kiểm tra mật khẩu với hash PBKDF2 tương thích với seed.py và schema.sql."""
     try:
-        algo, iter_s, salt, digest_hex = hashed_password.split("$", 3)
-        if algo != "pbkdf2_sha256":
+        algorithm, iterations_text, salt, expected = hashed_password.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
             return False
-        iterations = int(iter_s)
-        dk = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), iterations)
-        return secrets.compare_digest(dk.hex(), digest_hex)
-    except Exception:
+        digest = hashlib.pbkdf2_hmac(
+            "sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), int(iterations_text)
+        )
+        return secrets.compare_digest(digest.hex(), expected)
+    except (TypeError, ValueError):
         return False
 
 
-# --- LOGIC QUẢN LÝ JWT TOKEN ---
+def authenticate_user(db: Session, username: str, password: str) -> User:
+    """Authenticate exclusively against the MySQL users table."""
+    user = db.query(User).filter(User.username == username).first()
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sai tên đăng nhập hoặc mật khẩu",
+    )
+    if user is None or not verify_password(password, user.hashed_password):
+        raise invalid
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
+    return user
+
+
 def create_access_token(data: Dict[str, Any], expires_delta: timedelta | None = None) -> str:
-    """Tạo chuỗi JWT Token chứa thông tin username và role."""
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    payload = data.copy()
+    payload["exp"] = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """Xác thực Token và lấy thông tin User đang đăng nhập."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Phiên đăng nhập không hợp lệ hoặc đã hết hạn!",
+        detail="Phiên đăng nhập không hợp lệ hoặc đã hết hạn",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        username = payload.get("sub")
+        if not username:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
@@ -81,12 +89,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 def require_role(required_role: str):
-    """Middleware phân quyền: Kiểm tra vai trò Admin hoặc Employee."""
     def role_checker(current_user: User = Depends(get_current_user)):
         if current_user.role != required_role and current_user.role != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Quyền hạn không đủ! Yêu cầu vai trò {required_role.upper()}."
+                detail=f"Quyền hạn không đủ! Yêu cầu vai trò {required_role.upper()}.",
             )
         return current_user
+
     return role_checker
