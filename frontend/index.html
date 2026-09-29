@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập - RS RoomSync</title>
+    <link rel="stylesheet" href="static/css/style.css">
+</head>
+<body>
+    <div class="auth-wrapper">
+        <div class="auth-card">
+            <!-- LOGO THƯƠNG HIỆU -->
+            <div class="auth-brand">
+                <span class="logo-icon">RS</span>
+                <span class="brand-name">RoomSync</span>
+            </div>
+
+            <!-- TAB CHUYỂN ĐỔI ĐĂNG NHẬP / ĐĂNG KÝ -->
+            <div class="auth-tabs">
+                <button type="button" class="auth-tab-btn active" id="btnLoginTab" onclick="switchAuthTab('login')">Đăng Nhập</button>
+                <button type="button" class="auth-tab-btn" id="btnRegisterTab" onclick="switchAuthTab('register')">Đăng Ký</button>
+            </div>
+
+            <!-- FORM ĐĂNG NHẬP -->
+            <form id="loginForm" onsubmit="handleLoginSubmit(event)">
+                <div class="auth-header">
+                    <h2>Đăng nhập tài khoản</h2>
+                    <p>Nhập thông tin đăng nhập của bạn để tiếp tục</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Email công ty</label>
+                    <input type="email" id="loginEmail" class="form-control" placeholder="admin@congty.com" required value="admin@congty.com">
+                </div>
+
+                <div class="form-group">
+                    <label>Mật khẩu</label>
+                    <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required value="123456">
+                </div>
+
+                <button type="submit" class="btn-auth-submit">Đăng Nhập</button>
+            </form>
+
+            <!-- FORM ĐĂNG KÝ -->
+            <form id="registerForm" onsubmit="handleRegisterSubmit(event)" style="display: none;">
+                <div class="auth-header">
+                    <h2>Tạo tài khoản mới</h2>
+                    <p>Điền thông tin nhân viên để đăng ký tài khoản</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Họ và tên</label>
+                    <input type="text" id="regFullName" class="form-control" placeholder="Nguyễn Văn A" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Email công ty</label>
+                    <input type="email" id="regEmail" class="form-control" placeholder="nv.a@company.com" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Mật khẩu</label>
+                    <input type="password" id="regPassword" class="form-control" placeholder="••••••••" required>
+                </div>
+
+                <button type="submit" class="btn-auth-submit">Đăng Ký Tài Khoản</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    // 1. LẤY HOẶC KHỞI TẠO DANH SÁCH TÀI KHOẢN (KHÔNG BỊ XÓA KHI LOGOUT)
+    function getStoredUsers() {
+        const users = localStorage.getItem('app_users');
+        if (!users) {
+            const defaultUsers = [
+                {
+                    fullName: "Quản trị viên",
+                    email: "admin@congty.com",
+                    password: "123456",
+                    role: "admin"
+                }
+            ];
+            localStorage.setItem('app_users', JSON.stringify(defaultUsers));
+            return defaultUsers;
+        }
+        return JSON.parse(users);
+    }
+
+    function switchAuthTab(tab) {
+        const loginForm = document.getElementById('loginForm');
+        const registerForm = document.getElementById('registerForm');
+        const btnLoginTab = document.getElementById('btnLoginTab');
+        const btnRegisterTab = document.getElementById('btnRegisterTab');
+
+        if (tab === 'login') {
+            loginForm.style.display = 'block';
+            registerForm.style.display = 'none';
+            btnLoginTab.classList.add('active');
+            btnRegisterTab.classList.remove('active');
+        } else {
+            loginForm.style.display = 'none';
+            registerForm.style.display = 'block';
+            btnLoginTab.classList.remove('active');
+            btnRegisterTab.classList.add('active');
+        }
+    }
+
+    // 2. XỬ LÝ ĐĂNG KÝ (LƯU TÀI KHOẢN MỚI VÀO BỘ NHỚ DÙNG CHUNG)
+    function handleRegisterSubmit(e) {
+        e.preventDefault();
+        
+        const fullName = document.getElementById('regFullName').value.trim();
+        const email = document.getElementById('regEmail').value.trim().toLowerCase();
+        const password = document.getElementById('regPassword').value;
+
+        let users = getStoredUsers();
+
+        const isExist = users.some(u => u.email === email);
+        if (isExist) {
+            alert('Email này đã được đăng ký! Vui lòng đăng nhập.');
+            return;
+        }
+
+        const newUser = {
+            fullName: fullName,
+            email: email,
+            password: password,
+            role: 'user'
+        };
+
+        users.push(newUser);
+        localStorage.setItem('app_users', JSON.stringify(users));
+
+        alert('Đăng ký tài khoản thành công! Bây giờ bạn có thể đăng nhập.');
+        
+        document.getElementById('loginEmail').value = email;
+        document.getElementById('loginPassword').value = '';
+        switchAuthTab('login');
+    }
+
+    // 3. XỬ LÝ ĐĂNG NHẬP (CHỈ XÓA SESSION PHIÊN HỆ THỐNG, GIỮ NGUYÊN DANH SÁCH APP_USERS)
+    function handleLoginSubmit(e) {
+        e.preventDefault();
+        
+        const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+        const password = document.getElementById('loginPassword').value;
+
+        const users = getStoredUsers();
+        const matchedUser = users.find(u => u.email === email && u.password === password);
+
+        if (!matchedUser) {
+            alert('Đăng nhập thất bại! Tài khoản chưa đăng ký hoặc mật khẩu không chính xác.');
+            return;
+        }
+
+        // CHỈ XÓA PHIÊN ĐĂNG NHẬP HIỆN TẠI, KHÔNG XÓA DỮ LIỆU TÀI KHOẢN VÀ ĐẶT PHÒNG
+        localStorage.removeItem('token');
+        localStorage.removeItem('user_email');
+        localStorage.removeItem('user_name');
+        localStorage.removeItem('role');
+
+        // LƯU PHIÊN ĐĂNG NHẬP MỚI
+        localStorage.setItem('token', 'mock-jwt-token-' + Date.now());
+        localStorage.setItem('user_email', matchedUser.email);
+        localStorage.setItem('user_name', matchedUser.fullName);
+        localStorage.setItem('role', matchedUser.role);
+
+        window.location.href = 'dashboard.html';
+    }
+
+    getStoredUsers();
+</script>
+</body>
+</html>
