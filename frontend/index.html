@@ -3,173 +3,298 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Đăng nhập - RS RoomSync</title>
+    <title>Đăng nhập & Đăng ký - RS RoomSync</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="static/css/style.css">
+    <style>
+        .custom-input:focus {
+            border-color: #004CFF !important;
+            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
+        }
+    </style>
 </head>
-<body>
-    <div class="auth-wrapper">
-        <div class="auth-card">
-            <!-- LOGO THƯƠNG HIỆU -->
-            <div class="auth-brand">
-                <span class="logo-icon">RS</span>
-                <span class="brand-name">RoomSync</span>
+<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
+
+    <div class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
+        
+        <!-- CỘT BÊN TRÁI: KHUNG CHỨA FORM -->
+        <div class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
+            
+            <div class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
+                
+                <!-- LOGO THƯƠNG HIỆU -->
+                <div class="flex items-center gap-2.5 mb-6">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background-color: #004CFF;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
+                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
+                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
+                            <circle cx="12" cy="15" r="1.5" fill="white" />
+                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
+                        </svg>
+                    </div>
+                    <span class="text-[17px] font-bold text-gray-900 tracking-tight">RoomSync</span>
+                </div>
+
+                <!-- TABS CHUYỂN ĐỔI ĐĂNG NHẬP / ĐĂNG KÝ -->
+                <div class="flex bg-gray-100 p-1 rounded-xl mb-6">
+                    <button type="button" id="btnLoginTab" onclick="switchAuthTab('login')"
+                            class="flex-1 py-2 text-xs font-semibold rounded-lg transition-all text-[#004CFF] bg-white shadow-sm">
+                        Đăng Nhập
+                    </button>
+                    <button type="button" id="btnRegisterTab" onclick="switchAuthTab('register')"
+                            class="flex-1 py-2 text-xs font-semibold rounded-lg transition-all text-gray-500 hover:text-gray-900">
+                        Đăng Ký
+                    </button>
+                </div>
+
+                <!-- 1. FORM ĐĂNG NHẬP -->
+                <form id="loginForm" onsubmit="handleLoginSubmit(event)" class="w-full">
+                    <div class="mb-6">
+                        <h1 class="text-[22px] leading-tight text-gray-900 tracking-tight font-bold">
+                            Đăng nhập tài khoản
+                        </h1>
+                        <p class="mt-1 text-xs text-gray-500">
+                            Chào mừng trở lại. Nhập thông tin để tiếp tục.
+                        </p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="loginEmail" class="block text-xs font-semibold text-gray-700 mb-1.5">
+                            Email công ty
+                        </label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            </span>
+                            <input type="email" id="loginEmail" placeholder="admin@congty.com" required value="admin@congty.com"
+                                   class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-xs text-gray-900 placeholder-gray-400 bg-white outline-none" />
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="loginPassword" class="block text-xs font-semibold text-gray-700 mb-1.5">
+                            Mật khẩu
+                        </label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            </span>
+                            <input type="password" id="loginPassword" placeholder="••••••••" required value="123456"
+                                   class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-xs text-gray-900 placeholder-gray-400 bg-white outline-none" />
+                            <button type="button" id="toggleLoginPassword" onclick="togglePasswordVisibility('loginPassword', 'eyeIconLogin')"
+                                    class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600">
+                                <svg id="eyeIconLogin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-6">
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
+                            <input type="checkbox" class="rounded border-gray-300 text-[#004CFF] focus:ring-[#004CFF]" />
+                            <span class="text-xs text-gray-600">Ghi nhớ đăng nhập</span>
+                        </label>
+                        <a href="#" class="text-xs font-medium text-[#004CFF] hover:underline">Quên mật khẩu?</a>
+                    </div>
+
+                    <button type="submit" class="w-full py-2.5 rounded-lg text-xs font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-colors shadow-sm">
+                        Đăng Nhập
+                    </button>
+                </form>
+
+                <!-- 2. FORM ĐĂNG KÝ (MẶC ĐỊNH ẨN) -->
+                <form id="registerForm" onsubmit="handleRegisterSubmit(event)" class="w-full" style="display: none;">
+                    <div class="mb-6">
+                        <h1 class="text-[22px] leading-tight text-gray-900 tracking-tight font-bold">
+                            Tạo tài khoản mới
+                        </h1>
+                        <p class="mt-1 text-xs text-gray-500">
+                            Điền thông tin nhân viên để đăng ký vào hệ thống.
+                        </p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="regFullName" class="block text-xs font-semibold text-gray-700 mb-1.5">
+                            Họ và tên
+                        </label>
+                        <input type="text" id="regFullName" placeholder="Nguyễn Văn A" required
+                               class="custom-input w-full px-4 py-2.5 rounded-lg border border-gray-200 text-xs text-gray-900 placeholder-gray-400 bg-white outline-none" />
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="regEmail" class="block text-xs font-semibold text-gray-700 mb-1.5">
+                            Email công ty
+                        </label>
+                        <input type="email" id="regEmail" placeholder="nv.a@company.com" required
+                               class="custom-input w-full px-4 py-2.5 rounded-lg border border-gray-200 text-xs text-gray-900 placeholder-gray-400 bg-white outline-none" />
+                    </div>
+
+                    <div class="mb-5">
+                        <label for="regPassword" class="block text-xs font-semibold text-gray-700 mb-1.5">
+                            Mật khẩu
+                        </label>
+                        <input type="password" id="regPassword" placeholder="••••••••" required
+                               class="custom-input w-full px-4 py-2.5 rounded-lg border border-gray-200 text-xs text-gray-900 placeholder-gray-400 bg-white outline-none" />
+                    </div>
+
+                    <button type="submit" class="w-full py-2.5 rounded-lg text-xs font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-colors shadow-sm">
+                        Đăng Ký Tài Khoản
+                    </button>
+                </form>
+
             </div>
 
-            <!-- TAB CHUYỂN ĐỔI ĐĂNG NHẬP / ĐĂNG KÝ -->
-            <div class="auth-tabs">
-                <button type="button" class="auth-tab-btn active" id="btnLoginTab" onclick="switchAuthTab('login')">Đăng Nhập</button>
-                <button type="button" class="auth-tab-btn" id="btnRegisterTab" onclick="switchAuthTab('register')">Đăng Ký</button>
-            </div>
-
-            <!-- FORM ĐĂNG NHẬP -->
-            <form id="loginForm" onsubmit="handleLoginSubmit(event)">
-                <div class="auth-header">
-                    <h2>Đăng nhập tài khoản</h2>
-                    <p>Nhập thông tin đăng nhập của bạn để tiếp tục</p>
-                </div>
-
-                <div class="form-group">
-                    <label>Email công ty</label>
-                    <input type="email" id="loginEmail" class="form-control" placeholder="admin@congty.com" required value="admin@congty.com">
-                </div>
-
-                <div class="form-group">
-                    <label>Mật khẩu</label>
-                    <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required value="123456">
-                </div>
-
-                <button type="submit" class="btn-auth-submit">Đăng Nhập</button>
-            </form>
-
-            <!-- FORM ĐĂNG KÝ -->
-            <form id="registerForm" onsubmit="handleRegisterSubmit(event)" style="display: none;">
-                <div class="auth-header">
-                    <h2>Tạo tài khoản mới</h2>
-                    <p>Điền thông tin nhân viên để đăng ký tài khoản</p>
-                </div>
-
-                <div class="form-group">
-                    <label>Họ và tên</label>
-                    <input type="text" id="regFullName" class="form-control" placeholder="Nguyễn Văn A" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Email công ty</label>
-                    <input type="email" id="regEmail" class="form-control" placeholder="nv.a@company.com" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Mật khẩu</label>
-                    <input type="password" id="regPassword" class="form-control" placeholder="••••••••" required>
-                </div>
-
-                <button type="submit" class="btn-auth-submit">Đăng Ký Tài Khoản</button>
-            </form>
+            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
+                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
+            </p>
         </div>
+
+        <!-- CỘT BÊN PHẢI: BANNER DESKTOP BAN QUYỀN -->
+        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
+            <img src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format" alt="Phòng họp" class="absolute inset-0 w-full h-full object-cover opacity-45" />
+            <div class="absolute inset-0 bg-gradient-to-br from-[#004CFF]/35 to-[#000A3C]/70"></div>
+            
+            <div class="absolute inset-0 flex flex-col justify-end p-14 text-white">
+                <div class="flex flex-wrap gap-2.5 mb-8">
+                    <span class="px-3 py-1 rounded-full text-[11px] font-medium text-white/90 border border-white/20 bg-white/10 backdrop-blur-sm">Đặt phòng họp</span>
+                    <span class="px-3 py-1 rounded-full text-[11px] font-medium text-white/90 border border-white/20 bg-white/10 backdrop-blur-sm">Đồng bộ lịch</span>
+                    <span class="px-3 py-1 rounded-full text-[11px] font-medium text-white/90 border border-white/20 bg-white/10 backdrop-blur-sm">Mời người tham dự</span>
+                </div>
+
+                <h2 class="text-3xl font-semibold leading-snug mb-3">
+                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
+                </h2>
+                <p class="text-xs text-white/70 max-w-sm leading-relaxed">
+                    RoomSync giúp đội nhóm nắm rõ tình trạng toàn bộ phòng họp — đăng ký, quản lý và tối ưu hóa không gian làm việc tại một nơi duy nhất.
+                </p>
+
+                <div class="flex gap-8 mt-8 pt-6 border-t border-white/15">
+                    <div>
+                        <div class="text-base font-bold text-white">2.400+</div>
+                        <div class="text-[11px] text-white/50">Phòng quản lý</div>
+                    </div>
+                    <div>
+                        <div class="text-base font-bold text-white">98,5%</div>
+                        <div class="text-[11px] text-white/50">Độ chính xác</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
+    <!-- LOGIC BẢO MẬT VÀ XÁC THỰC LƯU LOCALSTORAGE -->
     <script>
-    // 1. LẤY HOẶC KHỞI TẠO DANH SÁCH TÀI KHOẢN (KHÔNG BỊ XÓA KHI LOGOUT)
-    function getStoredUsers() {
-        const users = localStorage.getItem('app_users');
-        if (!users) {
-            const defaultUsers = [
-                {
-                    fullName: "Quản trị viên",
-                    email: "admin@congty.com",
-                    password: "123456",
-                    role: "admin"
-                }
-            ];
-            localStorage.setItem('app_users', JSON.stringify(defaultUsers));
-            return defaultUsers;
-        }
-        return JSON.parse(users);
-    }
-
-    function switchAuthTab(tab) {
-        const loginForm = document.getElementById('loginForm');
-        const registerForm = document.getElementById('registerForm');
-        const btnLoginTab = document.getElementById('btnLoginTab');
-        const btnRegisterTab = document.getElementById('btnRegisterTab');
-
-        if (tab === 'login') {
-            loginForm.style.display = 'block';
-            registerForm.style.display = 'none';
-            btnLoginTab.classList.add('active');
-            btnRegisterTab.classList.remove('active');
-        } else {
-            loginForm.style.display = 'none';
-            registerForm.style.display = 'block';
-            btnLoginTab.classList.remove('active');
-            btnRegisterTab.classList.add('active');
-        }
-    }
-
-    // 2. XỬ LÝ ĐĂNG KÝ (LƯU TÀI KHOẢN MỚI VÀO BỘ NHỚ DÙNG CHUNG)
-    function handleRegisterSubmit(e) {
-        e.preventDefault();
-        
-        const fullName = document.getElementById('regFullName').value.trim();
-        const email = document.getElementById('regEmail').value.trim().toLowerCase();
-        const password = document.getElementById('regPassword').value;
-
-        let users = getStoredUsers();
-
-        const isExist = users.some(u => u.email === email);
-        if (isExist) {
-            alert('Email này đã được đăng ký! Vui lòng đăng nhập.');
-            return;
+        // 1. Khởi tạo danh sách tài khoản dùng chung
+        function getStoredUsers() {
+            const users = localStorage.getItem('app_users');
+            if (!users) {
+                const defaultUsers = [
+                    {
+                        fullName: "Quản trị viên",
+                        email: "admin@congty.com",
+                        password: "123456",
+                        role: "admin"
+                    }
+                ];
+                localStorage.setItem('app_users', JSON.stringify(defaultUsers));
+                return defaultUsers;
+            }
+            return JSON.parse(users);
         }
 
-        const newUser = {
-            fullName: fullName,
-            email: email,
-            password: password,
-            role: 'user'
-        };
+        // 2. Chuyển tab Đăng nhập / Đăng ký
+        function switchAuthTab(tab) {
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            const btnLoginTab = document.getElementById('btnLoginTab');
+            const btnRegisterTab = document.getElementById('btnRegisterTab');
 
-        users.push(newUser);
-        localStorage.setItem('app_users', JSON.stringify(users));
-
-        alert('Đăng ký tài khoản thành công! Bây giờ bạn có thể đăng nhập.');
-        
-        document.getElementById('loginEmail').value = email;
-        document.getElementById('loginPassword').value = '';
-        switchAuthTab('login');
-    }
-
-    // 3. XỬ LÝ ĐĂNG NHẬP (CHỈ XÓA SESSION PHIÊN HỆ THỐNG, GIỮ NGUYÊN DANH SÁCH APP_USERS)
-    function handleLoginSubmit(e) {
-        e.preventDefault();
-        
-        const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-        const password = document.getElementById('loginPassword').value;
-
-        const users = getStoredUsers();
-        const matchedUser = users.find(u => u.email === email && u.password === password);
-
-        if (!matchedUser) {
-            alert('Đăng nhập thất bại! Tài khoản chưa đăng ký hoặc mật khẩu không chính xác.');
-            return;
+            if (tab === 'login') {
+                loginForm.style.display = 'block';
+                registerForm.style.display = 'none';
+                btnLoginTab.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition-all text-[#004CFF] bg-white shadow-sm";
+                btnRegisterTab.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition-all text-gray-500 hover:text-gray-900";
+            } else {
+                loginForm.style.display = 'none';
+                registerForm.style.display = 'block';
+                btnLoginTab.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition-all text-gray-500 hover:text-gray-900";
+                btnRegisterTab.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition-all text-[#004CFF] bg-white shadow-sm";
+            }
         }
 
-        // CHỈ XÓA PHIÊN ĐĂNG NHẬP HIỆN TẠI, KHÔNG XÓA DỮ LIỆU TÀI KHOẢN VÀ ĐẶT PHÒNG
-        localStorage.removeItem('token');
-        localStorage.removeItem('user_email');
-        localStorage.removeItem('user_name');
-        localStorage.removeItem('role');
+        // 3. Toggle password visibility
+        function togglePasswordVisibility(inputId, iconId) {
+            const input = document.getElementById(inputId);
+            if (input) {
+                input.type = input.type === 'password' ? 'text' : 'password';
+            }
+        }
 
-        // LƯU PHIÊN ĐĂNG NHẬP MỚI
-        localStorage.setItem('token', 'mock-jwt-token-' + Date.now());
-        localStorage.setItem('user_email', matchedUser.email);
-        localStorage.setItem('user_name', matchedUser.fullName);
-        localStorage.setItem('role', matchedUser.role);
+        // 4. Xử lý Đăng ký
+        function handleRegisterSubmit(e) {
+            e.preventDefault();
+            
+            const fullName = document.getElementById('regFullName').value.trim();
+            const email = document.getElementById('regEmail').value.trim().toLowerCase();
+            const password = document.getElementById('regPassword').value;
 
-        window.location.href = 'dashboard.html';
-    }
+            let users = getStoredUsers();
 
-    getStoredUsers();
-</script>
+            const isExist = users.some(u => u.email === email);
+            if (isExist) {
+                alert('Email này đã được đăng ký! Vui lòng đăng nhập.');
+                return;
+            }
+
+            const newUser = {
+                fullName: fullName,
+                email: email,
+                password: password,
+                role: 'user'
+            };
+
+            users.push(newUser);
+            localStorage.setItem('app_users', JSON.stringify(users));
+
+            alert('Đăng ký tài khoản thành công! Bạn có thể đăng nhập ngay bây giờ.');
+            
+            document.getElementById('loginEmail').value = email;
+            document.getElementById('loginPassword').value = '';
+            switchAuthTab('login');
+        }
+
+        // 5. Xử lý Đăng nhập
+        function handleLoginSubmit(e) {
+            e.preventDefault();
+            
+            const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+            const password = document.getElementById('loginPassword').value;
+
+            const users = getStoredUsers();
+            const matchedUser = users.find(u => u.email === email && u.password === password);
+
+            if (!matchedUser) {
+                alert('Đăng nhập thất bại! Tài khoản chưa đăng ký hoặc mật khẩu không chính xác.');
+                return;
+            }
+
+            // Xóa phiên đăng nhập cũ, lưu phiên đăng nhập mới
+            localStorage.removeItem('token');
+            localStorage.removeItem('user_email');
+            localStorage.removeItem('user_name');
+            localStorage.removeItem('role');
+
+            localStorage.setItem('token', 'mock-jwt-token-' + Date.now());
+            localStorage.setItem('user_email', matchedUser.email);
+            localStorage.setItem('user_name', matchedUser.fullName);
+            localStorage.setItem('role', matchedUser.role);
+
+            window.location.href = 'dashboard.html';
+        }
+
+        getStoredUsers();
+    </script>
 </body>
 </html>
