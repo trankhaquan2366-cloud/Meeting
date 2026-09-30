@@ -119,4 +119,48 @@ def delete_room(
     room.is_active = False
     db.commit()
     
-    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}
+    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}from datetime import datetime
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.schemas.room import RoomResponse
+from app.services import room_service
+
+# Tận dụng router sẵn có hoặc khởi tạo nếu chưa có
+router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
+
+
+@router.get("/available/", response_model=List[RoomResponse])
+from datetime import datetime
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.schemas.room import RoomResponse
+from app.services import room_service
+
+
+@router.get("/available/", response_model=List[RoomResponse])
+def read_available_rooms(
+    start_time: datetime = Query(..., description="Thời gian bắt đầu"),
+    end_time: datetime = Query(..., description="Thời gian kết thúc"),
+    min_capacity: Optional[int] = Query(0, description="Sức chứa tối thiểu"),
+    db: Session = Depends(get_db),
+):
+    if start_time >= end_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Thời gian bắt đầu phải nhỏ hơn thời gian kết thúc!",
+        )
+
+    rooms = room_service.get_available_rooms(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        min_capacity=min_capacity,
+    )
+
+    return rooms

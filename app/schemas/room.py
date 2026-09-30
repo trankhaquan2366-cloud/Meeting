@@ -30,3 +30,32 @@ class RoomResponse(RoomBase):
 
     class Config:
         from_attributes = True
+        from pydantic import BaseModel
+from typing import Optional
+
+from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional
+
+
+# Schema cơ sở cho Phòng
+class RoomBase(BaseModel):
+    name: str
+    capacity: int
+    location: Optional[str] = None
+    is_active: bool = True
+
+
+# Schema tạo Phòng mới
+class RoomCreate(RoomBase):
+    pass
+
+
+# Schema trả về thông tin Phòng
+class RoomResponse(RoomBase):
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
