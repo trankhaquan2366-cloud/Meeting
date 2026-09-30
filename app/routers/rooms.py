@@ -119,7 +119,7 @@ def delete_room(
     room.is_active = False
     db.commit()
     
-    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}from datetime import datetime
+  return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}  
 @router.get("/available/", response_model=List[RoomResponse])
 def read_available_rooms(
     start_time: datetime = Query(..., description="Thời gian bắt đầu"),
