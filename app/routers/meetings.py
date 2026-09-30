@@ -59,7 +59,7 @@ def get_meetings(
     end_date: Optional[datetime] = Query(None, description="Lọc đến ngày"),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Meeting).filter(Meeting.status != "canceled")
+    query = db.query(Meeting).filter(Meeting.status.notin_(["CANCELLED", "canceled"]))
 
     if room_id:
         query = query.filter(Meeting.room_id == room_id)
@@ -93,7 +93,7 @@ def get_meeting_history(
         db.query(Meeting)
         .filter(
             Meeting.end_time < now,
-            Meeting.status != "canceled",
+            Meeting.status.notin_(["CANCELLED", "canceled"]),
             (
                 (Meeting.organizer_id == current_user.id)
                 | Meeting.id.in_(participant_meeting_ids)
@@ -106,34 +106,32 @@ def get_meeting_history(
     return query.all()
 
 
-@router.delete(
-    "/{meeting_id}",
+@router.patch(
+    "/{meeting_id}/cancel",
+    response_model=MeetingResponse,
     status_code=status.HTTP_200_OK,
-    summary="Hủy cuộc họp"
+    summary="H?y cu?c h?p",
 )
 def cancel_meeting(
     meeting_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
-    if not meeting:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Không tìm thấy cuộc họp."
-        )
+    return MeetingService.cancel_meeting(db, meeting_id, current_user)
 
-    is_admin = getattr(current_user, "role", "") == "admin"
-    if meeting.organizer_id != current_user.id and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bạn không có quyền hủy cuộc họp này."
-        )
 
-    meeting.status = "canceled"
-    db.commit()
-
-    return {"status": "success", "message": f"Đã hủy cuộc họp '{meeting.title}' thành công."}
+@router.delete(
+    "/{meeting_id}",
+    status_code=status.HTTP_200_OK,
+    summary="H?y cu?c h?p (t??ng th?ch)",
+)
+def cancel_meeting_legacy(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    return {"status": "success", "message": f"?? h?y cu?c h?p '{meeting.title}' th?nh c?ng."}
 
 
 # ----------------------------------------------------
