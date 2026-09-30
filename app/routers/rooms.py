@@ -1,15 +1,15 @@
-from typing import List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+
 
 from app.core.database import get_db
 from app.core.security import require_role
 from app.models.room import Room
 from app.models.meeting import Meeting
 from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse
-
+from app.services import room_service
 # Khởi tạo APIRouter (KHÔNG thêm prefix ở đây vì đã có prefix="/api/rooms" ở main.py)
 router = APIRouter()
 
@@ -120,29 +120,6 @@ def delete_room(
     db.commit()
     
     return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.schemas.room import RoomResponse
-from app.services import room_service
-
-# Tận dụng router sẵn có hoặc khởi tạo nếu chưa có
-router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
-
-
-@router.get("/available/", response_model=List[RoomResponse])
-from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.schemas.room import RoomResponse
-from app.services import room_service
-
-
 @router.get("/available/", response_model=List[RoomResponse])
 def read_available_rooms(
     start_time: datetime = Query(..., description="Thời gian bắt đầu"),
