@@ -227,7 +227,9 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
+  font: inherit;
   text-align: left;
+  cursor: pointer;
 }
 
 .room-select-main {
@@ -400,6 +402,47 @@ button {
   height: 17px;
 }
 
+.availability-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.availability-message {
+  margin: 6px 0 0;
+  color: var(--green);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.availability-message.is-error {
+  color: #b91c1c;
+}
+
+.availability-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.time-suggestion {
+  min-height: 32px;
+  padding: 5px 9px;
+  color: var(--blue-dark);
+  background: var(--blue-soft);
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.time-suggestion:hover,
+.time-suggestion.selected {
+  color: var(--white);
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
 .recurring-row {
   display: flex;
   align-items: center;
@@ -421,6 +464,14 @@ button {
   color: var(--gray-500);
   font-size: 12px;
   line-height: 17px;
+}
+
+.recurrence-select {
+  width: min(220px, 52%);
+  height: 40px;
+  flex: none;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .toggle {
@@ -561,6 +612,15 @@ button {
 
   .time-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .recurring-row {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .recurrence-select {
+    width: 48%;
   }
 
   .date-column {

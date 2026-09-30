@@ -89,7 +89,7 @@
                             <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
                             <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
                             <div class="hero-actions">
-                                <button class="btn-hero-primary" onclick="scrollToRooms()">Đặt phòng ngay</button>
+                                <button class="btn-hero-primary" onclick="openQuickBooking()">Đặt phòng ngay</button>
                                 <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
                             </div>
                         </div>
@@ -302,13 +302,14 @@
                 <!-- Chọn phòng (room_id) -->
                 <div class="form-field room-field">
                     <label class="field-label" for="room-select">Chọn phòng</label>
-                    <div class="room-select">
+                    <button id="room-select" class="room-select" type="button" aria-expanded="false" onclick="toggleRoomMenu()">
                         <div class="room-select-main">
                             <span class="room-name">Phòng Orchid</span>
                             <span class="room-meta">8 người · <span class="status-available">Còn trống</span></span>
                         </div>
                         <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </div>
+                    </button>
+                    <div id="roomMenu" class="room-menu" role="listbox" hidden></div>
                 </div>
 
                 <!-- Thời gian (start_time & end_time) -->
@@ -337,21 +338,25 @@
                             </div>
                         </div>
                     </div>
-                    <button class="availability-button" type="button">
+                    <button id="findAvailabilityBtn" class="availability-button" type="button" onclick="findAvailableTime()">
                         <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4M10.5 7.5v3.2l2 1.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                         Tìm giờ trống
                     </button>
+                    <p id="availabilityMessage" class="availability-message" role="status" hidden></p>
+                    <div id="availabilityResults" class="availability-results" aria-label="Các khung giờ trống"></div>
                 </fieldset>
 
                 <!-- Cuộc họp lặp lại (is_recurring) -->
                 <div class="recurring-row">
                     <div>
-                        <label class="recurring-label" for="recurring-toggle">Lặp lại cuộc họp</label>
-                        <p class="recurring-hint">Tự động tạo lịch theo chu kỳ</p>
+                        <label class="recurring-label" for="recurrence-select">Lặp lại cuộc họp</label>
+                        <p class="recurring-hint" id="recurrenceHint">Chọn chu kỳ cho cuộc họp</p>
                     </div>
-                    <button id="recurring-toggle" class="toggle toggle-on" type="button" role="switch">
-                        <span class="toggle-thumb"></span>
-                    </button>
+                    <select id="recurrence-select" class="text-control recurrence-select" name="recurrence_type">
+                        <option value="none">Không lặp</option>
+                        <option value="monthly">Lặp 1 tháng</option>
+                        <option value="until_changed">Lặp đến khi thay đổi</option>
+                    </select>
                 </div>
 
                 <!-- Mô tả (description) -->
@@ -372,6 +377,6 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=2"></script>
+    <script src="js/app.js?v=3"></script>
 </body>
 </html>

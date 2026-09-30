@@ -44,6 +44,9 @@ class MeetingService:
         recurrence_type = getattr(payload, "recurrence_type", "none")
         recurrence_end_date = getattr(payload, "recurrence_end_date", None)
 
+        if recurrence_type == "until_changed" and not recurrence_end_date:
+            recurrence_end_date = start_date + timedelta(days=365)
+
         if not recurrence_type or recurrence_type == "none" or not recurrence_end_date:
             meeting_dates.append((start_date, end_date))
         else:
@@ -56,6 +59,9 @@ class MeetingService:
                     current_start += timedelta(weeks=1)
                     current_end += timedelta(weeks=1)
                 elif recurrence_type == "monthly":
+                    current_start += timedelta(days=30)
+                    current_end += timedelta(days=30)
+                elif recurrence_type == "until_changed":
                     current_start += timedelta(days=30)
                     current_end += timedelta(days=30)
                 else:
@@ -99,6 +105,8 @@ class MeetingService:
                     organizer_id=organizer_id,
                     start_time=s_time,
                     end_time=e_time,
+                    is_recurring=recurrence_type not in (None, "none"),
+                    recurring_type=recurrence_type if recurrence_type != "none" else None,
                     status="scheduled"
                 )
                 db.add(new_meeting)
