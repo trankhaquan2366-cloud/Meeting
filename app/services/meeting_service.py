@@ -114,6 +114,31 @@ class MeetingService:
             raise
 
     @staticmethod
+    def cancel_meeting(db: Session, meeting_id: int, current_user: User):
+        """Cancel a meeting without deleting it or its participants."""
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Kh?ng t?m th?y cu?c h?p.",
+            )
+
+        is_admin = current_user.role == "admin"
+        if meeting.organizer_id != current_user.id and not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="B?n kh?ng c? quy?n h?y cu?c h?p n?y.",
+            )
+
+        # Idempotent: repeating the operation is a successful no-op.
+        if meeting.status != "CANCELLED":
+            meeting.status = "CANCELLED"
+            db.commit()
+            db.refresh(meeting)
+
+        return meeting
+
+    @staticmethod
     def get_all_active_rooms(db: Session):
         """VIỆC 1: Lấy danh sách tất cả phòng họp đang hoạt động"""
         return db.query(Room).filter(Room.is_active == True).all()
@@ -132,11 +157,12 @@ class MeetingService:
 
         # 1. Kiểm tra phòng họp có tồn tại và active không
         room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
+
         if not room:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Phòng họp không tồn tại hoặc đã bị khóa!"
-            )
+         raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Phòng họp không tồn tại hoặc đã bị ngưng hoạt động!"
+    )
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
@@ -178,7 +204,7 @@ class MeetingService:
                 # Kiểm tra chồng lặp thời gian cho từng ngày trong chu kỳ đối với đúng phòng đó
                 overlapping_meeting = db.query(Meeting).filter(
                     Meeting.room_id == payload.room_id,
-                    Meeting.status != "canceled",
+                    Meeting.status.notin_(["CANCELLED", "canceled"]),
                     and_(
                         Meeting.start_time < e_time,
                         Meeting.end_time > s_time
@@ -256,7 +282,7 @@ class MeetingService:
         day_end = datetime.combine(target_date, datetime.max.time())
         
         meetings = db.query(Meeting).filter(
-            Meeting.status != "canceled",
+            Meeting.status.notin_(["CANCELLED", "canceled"]),
             Meeting.start_time <= day_end,
             Meeting.end_time >= day_start,
             Meeting.organizer_id.in_(participant_ids)

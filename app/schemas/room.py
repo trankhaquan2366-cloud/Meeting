@@ -1,8 +1,8 @@
-from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from pydantic import BaseModel, Field
 
-# Lớp dùng chung cho các trường cơ bản của Room
+# 1. Class cơ sở định nghĩa tất cả thuộc tính chung của Phòng
 class RoomBase(BaseModel):
     name: str = Field(..., description="Tên phòng họp")
     capacity: int = Field(..., gt=0, description="Sức chứa (số người), phải lớn hơn 0")
@@ -10,11 +10,11 @@ class RoomBase(BaseModel):
     description: Optional[str] = Field(None, description="Mô tả/Trang thiết bị phòng họp")
     is_active: bool = Field(True, description="Trạng thái: True (Hoạt động) / False (Bảo trì/Khóa)")
 
-# Lớp dùng khi tạo phòng mới
+# 2. Schema nhận dữ liệu khi Tạo phòng mới (POST)
 class RoomCreate(RoomBase):
     pass
 
-# Lớp dùng khi cập nhật phòng (cho phép các trường có thể null)
+# 3. Schema nhận dữ liệu khi Cập nhật phòng (PUT)
 class RoomUpdate(BaseModel):
     name: Optional[str] = None
     capacity: Optional[int] = Field(None, gt=0)
@@ -22,40 +22,11 @@ class RoomUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
 
-# Lớp dùng để trả kết quả (Response) ra ngoài
+# 4. Schema trả dữ liệu về cho Client (Response)
 class RoomResponse(RoomBase):
     id: int
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     class Config:
-        from_attributes = True
-        from pydantic import BaseModel
-from typing import Optional
-
-from datetime import datetime
-from pydantic import BaseModel
-from typing import Optional
-
-
-# Schema cơ sở cho Phòng
-class RoomBase(BaseModel):
-    name: str
-    capacity: int
-    location: Optional[str] = None
-    is_active: bool = True
-
-
-# Schema tạo Phòng mới
-class RoomCreate(RoomBase):
-    pass
-
-
-# Schema trả về thông tin Phòng
-class RoomResponse(RoomBase):
-    id: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
+        from_attributes = True  # Pydantic v2 (Dùng orm_mode = True nếu là Pydantic v1)
