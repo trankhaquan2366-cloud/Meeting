@@ -1,5 +1,5 @@
+# app/models/user.py
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
-
 from app.core.database import Base
 
 
@@ -8,6 +8,7 @@ class User(Base):
 
     __tablename__ = "users"
 
+    # ✅ Sửa primary_primary_key thành primary_key
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False, index=True, comment="Tên đăng nhập")
     email = Column(String(150), unique=True, nullable=True, comment="Địa chỉ Email")

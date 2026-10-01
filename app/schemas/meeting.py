@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict
+from typing import Optional, List, Any
+from pydantic import BaseModel, ConfigDict, field_validator
+from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentItemOutput
 
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
 class MeetingCreateRequest(BaseModel):
@@ -12,8 +13,11 @@ class MeetingCreateRequest(BaseModel):
 
     # Bổ sung các trường để hỗ trợ đặt lịch định kỳ
     is_recurring: Optional[bool] = False
-    recurrence_type: Optional[str] = "none" # Các giá trị: "none", "weekly", "monthly"
+    recurrence_type: Optional[str] = "none" # Các giá trị: "none", "weekly", "monthly", "until_changed"
     recurrence_end_date: Optional[datetime] = None
+
+    # Thiết bị mượn kèm
+    equipments: Optional[List[MeetingEquipmentItemInput]] = []
 
 # 2. Schema phản hồi thông tin cuộc họp trả về cho Client (Response)
 class MeetingResponse(BaseModel):
@@ -21,14 +25,34 @@ class MeetingResponse(BaseModel):
     title: str
     description: Optional[str] = None
     room_id: int
-    organizer_id: Optional[int] = None # Đã đổi từ user_id -> organizer_id cho khớp với Model
+    organizer_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
     is_recurring: bool = False
     recurring_type: Optional[str] = None
     status: str
+    equipments: Optional[List[MeetingEquipmentItemOutput]] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator('equipments', mode='before')
+    @classmethod
+    def parse_equipments(cls, v: Any):
+        if not v:
+            return []
+        res = []
+        for item in v:
+            if isinstance(item, dict):
+                res.append(item)
+            else:
+                eq_name = getattr(getattr(item, 'equipment', None), 'name', 'Thiết bị')
+                res.append({
+                    'equipment_id': item.equipment_id,
+                    'equipment_name': eq_name,
+                    'quantity': item.quantity,
+                    'note': getattr(item, 'note', None)
+                })
+        return res
 
 
 # 3. Schema cho tính năng gợi ý khung giờ trống (Bổ sung mới)

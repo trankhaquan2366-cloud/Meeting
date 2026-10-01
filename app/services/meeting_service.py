@@ -96,6 +96,13 @@ class MeetingService:
         # 3. Vòng lặp kiểm tra trùng phòng & quản lý Transaction (Rollback nếu dính bất kỳ ngày nào)
         try:
             created_meetings = []
+            requested_equipments = getattr(payload, "equipments", []) or []
+
+            # Kiểm tra tồn kho thiết bị cho từng khung giờ
+            if requested_equipments:
+                from app.services.equipment_service import check_equipment_availability
+                for s_time, e_time in meeting_dates:
+                    check_equipment_availability(db, s_time, e_time, requested_equipments)
             
             for s_time, e_time in meeting_dates:
                 # Kiểm tra chồng lặp thời gian cho từng ngày trong chu kỳ đối với đúng phòng đó
@@ -136,6 +143,20 @@ class MeetingService:
                     status="scheduled"
                 )
                 db.add(new_meeting)
+                db.flush()
+
+                # Lưu các thiết bị mượn kèm
+                if requested_equipments:
+                    from app.models.equipment import MeetingEquipment
+                    for item in requested_equipments:
+                        me = MeetingEquipment(
+                            meeting_id=new_meeting.id,
+                            equipment_id=item.equipment_id,
+                            quantity=item.quantity,
+                            note=getattr(item, 'note', None)
+                        )
+                        db.add(me)
+
                 created_meetings.append(new_meeting)
 
             # Tiến hành commit lưu tất cả vào database

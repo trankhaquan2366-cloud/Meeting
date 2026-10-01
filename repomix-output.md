@@ -81,6 +81,7 @@ tests/
   __init__.py
   conftest.py
   helpers.py
+  test_meeting_cancel.py
   test_meetings_history.py
 .env.example
 .gitignore
@@ -357,6 +358,135 @@ def _make_token(user: User) -> str:
 
 def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+````
+
+## File: tests/test_meeting_cancel.py
+````python
+from datetime import datetime, timedelta
+
+from sqlalchemy.orm import Session
+from fastapi.testclient import TestClient
+
+from tests.helpers import (
+    _add_participant,
+    _auth_header,
+    _create_meeting,
+    _create_room,
+    _create_user,
+    _make_token,
+)
+from app.models.meeting import MeetingParticipant
+
+
+def _future_window():
+    start = datetime.utcnow() + timedelta(days=2)
+    return start, start + timedelta(hours=1)
+
+
+def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "cancel-organizer")
+    participant = _create_user(db_session, "cancel-participant")
+    room = _create_room(db_session, "Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, participant)
+
+    headers = _auth_header(_make_token(organizer))
+    response = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+    repeated = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "CANCELLED"
+
+    db_session.expire_all()
+    saved = db_session.get(type(meeting), meeting.id)
+    assert saved.status == "CANCELLED"
+    assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
+
+
+def test_admin_can_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "admin-target-organizer")
+    admin = _create_user(db_session, "cancel-admin", role="admin")
+    room = _create_room(db_session, "Admin Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(admin)),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "protected-organizer")
+    outsider = _create_user(db_session, "cancel-outsider")
+    room = _create_room(db_session, "Protected Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(outsider)),
+    )
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+
+
+def test_cancel_requires_authentication(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "auth-cancel-organizer")
+    room = _create_room(db_session, "Auth Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(f"/api/meetings/{meeting.id}/cancel")
+    assert response.status_code == 401
+
+
+def test_cancel_missing_meeting_returns_404(client: TestClient, db_session: Session):
+    user = _create_user(db_session, "missing-cancel-user")
+    response = client.patch(
+        "/api/meetings/999999/cancel",
+        headers=_auth_header(_make_token(user)),
+    )
+    assert response.status_code == 404
+
+
+def test_room_can_be_booked_again_after_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "reuse-organizer")
+    room = _create_room(db_session, "Reusable Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    cancel = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert cancel.status_code == 200
+
+    booking = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Replacement meeting",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert booking.status_code == 201
+    assert len(booking.json()) == 1
+
+    available = client.get(
+        "/api/rooms/available/",
+        params={"start_time": start.isoformat(), "end_time": end.isoformat()},
+    )
+    assert available.status_code == 200
+    assert room.id not in {item["id"] for item in available.json()}
 ````
 
 ## File: tests/test_meetings_history.py
@@ -1443,71 +1573,6 @@ def admin_only_route(current_user: User = Depends(require_role("admin"))):
     return {"status": "success", "message": f"Xin chào Admin {current_user.full_name}! Bạn có toàn quyền quản trị."}
 ````
 
-## File: app/schemas/room.py
-````python
-from pydantic import BaseModel, Field
-from typing import Optional
-from datetime import datetime
-
-# Lớp dùng chung cho các trường cơ bản của Room
-class RoomBase(BaseModel):
-    name: str = Field(..., description="Tên phòng họp")
-    capacity: int = Field(..., gt=0, description="Sức chứa (số người), phải lớn hơn 0")
-    location: Optional[str] = Field(None, description="Vị trí/Tầng")
-    description: Optional[str] = Field(None, description="Mô tả/Trang thiết bị phòng họp")
-    is_active: bool = Field(True, description="Trạng thái: True (Hoạt động) / False (Bảo trì/Khóa)")
-
-# Lớp dùng khi tạo phòng mới
-class RoomCreate(RoomBase):
-    pass
-
-# Lớp dùng khi cập nhật phòng (cho phép các trường có thể null)
-class RoomUpdate(BaseModel):
-    name: Optional[str] = None
-    capacity: Optional[int] = Field(None, gt=0)
-    location: Optional[str] = None
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
-
-# Lớp dùng để trả kết quả (Response) ra ngoài
-class RoomResponse(RoomBase):
-    id: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-        from pydantic import BaseModel
-from typing import Optional
-
-from datetime import datetime
-from pydantic import BaseModel
-from typing import Optional
-
-
-# Schema cơ sở cho Phòng
-class RoomBase(BaseModel):
-    name: str
-    capacity: int
-    location: Optional[str] = None
-    is_active: bool = True
-
-
-# Schema tạo Phòng mới
-class RoomCreate(RoomBase):
-    pass
-
-
-# Schema trả về thông tin Phòng
-class RoomResponse(RoomBase):
-    id: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-````
-
 ## File: frontend/assets/index-DDntIe9W.css
 ````css
 @import "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";@layer components;@layer properties{@supports (((-webkit-hyphens:none)) and (not (margin-trim:inline))) or ((-moz-orient:inline) and (not (color:rgb(from red r g b)))){*,:before,:after,::backdrop{--tw-translate-x:0;--tw-translate-y:0;--tw-translate-z:0;--tw-rotate-x:initial;--tw-rotate-y:initial;--tw-rotate-z:initial;--tw-skew-x:initial;--tw-skew-y:initial;--tw-space-y-reverse:0;--tw-border-style:solid;--tw-leading:initial;--tw-font-weight:initial;--tw-tracking:initial;--tw-shadow:0 0 #0000;--tw-shadow-color:initial;--tw-shadow-alpha:100%;--tw-inset-shadow:0 0 #0000;--tw-inset-shadow-color:initial;--tw-inset-shadow-alpha:100%;--tw-ring-color:initial;--tw-ring-shadow:0 0 #0000;--tw-inset-ring-color:initial;--tw-inset-ring-shadow:0 0 #0000;--tw-ring-inset:initial;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-offset-shadow:0 0 #0000;--tw-blur:initial;--tw-brightness:initial;--tw-contrast:initial;--tw-grayscale:initial;--tw-hue-rotate:initial;--tw-invert:initial;--tw-opacity:initial;--tw-saturate:initial;--tw-sepia:initial;--tw-drop-shadow:initial;--tw-drop-shadow-color:initial;--tw-drop-shadow-alpha:100%;--tw-drop-shadow-size:initial}}}@layer theme{:root,:host{--font-mono:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;--color-red-500:oklch(63.7% .237 25.331);--color-green-500:oklch(72.3% .219 149.579);--color-blue-400:oklch(70.7% .165 254.624);--color-gray-50:oklch(98.5% .002 247.839);--color-gray-100:oklch(96.7% .003 264.542);--color-gray-200:oklch(92.8% .006 264.531);--color-gray-300:oklch(87.2% .01 258.338);--color-gray-400:oklch(70.7% .022 261.325);--color-gray-500:oklch(55.1% .027 264.364);--color-gray-600:oklch(44.6% .03 256.802);--color-gray-700:oklch(37.3% .034 259.733);--color-gray-800:oklch(27.8% .033 256.848);--color-gray-900:oklch(21% .034 264.665);--color-white:#fff;--spacing:.25rem;--text-xs:.75rem;--text-xs--line-height:calc(1 / .75);--text-sm:.875rem;--text-sm--line-height:calc(1.25 / .875);--text-lg:1.125rem;--text-lg--line-height:calc(1.75 / 1.125);--text-xl:1.25rem;--text-xl--line-height:calc(1.75 / 1.25);--text-2xl:1.5rem;--text-2xl--line-height:calc(2 / 1.5);--font-weight-medium:500;--font-weight-semibold:600;--font-weight-bold:700;--tracking-tight:-.025em;--leading-snug:1.375;--radius-md:.375rem;--radius-lg:.5rem;--default-transition-duration:.15s;--default-transition-timing-function:cubic-bezier(.4, 0, .2, 1);--default-font-family:"Inter", system-ui, sans-serif;--default-mono-font-family:var(--font-mono)}}@layer base{*,:after,:before,::backdrop{box-sizing:border-box;border:0 solid;margin:0;padding:0}::file-selector-button{box-sizing:border-box;border:0 solid;margin:0;padding:0}html,:host{-webkit-text-size-adjust:100%;tab-size:4;line-height:1.5;font-family:var(--default-font-family,-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");font-feature-settings:var(--default-font-feature-settings,normal);font-variation-settings:var(--default-font-variation-settings,normal);-webkit-tap-highlight-color:transparent}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;-webkit-text-decoration:inherit;-webkit-text-decoration:inherit;-webkit-text-decoration:inherit;-webkit-text-decoration:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,samp,pre{font-family:var(--default-mono-font-family,ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);font-feature-settings:var(--default-mono-font-feature-settings,normal);font-variation-settings:var(--default-mono-font-variation-settings,normal);font-size:1em}small{font-size:80%}sub,sup{vertical-align:baseline;font-size:75%;line-height:0;position:relative}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}:-moz-focusring:where(:not(iframe)){outline:auto}progress{vertical-align:baseline}summary{display:list-item}ol,ul,menu{list-style:none}img,svg,video,canvas,audio,iframe,embed,object{vertical-align:middle;display:block}img,video{max-width:100%;height:auto}button,input,select,optgroup,textarea{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}::file-selector-button{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}:where(select:is([multiple],[size])) optgroup{font-weight:bolder}:where(select:is([multiple],[size])) optgroup option{padding-inline-start:20px}::file-selector-button{margin-inline-end:4px}::placeholder{opacity:1}@supports (not ((-webkit-appearance:-apple-pay-button))) or (contain-intrinsic-size:1px){::placeholder{color:currentColor}@supports (color:color-mix(in lab, red, red)){::placeholder{color:color-mix(in oklab, currentcolor 50%, transparent)}}}textarea{resize:vertical}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-date-and-time-value{min-height:1lh;text-align:inherit}::-webkit-datetime-edit{display:inline-flex}::-webkit-datetime-edit-fields-wrapper{padding:0}::-webkit-datetime-edit{padding-block:0}::-webkit-datetime-edit-year-field{padding-block:0}::-webkit-datetime-edit-month-field{padding-block:0}::-webkit-datetime-edit-day-field{padding-block:0}::-webkit-datetime-edit-hour-field{padding-block:0}::-webkit-datetime-edit-minute-field{padding-block:0}::-webkit-datetime-edit-second-field{padding-block:0}::-webkit-datetime-edit-millisecond-field{padding-block:0}::-webkit-datetime-edit-meridiem-field{padding-block:0}::-webkit-calendar-picker-indicator{line-height:1}:-moz-ui-invalid{box-shadow:none}button,input:where([type=button],[type=reset],[type=submit]){appearance:button}::file-selector-button{appearance:button}::-webkit-inner-spin-button{height:auto}::-webkit-outer-spin-button{height:auto}[hidden]:where(:not([hidden=until-found])){display:none!important}}@layer utilities{.pointer-events-none{pointer-events:none}.absolute{position:absolute}.fixed{position:fixed}.relative{position:relative}.top-0{top:0}.top-1\.5{top:calc(var(--spacing) * 1.5)}.top-1\/2{top:50%}.top-3{top:calc(var(--spacing) * 3)}.right-0{right:0}.right-1\.5{right:calc(var(--spacing) * 1.5)}.right-2{right:calc(var(--spacing) * 2)}.right-3{right:calc(var(--spacing) * 3)}.bottom-0{bottom:0}.left-0{left:0}.left-3{left:calc(var(--spacing) * 3)}.z-50{z-index:50}.mx-1{margin-inline:var(--spacing)}.mt-0\.5{margin-top:calc(var(--spacing) * .5)}.mt-auto{margin-top:auto}.mb-0\.5{margin-bottom:calc(var(--spacing) * .5)}.mb-1{margin-bottom:var(--spacing)}.mb-1\.5{margin-bottom:calc(var(--spacing) * 1.5)}.mb-3{margin-bottom:calc(var(--spacing) * 3)}.mb-4{margin-bottom:calc(var(--spacing) * 4)}.mb-6{margin-bottom:calc(var(--spacing) * 6)}.ml-auto{margin-left:auto}.block{display:block}.flex{display:flex}.grid{display:grid}.hidden{display:none}.inline{display:inline}.inline-block{display:inline-block}.inline-flex{display:inline-flex}.h-0\.5{height:calc(var(--spacing) * .5)}.h-1\.5{height:calc(var(--spacing) * 1.5)}.h-2{height:calc(var(--spacing) * 2)}.h-8{height:calc(var(--spacing) * 8)}.h-9{height:calc(var(--spacing) * 9)}.h-\[56px\]{height:56px}.h-\[60px\]{height:60px}.h-full{height:100%}.min-h-screen{min-height:100vh}.w-1\.5{width:calc(var(--spacing) * 1.5)}.w-2{width:calc(var(--spacing) * 2)}.w-8{width:calc(var(--spacing) * 8)}.w-9{width:calc(var(--spacing) * 9)}.w-\[220px\]{width:220px}.w-full{width:100%}.max-w-\[480px\]{max-width:480px}.min-w-0{min-width:0}.flex-1{flex:1}.flex-shrink-0{flex-shrink:0}.-translate-y-1\/2{--tw-translate-y:calc(calc(1 / 2 * 100%) * -1);translate:var(--tw-translate-x) var(--tw-translate-y)}.transform{transform:var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,)}.cursor-pointer{cursor:pointer}.appearance-none{appearance:none}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.justify-between{justify-content:space-between}.justify-center{justify-content:center}.gap-1{gap:var(--spacing)}.gap-1\.5{gap:calc(var(--spacing) * 1.5)}.gap-2{gap:calc(var(--spacing) * 2)}.gap-3{gap:calc(var(--spacing) * 3)}.gap-4{gap:calc(var(--spacing) * 4)}.gap-5{gap:calc(var(--spacing) * 5)}:where(.space-y-0\.5>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing) * .5) * var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing) * .5) * calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-3>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing) * 3) * var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing) * 3) * calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-4>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing) * 4) * var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing) * 4) * calc(1 - var(--tw-space-y-reverse)))}.truncate{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.rounded-\[10px\]{border-radius:10px}.rounded-full{border-radius:2147483647px}.rounded-lg{border-radius:var(--radius-lg)}.rounded-md{border-radius:var(--radius-md)}.border{border-style:var(--tw-border-style);border-width:1px}.border-2{border-style:var(--tw-border-style);border-width:2px}.border-t{border-top-style:var(--tw-border-style);border-top-width:1px}.border-r{border-right-style:var(--tw-border-style);border-right-width:1px}.border-b{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}.border-gray-100{border-color:var(--color-gray-100)}.border-gray-200{border-color:var(--color-gray-200)}.border-white{border-color:var(--color-white)}.bg-gray-50{background-color:var(--color-gray-50)}.bg-gray-100{background-color:var(--color-gray-100)}.bg-green-500{background-color:var(--color-green-500)}.bg-red-500{background-color:var(--color-red-500)}.bg-white{background-color:var(--color-white)}.object-cover{object-fit:cover}.p-4{padding:calc(var(--spacing) * 4)}.p-6{padding:calc(var(--spacing) * 6)}.px-2{padding-inline:calc(var(--spacing) * 2)}.px-2\.5{padding-inline:calc(var(--spacing) * 2.5)}.px-3{padding-inline:calc(var(--spacing) * 3)}.px-4{padding-inline:calc(var(--spacing) * 4)}.px-5{padding-inline:calc(var(--spacing) * 5)}.px-6{padding-inline:calc(var(--spacing) * 6)}.py-0\.5{padding-block:calc(var(--spacing) * .5)}.py-1{padding-block:var(--spacing)}.py-1\.5{padding-block:calc(var(--spacing) * 1.5)}.py-2{padding-block:calc(var(--spacing) * 2)}.py-2\.5{padding-block:calc(var(--spacing) * 2.5)}.py-3{padding-block:calc(var(--spacing) * 3)}.py-4{padding-block:calc(var(--spacing) * 4)}.py-5{padding-block:calc(var(--spacing) * 5)}.pt-3{padding-top:calc(var(--spacing) * 3)}.pt-4{padding-top:calc(var(--spacing) * 4)}.pr-4{padding-right:calc(var(--spacing) * 4)}.pr-8{padding-right:calc(var(--spacing) * 8)}.pb-20{padding-bottom:calc(var(--spacing) * 20)}.pl-3{padding-left:calc(var(--spacing) * 3)}.pl-9{padding-left:calc(var(--spacing) * 9)}.text-left{text-align:left}.text-2xl{font-size:var(--text-2xl);line-height:var(--tw-leading,var(--text-2xl--line-height))}.text-lg{font-size:var(--text-lg);line-height:var(--tw-leading,var(--text-lg--line-height))}.text-sm{font-size:var(--text-sm);line-height:var(--tw-leading,var(--text-sm--line-height))}.text-xl{font-size:var(--text-xl);line-height:var(--tw-leading,var(--text-xl--line-height))}.text-xs{font-size:var(--text-xs);line-height:var(--tw-leading,var(--text-xs--line-height))}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-\[12px\]{font-size:12px}.text-\[13px\]{font-size:13px}.text-\[14px\]{font-size:14px}.text-\[15px\]{font-size:15px}.leading-snug{--tw-leading:var(--leading-snug);line-height:var(--leading-snug)}.font-bold{--tw-font-weight:var(--font-weight-bold);font-weight:var(--font-weight-bold)}.font-medium{--tw-font-weight:var(--font-weight-medium);font-weight:var(--font-weight-medium)}.font-semibold{--tw-font-weight:var(--font-weight-semibold);font-weight:var(--font-weight-semibold)}.tracking-tight{--tw-tracking:var(--tracking-tight);letter-spacing:var(--tracking-tight)}.text-gray-300{color:var(--color-gray-300)}.text-gray-400{color:var(--color-gray-400)}.text-gray-500{color:var(--color-gray-500)}.text-gray-600{color:var(--color-gray-600)}.text-gray-700{color:var(--color-gray-700)}.text-gray-800{color:var(--color-gray-800)}.text-gray-900{color:var(--color-gray-900)}.text-white{color:var(--color-white)}.placeholder-gray-400::placeholder{color:var(--color-gray-400)}.ring-1{--tw-ring-shadow:var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)}.ring-gray-200{--tw-ring-color:var(--color-gray-200)}.filter{filter:var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,)}.transition{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to,opacity,box-shadow,transform,translate,scale,rotate,filter,-webkit-backdrop-filter,backdrop-filter,display,content-visibility,overlay,pointer-events;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-all{transition-property:all;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-colors{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.outline-none{--tw-outline-style:none;outline-style:none}@media (hover:hover){.hover\:border-blue-400:hover{border-color:var(--color-blue-400)}.hover\:bg-gray-50:hover{background-color:var(--color-gray-50)}.hover\:bg-gray-100:hover{background-color:var(--color-gray-100)}}@media (width>=64rem){.lg\:flex{display:flex}.lg\:hidden{display:none}}}*{box-sizing:border-box}body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;background-color:#f9fafb;font-family:Inter,system-ui,sans-serif}@property --tw-translate-x{syntax:"*";inherits:false;initial-value:0}@property --tw-translate-y{syntax:"*";inherits:false;initial-value:0}@property --tw-translate-z{syntax:"*";inherits:false;initial-value:0}@property --tw-rotate-x{syntax:"*";inherits:false}@property --tw-rotate-y{syntax:"*";inherits:false}@property --tw-rotate-z{syntax:"*";inherits:false}@property --tw-skew-x{syntax:"*";inherits:false}@property --tw-skew-y{syntax:"*";inherits:false}@property --tw-space-y-reverse{syntax:"*";inherits:false;initial-value:0}@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-leading{syntax:"*";inherits:false}@property --tw-font-weight{syntax:"*";inherits:false}@property --tw-tracking{syntax:"*";inherits:false}@property --tw-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-shadow-color{syntax:"*";inherits:false}@property --tw-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-inset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-shadow-color{syntax:"*";inherits:false}@property --tw-inset-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-ring-color{syntax:"*";inherits:false}@property --tw-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-ring-color{syntax:"*";inherits:false}@property --tw-inset-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-ring-inset{syntax:"*";inherits:false}@property --tw-ring-offset-width{syntax:"<length>";inherits:false;initial-value:0}@property --tw-ring-offset-color{syntax:"*";inherits:false;initial-value:#fff}@property --tw-ring-offset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-blur{syntax:"*";inherits:false}@property --tw-brightness{syntax:"*";inherits:false}@property --tw-contrast{syntax:"*";inherits:false}@property --tw-grayscale{syntax:"*";inherits:false}@property --tw-hue-rotate{syntax:"*";inherits:false}@property --tw-invert{syntax:"*";inherits:false}@property --tw-opacity{syntax:"*";inherits:false}@property --tw-saturate{syntax:"*";inherits:false}@property --tw-sepia{syntax:"*";inherits:false}@property --tw-drop-shadow{syntax:"*";inherits:false}@property --tw-drop-shadow-color{syntax:"*";inherits:false}@property --tw-drop-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-drop-shadow-size{syntax:"*";inherits:false}
@@ -2005,6 +2070,42 @@ class MeetingParticipant(Base):
 
     def __repr__(self) -> str:
         return f"<MeetingParticipant meeting_id={self.meeting_id} user_id={self.user_id}>"
+````
+
+## File: app/schemas/room.py
+````python
+from typing import Optional
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+# 1. Class cơ sở định nghĩa tất cả thuộc tính chung của Phòng
+class RoomBase(BaseModel):
+    name: str = Field(..., description="Tên phòng họp")
+    capacity: int = Field(..., gt=0, description="Sức chứa (số người), phải lớn hơn 0")
+    location: Optional[str] = Field(None, description="Vị trí/Tầng")
+    description: Optional[str] = Field(None, description="Mô tả/Trang thiết bị phòng họp")
+    is_active: bool = Field(True, description="Trạng thái: True (Hoạt động) / False (Bảo trì/Khóa)")
+
+# 2. Schema nhận dữ liệu khi Tạo phòng mới (POST)
+class RoomCreate(RoomBase):
+    pass
+
+# 3. Schema nhận dữ liệu khi Cập nhật phòng (PUT)
+class RoomUpdate(BaseModel):
+    name: Optional[str] = None
+    capacity: Optional[int] = Field(None, gt=0)
+    location: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+# 4. Schema trả dữ liệu về cho Client (Response)
+class RoomResponse(RoomBase):
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True  # Pydantic v2 (Dùng orm_mode = True nếu là Pydantic v1)
 ````
 
 ## File: frontend/css/style.css
@@ -2843,6 +2944,174 @@ if __name__ == "__main__":
     seed()
 ````
 
+## File: app/schemas/meeting.py
+````python
+from datetime import datetime
+from typing import Optional, List
+from pydantic import BaseModel, ConfigDict
+
+# 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
+class MeetingCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    room_id: int
+    start_time: datetime
+    end_time: datetime
+
+    # Bổ sung các trường để hỗ trợ đặt lịch định kỳ
+    is_recurring: Optional[bool] = False
+    recurrence_type: Optional[str] = "none" # Các giá trị: "none", "weekly", "monthly"
+    recurrence_end_date: Optional[datetime] = None
+
+# 2. Schema phản hồi thông tin cuộc họp trả về cho Client (Response)
+class MeetingResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    room_id: int
+    organizer_id: Optional[int] = None # Đã đổi từ user_id -> organizer_id cho khớp với Model
+    start_time: datetime
+    end_time: datetime
+    is_recurring: bool = False
+    recurring_type: Optional[str] = None
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# 3. Schema cho tính năng gợi ý khung giờ trống (Bổ sung mới)
+class SuggestTimeRequest(BaseModel):
+    participant_ids: List[int]
+    date: str  # Định dạng: "YYYY-MM-DD"
+    duration_minutes: int
+
+class TimeSlot(BaseModel):
+    start_time: str  # Định dạng ISO 8601: "YYYY-MM-DDTHH:MM:SS"
+    end_time: str    # Định dạng ISO 8601: "YYYY-MM-DDTHH:MM:SS"
+
+class SuggestTimeResponse(BaseModel):
+    suggested_slots: List[TimeSlot]
+````
+
+## File: README.md
+````markdown
+# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
+
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
+
+Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
+
+---
+
+## 📌 1. Bảng Công nghệ (Tech Stack)
+
+* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
+* **Database:** MySQL
+* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
+* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
+* **Validation & Schemas:** Pydantic v2
+* **Server Runner:** Uvicorn ASGI Server
+
+---
+
+## 📁 2. Cấu trúc Dự án (Project Structure)
+
+```text
+MeetingManagement/
+├── app/
+│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
+│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
+│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
+│   ├── models/                # SQLAlchemy Models (ORM Mapping)
+│   │   ├── user.py            # Bảng người dùng
+│   │   ├── room.py            # Bảng phòng họp
+│   │   └── meeting.py         # Bảng lịch họp
+│   ├── routers/               # API Endpoints (Controllers)
+│   │   └── auth.py            # API Đăng nhập / Xác thực
+│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
+│       └── auth.py
+│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
+├── scripts/
+│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
+├── .env.example               # Mẫu cấu hình biến môi trường
+├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
+├── README.md                  # Tài liệu hướng dẫn sử dụng
+├── requirements.txt           # Thư viện phụ thuộc của dự án
+└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
+````
+
+## File: requirements.txt
+````
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio>=4.8.0
+bcrypt==5.0.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.0
+click==8.4.2
+colorama==0.4.6
+cryptography==41.0.5
+distro==1.9.0
+dnspython==2.8.0
+ecdsa==0.19.2
+email-validator==2.3.0
+fastapi==0.104.1
+fastapi-cli==0.0.32
+google-auth==2.56.3
+google-genai==2.18.1
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.18
+iniconfig==2.3.0
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+orjson==3.12.0
+packaging==26.3
+passlib==1.7.4
+pluggy==1.6.0
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+pydantic==2.5.3
+pydantic-settings==2.3.4
+pydantic_core==2.14.6
+Pygments==2.20.0
+PyJWT==2.14.0
+PyMySQL==1.1.0
+pytest==8.3.2
+python-dotenv==1.0.0
+python-jose==3.5.0
+python-multipart==0.0.32
+PyYAML==6.0.3
+requests==2.34.2
+rich==15.0.0
+rich-toolkit==0.20.3
+rsa==4.9.1
+shellingham==1.5.4
+six==1.17.0
+sniffio==1.3.1
+SQLAlchemy==2.0.23
+starlette==0.27.0
+tenacity==9.1.4
+typer==0.27.1
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+ujson==5.13.0
+urllib3==2.7.0
+uvicorn==0.24.0.post1
+watchfiles==1.2.0
+websockets==16.1.1
+````
+
 ## File: app/routers/rooms.py
 ````python
 from datetime import datetime
@@ -2863,7 +3132,8 @@ router = APIRouter()
 # GET /api/rooms/: Lấy danh sách tất cả phòng
 @router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
 def get_all_rooms(db: Session = Depends(get_db)):
-    return db.query(Room).all()
+    # THÊM FILTER is_active == True
+    return db.query(Room).filter(Room.is_active == True).all()
 
 
 # GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian
@@ -2989,53 +3259,390 @@ def read_available_rooms(
     return rooms
 ````
 
-## File: app/schemas/meeting.py
-````python
-from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict
+## File: frontend/dashboard.html
+````html
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
+    <link rel="stylesheet" href="css/style.css?v=9">
+    <link rel="stylesheet" href="css/booking.css">
+</head>
+<body>
+    <div class="app-layout" id="appLayout">
+        <!-- SIDEBAR CHUẨN GỌN GÀNG -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand" onclick="switchToOverview()" title="Quay về Trang chủ">
+                <span class="logo-icon">RS</span>
+                <span class="brand-name">RoomSync</span>
+            </div>
+            
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span class="nav-text">Tổng quan</span>
+                </a>
+                <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path></svg>
+                    <span class="nav-text">Phòng họp</span>
+                </a>
+                <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    <span class="nav-text">Đặt lịch của tôi</span>
+                </a>
+                <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span class="nav-text">Cài đặt</span>
+                </a>
+            </nav>
 
-# 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
-class MeetingCreateRequest(BaseModel):
-    title: str
-    description: Optional[str] = None
-    room_id: int
-    start_time: datetime
-    end_time: datetime
+            <div class="sidebar-user" onclick="navigateToSettings()" title="Cài đặt tài khoản">
+                <div class="user-avatar" id="avatarText">N</div>
+                <div class="user-info">
+                    <span class="user-name" id="userNameDisplay">Nguyễn Minh Tuấn</span>
+                    <span class="user-role" id="userRoleBadge">Quản trị viên</span>
+                </div>
+            </div>
+        </aside>
 
-    # Bổ sung các trường để hỗ trợ đặt lịch định kỳ
-    is_recurring: Optional[bool] = False
-    recurrence_type: Optional[str] = "none" # Các giá trị: "none", "weekly", "monthly"
-    recurrence_end_date: Optional[datetime] = None
+        <!-- MAIN CONTENT -->
+        <main class="main-content" id="mainContent">
+            <!-- TOPBAR VỚI NÚT 3 GẠCH VÀ TÌM KIẾM -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                    </button>
+                    
+                    <div class="search-box" id="topbarSearchContainer">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..." oninput="handleSearch()">
+                    </div>
+                </div>
+                
+                <div class="topbar-right">
+                    <div class="notification-wrapper">
+                        <button class="icon-btn" onclick="toggleNotificationPopup()" title="Thông báo">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                        </button>
+                        <div id="notificationPopup" class="notification-popup" style="display: none;">
+                            <h4>Thông báo mới</h4>
+                            <ul>
+                                <li>📌 Lịch họp Phòng Hội Đồng bắt đầu sau 15 phút.</li>
+                                <li>✅ Bạn đã đặt thành công Phòng Sáng Tạo.</li>
+                            </ul>
+                        </div>
+                    </div>
 
-# 2. Schema phản hồi thông tin cuộc họp trả về cho Client (Response)
-class MeetingResponse(BaseModel):
-    id: int
-    title: str
-    description: Optional[str] = None
-    room_id: int
-    organizer_id: Optional[int] = None # Đã đổi từ user_id -> organizer_id cho khớp với Model
-    start_time: datetime
-    end_time: datetime
-    is_recurring: bool = False
-    recurring_type: Optional[str] = None
-    status: str
+                    <div class="user-profile-header" onclick="navigateToSettings()" title="Bấm để vào Cài đặt">
+                        <div class="header-avatar" id="headerAvatarText">N</div>
+                    </div>
+                </div>
+            </header>
 
-    model_config = ConfigDict(from_attributes=True)
+            <div class="content-body">
+                <!-- VIEW 1: TỔNG QUAN -->
+                <div id="viewOverview" class="tab-view">
+                    <div class="hero-banner-overview">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Hệ thống Quản lý Doanh nghiệp</span>
+                            <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
+                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
+                            <div class="hero-actions">
+                                <button class="btn-hero-primary" onclick="openQuickBooking()">Đặt phòng ngay</button>
+                                <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
+                            </div>
+                        </div>
+                    </div>
 
+                    <div class="page-header" id="roomsSection">
+                        <div>
+                            <h2>Phòng họp hiện có</h2>
+                            <p class="subtitle" id="currentDateText">Đang tải...</p>
+                        </div>
+                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
 
-# 3. Schema cho tính năng gợi ý khung giờ trống (Bổ sung mới)
-class SuggestTimeRequest(BaseModel):
-    participant_ids: List[int]
-    date: str  # Định dạng: "YYYY-MM-DD"
-    duration_minutes: int
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng phòng họp</span>
+                            <div class="stat-value" id="statTotal">0</div>
+                            <span class="stat-sub text-gray">+2 so với tháng trước</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Đang sử dụng</span>
+                            <div class="stat-value text-orange" id="statInUse">0</div>
+                            <span class="stat-sub text-orange" id="statCapacityText">0% công suất</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Còn trống hôm nay</span>
+                            <div class="stat-value text-green" id="statAvailable">0</div>
+                            <span class="stat-sub text-gray" id="statRatioText">trong 0 phòng</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Lượt đặt trong tuần</span>
+                            <div class="stat-value text-purple" id="statBookings">142</div>
+                            <span class="stat-sub text-gray">↑ 12% so với tuần trước</span>
+                        </div>
+                    </div>
 
-class TimeSlot(BaseModel):
-    start_time: str  # Định dạng ISO 8601: "YYYY-MM-DDTHH:MM:SS"
-    end_time: str    # Định dạng ISO 8601: "YYYY-MM-DDTHH:MM:SS"
+                    <div class="filter-wrapper">
+                        <div class="filter-left">
+                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span id="filterDateLabel">26/09/2026</span></button>
+                            <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
+                                <option value="all">Sức chứa ˅</option>
+                                <option value="small">Nhỏ (1 - 5 người)</option>
+                                <option value="medium">Vừa (6 - 12 người)</option>
+                                <option value="large">Lớn (15+ người)</option>
+                            </select>
+                            <div class="filter-chips">
+                                <button class="chip active" onclick="setFilter('all', this)">Tất cả</button>
+                                <button class="chip" onclick="setFilter('Màn hình', this)">Màn hình</button>
+                                <button class="chip" onclick="setFilter('Wifi', this)">Wifi</button>
+                                <button class="chip" onclick="setFilter('Video', this)">Video</button>
+                                <button class="chip" onclick="setFilter('Đồ uống', this)">Đồ uống</button>
+                            </div>
+                        </div>
+                        <div class="filter-right">
+                            <span class="status-summary"><strong id="summaryAvailable">0</strong> còn trống</span>
+                            <span class="status-summary"><strong id="summaryInUse">0</strong> đã đặt</span>
+                        </div>
+                    </div>
 
-class SuggestTimeResponse(BaseModel):
-    suggested_slots: List[TimeSlot]
+                    <div class="room-grid" id="roomGridOverview"></div>
+                </div>
+
+                <!-- VIEW 2: PHÒNG HỌP -->
+                <div id="viewRooms" class="tab-view" style="display: none;">
+                    <div class="hero-banner-rooms">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Không gian làm việc</span>
+                            <h2>Danh Mục & Không Gian Phòng Họp</h2>
+                            <p>Khám phá hệ thống phòng họp được trang bị đầy đủ thiết bị công nghệ hiện đại.</p>
+                        </div>
+                    </div>
+
+                    <div class="page-header">
+                        <h2>Tất cả phòng họp</h2>
+                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
+
+                    <div class="room-grid" id="roomGridRooms"></div>
+                </div>
+
+                <!-- VIEW 3: ĐẶT LỊCH CỦA TÔI -->
+                <div id="viewMyBookings" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>Lịch họp đã đặt của tôi</h2>
+                    </div>
+                    <div class="table-card">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Phòng họp</th>
+                                    <th>Thời gian</th>
+                                    <th>Trạng thái</th>
+                                    <th>Hành động</th>
+                                </tr>
+                            </thead>
+                            <tbody id="myBookingsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- VIEW 4: CÀI ĐẶT -->
+                <div id="viewSettings" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>Cài đặt tài khoản</h2>
+                    </div>
+                    <div class="settings-card">
+                        <div class="settings-profile-header">
+                            <div class="user-avatar-large" id="settingsAvatar">N</div>
+                            <div>
+                                <h3 id="settingsName">Nguyễn Minh Tuấn</h3>
+                                <p id="settingsRole" class="subtitle">Quản trị viên</p>
+                            </div>
+                        </div>
+
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>Họ và tên</label>
+                                <input type="text" class="form-control" id="settingsInputName" value="Nguyễn Minh Tuấn">
+                            </div>
+                            <div class="form-group">
+                                <label>Email liên hệ</label>
+                                <input type="email" class="form-control" id="settingsInputEmail" value="admin@congty.com" readonly>
+                            </div>
+                            <button class="btn-save" onclick="alert('Đã cập nhật thông tin!')">Lưu thay đổi</button>
+                        </div>
+
+                        <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
+
+                        <div class="logout-section">
+                            <h4>Phiên đăng nhập</h4>
+                            <p class="subtitle" style="margin-bottom: 12px;">Bấm nút bên dưới để thoát khỏi hệ thống RoomSync.</p>
+                            <button onclick="logout()" class="btn-logout-danger">🚪 Đăng xuất khỏi hệ thống</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL XEM LỊCH TRÌNH -->
+    <div id="scheduleModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="scheduleRoomTitle">Lịch trình phòng họp</h3>
+            <p class="subtitle" style="margin-bottom: 16px;">Danh sách khung giờ hoạt động trong ngày</p>
+            <div id="timelineContainer" class="timeline-list"></div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" onclick="closeScheduleModal()" class="btn-cancel">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
+    <div id="roomModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
+            <form id="roomForm" onsubmit="handleFormSubmit(event)">
+                <input type="hidden" id="editRoomId">
+                <div class="form-group">
+                    <label>Tên phòng họp</label>
+                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B" required>
+                </div>
+                <div class="form-group">
+                    <label>Vị trí (Tầng)</label>
+                    <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
+                </div>
+                <div class="form-group">
+                    <label>Sức chứa</label>
+                    <input type="text" id="roomCapacity" class="form-control" placeholder="Ví dụ: 8-10 người" required>
+                </div>
+                <div class="form-group">
+                    <label>Tiện ích (phân cách bằng dấu phẩy)</label>
+                    <input type="text" id="roomAmenities" class="form-control" placeholder="Màn hình, Wifi, Video, Đồ uống">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL ĐẶT PHÒNG HỌP (FIGMA UI) -->
+    <div class="page-shell" id="bookingModal">
+        <div class="ambient ambient-left"></div>
+        <div class="ambient ambient-right"></div>
+
+        <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booking-title">
+            <header class="modal-header">
+                <div>
+                    <p class="eyebrow">Lịch làm việc</p>
+                    <h1 id="booking-title" class="modal-title">Đặt lịch phòng họp</h1>
+                </div>
+                <button class="icon-button" type="button" aria-label="Đóng" onclick="closeBookingModal()">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </button>
+            </header>
+
+            <form class="booking-form" onsubmit="handleBookingSubmit(event)">
+                <!-- Tên cuộc họp (title) -->
+                <div class="form-field">
+                    <label class="field-label" for="meeting-title">Tên cuộc họp</label>
+                    <input id="meeting-title" class="text-control" name="title" placeholder="Nhập tên cuộc họp" required />
+                </div>
+
+                <!-- Chọn phòng (room_id) -->
+                <div class="form-field room-field">
+                    <label class="field-label" for="room-select">Chọn phòng</label>
+                    <button id="room-select" class="room-select" type="button" aria-expanded="false" onclick="toggleRoomMenu()">
+                        <div class="room-select-main">
+                            <span class="room-name">Phòng Orchid</span>
+                            <span class="room-meta">8 người · <span class="status-available">Còn trống</span></span>
+                        </div>
+                        <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                    <div id="roomMenu" class="room-menu" role="listbox" hidden></div>
+                </div>
+
+                <!-- Thời gian (start_time & end_time) -->
+                <fieldset class="time-fieldset">
+                    <legend class="field-label">Thời gian</legend>
+                    <div class="time-grid">
+                        <div class="date-column">
+                            <span class="mini-label">Ngày</span>
+                            <div class="input-with-icon">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12H4V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                <input name="meeting_date" type="date" value="2026-09-30" required />
+                            </div>
+                        </div>
+                        <div class="time-column">
+                            <span class="mini-label">Bắt đầu</span>
+                            <div class="input-with-icon">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                <input name="start_time" type="time" value="09:00" required />
+                            </div>
+                        </div>
+                        <div class="time-column">
+                            <span class="mini-label">Kết thúc</span>
+                            <div class="input-with-icon">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                <input name="end_time" type="time" value="10:00" required />
+                            </div>
+                        </div>
+                    </div>
+                    <button id="findAvailabilityBtn" class="availability-button" type="button" onclick="findAvailableTime()">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4M10.5 7.5v3.2l2 1.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                        Tìm giờ trống
+                    </button>
+                    <p id="availabilityMessage" class="availability-message" role="status" hidden></p>
+                    <div id="availabilityResults" class="availability-results" aria-label="Các khung giờ trống"></div>
+                </fieldset>
+
+                <!-- Cuộc họp lặp lại (is_recurring) -->
+                <div class="recurring-row">
+                    <div>
+                        <label class="recurring-label" for="recurrence-select">Lặp lại cuộc họp</label>
+                        <p class="recurring-hint" id="recurrenceHint">Chọn chu kỳ cho cuộc họp</p>
+                    </div>
+                    <select id="recurrence-select" class="text-control recurrence-select" name="recurrence_type">
+                        <option value="none">Không lặp</option>
+                        <option value="monthly">Lặp 1 tháng</option>
+                        <option value="until_changed">Lặp đến khi thay đổi</option>
+                    </select>
+                </div>
+
+                <!-- Mô tả (description) -->
+                <div class="form-field">
+                    <div class="label-row">
+                        <label class="field-label" for="description">Mô tả cuộc họp</label>
+                        <span class="optional">Không bắt buộc</span>
+                    </div>
+                    <textarea id="description" class="textarea-control" name="description" rows="3" placeholder="Nhập nội dung hoặc chương trình cuộc họp..."></textarea>
+                </div>
+
+                <!-- Footer Buttons -->
+                <footer class="modal-footer">
+                    <button class="button button-secondary" type="button" onclick="closeBookingModal()">Hủy</button>
+                    <button class="button button-primary" type="submit">Xác nhận đặt lịch</button>
+                </footer>
+            </form>
+        </section>
+    </div>
+
+    <script src="js/app.js?v=3"></script>
+</body>
+</html>
 ````
 
 ## File: app/services/meeting_service.py
@@ -3051,6 +3658,31 @@ from app.models.user import User  # Thêm import model User nếu chưa có
 from app.schemas.meeting import MeetingCreateRequest
 
 class MeetingService:
+
+    @staticmethod
+    def cancel_meeting(db: Session, meeting_id: int, current_user: User):
+        """Cancel a meeting without deleting it or its participants."""
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Kh?ng t?m th?y cu?c h?p.",
+            )
+
+        is_admin = current_user.role == "admin"
+        if meeting.organizer_id != current_user.id and not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="B?n kh?ng c? quy?n h?y cu?c h?p n?y.",
+            )
+
+        # Idempotent: repeating the operation is a successful no-op.
+        if meeting.status != "CANCELLED":
+            meeting.status = "CANCELLED"
+            db.commit()
+            db.refresh(meeting)
+
+        return meeting
 
     @staticmethod
     def get_all_active_rooms(db: Session):
@@ -3071,11 +3703,12 @@ class MeetingService:
 
         # 1. Kiểm tra phòng họp có tồn tại và active không
         room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
+
         if not room:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Phòng họp không tồn tại hoặc đã bị khóa!"
-            )
+         raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Phòng họp không tồn tại hoặc đã bị ngưng hoạt động!"
+    )
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
@@ -3117,7 +3750,7 @@ class MeetingService:
                 # Kiểm tra chồng lặp thời gian cho từng ngày trong chu kỳ đối với đúng phòng đó
                 overlapping_meeting = db.query(Meeting).filter(
                     Meeting.room_id == payload.room_id,
-                    Meeting.status != "canceled",
+                    Meeting.status.notin_(["CANCELLED", "canceled"]),
                     and_(
                         Meeting.start_time < e_time,
                         Meeting.end_time > s_time
@@ -3195,7 +3828,7 @@ class MeetingService:
         day_end = datetime.combine(target_date, datetime.max.time())
         
         meetings = db.query(Meeting).filter(
-            Meeting.status != "canceled",
+            Meeting.status.notin_(["CANCELLED", "canceled"]),
             Meeting.start_time <= day_end,
             Meeting.end_time >= day_start,
             Meeting.organizer_id.in_(participant_ids)
@@ -3242,125 +3875,6 @@ class MeetingService:
                 slot_start += timedelta(minutes=30)  # Bước nhảy gợi ý mỗi 30 phút
 
         return {"suggested_slots": suggested_slots}
-````
-
-## File: README.md
-````markdown
-# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
-
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
-![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
-
-Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
-
----
-
-## 📌 1. Bảng Công nghệ (Tech Stack)
-
-* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
-* **Database:** MySQL
-* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
-* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
-* **Validation & Schemas:** Pydantic v2
-* **Server Runner:** Uvicorn ASGI Server
-
----
-
-## 📁 2. Cấu trúc Dự án (Project Structure)
-
-```text
-MeetingManagement/
-├── app/
-│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
-│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
-│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
-│   ├── models/                # SQLAlchemy Models (ORM Mapping)
-│   │   ├── user.py            # Bảng người dùng
-│   │   ├── room.py            # Bảng phòng họp
-│   │   └── meeting.py         # Bảng lịch họp
-│   ├── routers/               # API Endpoints (Controllers)
-│   │   └── auth.py            # API Đăng nhập / Xác thực
-│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
-│       └── auth.py
-│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
-├── scripts/
-│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
-├── .env.example               # Mẫu cấu hình biến môi trường
-├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
-├── README.md                  # Tài liệu hướng dẫn sử dụng
-├── requirements.txt           # Thư viện phụ thuộc của dự án
-└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
-````
-
-## File: requirements.txt
-````
-annotated-doc==0.0.5
-annotated-types==0.8.0
-anyio>=4.8.0
-bcrypt==5.0.0
-certifi==2026.7.22
-cffi==2.1.1
-charset-normalizer==3.5.0
-click==8.4.2
-colorama==0.4.6
-cryptography==41.0.5
-distro==1.9.0
-dnspython==2.8.0
-ecdsa==0.19.2
-email-validator==2.3.0
-fastapi==0.104.1
-fastapi-cli==0.0.32
-google-auth==2.56.3
-google-genai==2.18.1
-greenlet==3.5.5
-h11==0.16.0
-httpcore==1.0.9
-httptools==0.8.0
-httpx==0.28.1
-idna==3.18
-iniconfig==2.3.0
-Jinja2==3.1.6
-markdown-it-py==4.2.0
-MarkupSafe==3.0.3
-mdurl==0.1.2
-orjson==3.12.0
-packaging==26.3
-passlib==1.7.4
-pluggy==1.6.0
-pyasn1==0.6.4
-pyasn1_modules==0.4.2
-pycparser==3.0
-pydantic==2.5.3
-pydantic-settings==2.3.4
-pydantic_core==2.14.6
-Pygments==2.20.0
-PyJWT==2.14.0
-PyMySQL==1.1.0
-pytest==8.3.2
-python-dotenv==1.0.0
-python-jose==3.5.0
-python-multipart==0.0.32
-PyYAML==6.0.3
-requests==2.34.2
-rich==15.0.0
-rich-toolkit==0.20.3
-rsa==4.9.1
-shellingham==1.5.4
-six==1.17.0
-sniffio==1.3.1
-SQLAlchemy==2.0.23
-starlette==0.27.0
-tenacity==9.1.4
-typer==0.27.1
-typing-inspection==0.4.4
-typing_extensions==4.16.0
-ujson==5.13.0
-urllib3==2.7.0
-uvicorn==0.24.0.post1
-watchfiles==1.2.0
-websockets==16.1.1
 ````
 
 ## File: frontend/js/app.js
@@ -4095,7 +4609,7 @@ async function handleFormSubmit(e) {
             method: method,
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                "Authorization": `Bearer ${localStorage.getItem("token")}`
             },
             body: JSON.stringify(payload)
         });
@@ -4177,392 +4691,6 @@ window.deleteRoom = deleteRoom;
 window.logout = logout;
 ````
 
-## File: frontend/dashboard.html
-````html
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
-    <link rel="stylesheet" href="css/style.css?v=9">
-    <link rel="stylesheet" href="css/booking.css">
-</head>
-<body>
-    <div class="app-layout" id="appLayout">
-        <!-- SIDEBAR CHUẨN GỌN GÀNG -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-brand" onclick="switchToOverview()" title="Quay về Trang chủ">
-                <span class="logo-icon">RS</span>
-                <span class="brand-name">RoomSync</span>
-            </div>
-            
-            <nav class="nav-menu">
-                <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-                    <span class="nav-text">Tổng quan</span>
-                </a>
-                <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path></svg>
-                    <span class="nav-text">Phòng họp</span>
-                </a>
-                <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                    <span class="nav-text">Đặt lịch của tôi</span>
-                </a>
-                <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    <span class="nav-text">Cài đặt</span>
-                </a>
-            </nav>
-
-            <div class="sidebar-user" onclick="navigateToSettings()" title="Cài đặt tài khoản">
-                <div class="user-avatar" id="avatarText">N</div>
-                <div class="user-info">
-                    <span class="user-name" id="userNameDisplay">Nguyễn Minh Tuấn</span>
-                    <span class="user-role" id="userRoleBadge">Quản trị viên</span>
-                </div>
-            </div>
-        </aside>
-
-        <!-- MAIN CONTENT -->
-        <main class="main-content" id="mainContent">
-            <!-- TOPBAR VỚI NÚT 3 GẠCH VÀ TÌM KIẾM -->
-            <header class="topbar">
-                <div class="topbar-left">
-                    <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-                    </button>
-                    
-                    <div class="search-box" id="topbarSearchContainer">
-                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..." oninput="handleSearch()">
-                    </div>
-                </div>
-                
-                <div class="topbar-right">
-                    <div class="notification-wrapper">
-                        <button class="icon-btn" onclick="toggleNotificationPopup()" title="Thông báo">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-                        </button>
-                        <div id="notificationPopup" class="notification-popup" style="display: none;">
-                            <h4>Thông báo mới</h4>
-                            <ul>
-                                <li>📌 Lịch họp Phòng Hội Đồng bắt đầu sau 15 phút.</li>
-                                <li>✅ Bạn đã đặt thành công Phòng Sáng Tạo.</li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div class="user-profile-header" onclick="navigateToSettings()" title="Bấm để vào Cài đặt">
-                        <div class="header-avatar" id="headerAvatarText">N</div>
-                    </div>
-                </div>
-            </header>
-
-            <div class="content-body">
-                <!-- VIEW 1: TỔNG QUAN -->
-                <div id="viewOverview" class="tab-view">
-                    <div class="hero-banner-overview">
-                        <div class="hero-overlay"></div>
-                        <div class="hero-content">
-                            <span class="hero-badge">Hệ thống Quản lý Doanh nghiệp</span>
-                            <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
-                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
-                            <div class="hero-actions">
-                                <button class="btn-hero-primary" onclick="openQuickBooking()">Đặt phòng ngay</button>
-                                <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="page-header" id="roomsSection">
-                        <div>
-                            <h2>Phòng họp hiện có</h2>
-                            <p class="subtitle" id="currentDateText">Đang tải...</p>
-                        </div>
-                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
-                            + Thêm phòng họp
-                        </button>
-                    </div>
-
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <span class="stat-title">Tổng phòng họp</span>
-                            <div class="stat-value" id="statTotal">0</div>
-                            <span class="stat-sub text-gray">+2 so với tháng trước</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="stat-title">Đang sử dụng</span>
-                            <div class="stat-value text-orange" id="statInUse">0</div>
-                            <span class="stat-sub text-orange" id="statCapacityText">0% công suất</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="stat-title">Còn trống hôm nay</span>
-                            <div class="stat-value text-green" id="statAvailable">0</div>
-                            <span class="stat-sub text-gray" id="statRatioText">trong 0 phòng</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="stat-title">Lượt đặt trong tuần</span>
-                            <div class="stat-value text-purple" id="statBookings">142</div>
-                            <span class="stat-sub text-gray">↑ 12% so với tuần trước</span>
-                        </div>
-                    </div>
-
-                    <div class="filter-wrapper">
-                        <div class="filter-left">
-                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span id="filterDateLabel">26/09/2026</span></button>
-                            <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
-                                <option value="all">Sức chứa ˅</option>
-                                <option value="small">Nhỏ (1 - 5 người)</option>
-                                <option value="medium">Vừa (6 - 12 người)</option>
-                                <option value="large">Lớn (15+ người)</option>
-                            </select>
-                            <div class="filter-chips">
-                                <button class="chip active" onclick="setFilter('all', this)">Tất cả</button>
-                                <button class="chip" onclick="setFilter('Màn hình', this)">Màn hình</button>
-                                <button class="chip" onclick="setFilter('Wifi', this)">Wifi</button>
-                                <button class="chip" onclick="setFilter('Video', this)">Video</button>
-                                <button class="chip" onclick="setFilter('Đồ uống', this)">Đồ uống</button>
-                            </div>
-                        </div>
-                        <div class="filter-right">
-                            <span class="status-summary"><strong id="summaryAvailable">0</strong> còn trống</span>
-                            <span class="status-summary"><strong id="summaryInUse">0</strong> đã đặt</span>
-                        </div>
-                    </div>
-
-                    <div class="room-grid" id="roomGridOverview"></div>
-                </div>
-
-                <!-- VIEW 2: PHÒNG HỌP -->
-                <div id="viewRooms" class="tab-view" style="display: none;">
-                    <div class="hero-banner-rooms">
-                        <div class="hero-overlay"></div>
-                        <div class="hero-content">
-                            <span class="hero-badge">Không gian làm việc</span>
-                            <h2>Danh Mục & Không Gian Phòng Họp</h2>
-                            <p>Khám phá hệ thống phòng họp được trang bị đầy đủ thiết bị công nghệ hiện đại.</p>
-                        </div>
-                    </div>
-
-                    <div class="page-header">
-                        <h2>Tất cả phòng họp</h2>
-                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
-                            + Thêm phòng họp
-                        </button>
-                    </div>
-
-                    <div class="room-grid" id="roomGridRooms"></div>
-                </div>
-
-                <!-- VIEW 3: ĐẶT LỊCH CỦA TÔI -->
-                <div id="viewMyBookings" class="tab-view" style="display: none;">
-                    <div class="page-header">
-                        <h2>Lịch họp đã đặt của tôi</h2>
-                    </div>
-                    <div class="table-card">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Phòng họp</th>
-                                    <th>Thời gian</th>
-                                    <th>Trạng thái</th>
-                                    <th>Hành động</th>
-                                </tr>
-                            </thead>
-                            <tbody id="myBookingsTableBody"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- VIEW 4: CÀI ĐẶT -->
-                <div id="viewSettings" class="tab-view" style="display: none;">
-                    <div class="page-header">
-                        <h2>Cài đặt tài khoản</h2>
-                    </div>
-                    <div class="settings-card">
-                        <div class="settings-profile-header">
-                            <div class="user-avatar-large" id="settingsAvatar">N</div>
-                            <div>
-                                <h3 id="settingsName">Nguyễn Minh Tuấn</h3>
-                                <p id="settingsRole" class="subtitle">Quản trị viên</p>
-                            </div>
-                        </div>
-
-                        <div class="settings-form">
-                            <div class="form-group">
-                                <label>Họ và tên</label>
-                                <input type="text" class="form-control" id="settingsInputName" value="Nguyễn Minh Tuấn">
-                            </div>
-                            <div class="form-group">
-                                <label>Email liên hệ</label>
-                                <input type="email" class="form-control" id="settingsInputEmail" value="admin@congty.com" readonly>
-                            </div>
-                            <button class="btn-save" onclick="alert('Đã cập nhật thông tin!')">Lưu thay đổi</button>
-                        </div>
-
-                        <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
-
-                        <div class="logout-section">
-                            <h4>Phiên đăng nhập</h4>
-                            <p class="subtitle" style="margin-bottom: 12px;">Bấm nút bên dưới để thoát khỏi hệ thống RoomSync.</p>
-                            <button onclick="logout()" class="btn-logout-danger">🚪 Đăng xuất khỏi hệ thống</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <!-- MODAL XEM LỊCH TRÌNH -->
-    <div id="scheduleModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h3 id="scheduleRoomTitle">Lịch trình phòng họp</h3>
-            <p class="subtitle" style="margin-bottom: 16px;">Danh sách khung giờ hoạt động trong ngày</p>
-            <div id="timelineContainer" class="timeline-list"></div>
-            <div class="modal-actions" style="margin-top: 20px;">
-                <button type="button" onclick="closeScheduleModal()" class="btn-cancel">Đóng</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
-    <div id="roomModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
-            <form id="roomForm" onsubmit="handleFormSubmit(event)">
-                <input type="hidden" id="editRoomId">
-                <div class="form-group">
-                    <label>Tên phòng họp</label>
-                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B" required>
-                </div>
-                <div class="form-group">
-                    <label>Vị trí (Tầng)</label>
-                    <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
-                </div>
-                <div class="form-group">
-                    <label>Sức chứa</label>
-                    <input type="text" id="roomCapacity" class="form-control" placeholder="Ví dụ: 8-10 người" required>
-                </div>
-                <div class="form-group">
-                    <label>Tiện ích (phân cách bằng dấu phẩy)</label>
-                    <input type="text" id="roomAmenities" class="form-control" placeholder="Màn hình, Wifi, Video, Đồ uống">
-                </div>
-                <div class="modal-actions">
-                    <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
-                    <button type="submit" class="btn-save">Lưu thông tin</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- MODAL ĐẶT PHÒNG HỌP (FIGMA UI) -->
-    <div class="page-shell" id="bookingModal">
-        <div class="ambient ambient-left"></div>
-        <div class="ambient ambient-right"></div>
-
-        <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booking-title">
-            <header class="modal-header">
-                <div>
-                    <p class="eyebrow">Lịch làm việc</p>
-                    <h1 id="booking-title" class="modal-title">Đặt lịch phòng họp</h1>
-                </div>
-                <button class="icon-button" type="button" aria-label="Đóng" onclick="closeBookingModal()">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                </button>
-            </header>
-
-            <form class="booking-form" onsubmit="handleBookingSubmit(event)">
-                <!-- Tên cuộc họp (title) -->
-                <div class="form-field">
-                    <label class="field-label" for="meeting-title">Tên cuộc họp</label>
-                    <input id="meeting-title" class="text-control" name="title" placeholder="Nhập tên cuộc họp" required />
-                </div>
-
-                <!-- Chọn phòng (room_id) -->
-                <div class="form-field room-field">
-                    <label class="field-label" for="room-select">Chọn phòng</label>
-                    <button id="room-select" class="room-select" type="button" aria-expanded="false" onclick="toggleRoomMenu()">
-                        <div class="room-select-main">
-                            <span class="room-name">Phòng Orchid</span>
-                            <span class="room-meta">8 người · <span class="status-available">Còn trống</span></span>
-                        </div>
-                        <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </button>
-                    <div id="roomMenu" class="room-menu" role="listbox" hidden></div>
-                </div>
-
-                <!-- Thời gian (start_time & end_time) -->
-                <fieldset class="time-fieldset">
-                    <legend class="field-label">Thời gian</legend>
-                    <div class="time-grid">
-                        <div class="date-column">
-                            <span class="mini-label">Ngày</span>
-                            <div class="input-with-icon">
-                                <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12H4V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                <input name="meeting_date" type="date" value="2026-09-30" required />
-                            </div>
-                        </div>
-                        <div class="time-column">
-                            <span class="mini-label">Bắt đầu</span>
-                            <div class="input-with-icon">
-                                <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                <input name="start_time" type="time" value="09:00" required />
-                            </div>
-                        </div>
-                        <div class="time-column">
-                            <span class="mini-label">Kết thúc</span>
-                            <div class="input-with-icon">
-                                <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                <input name="end_time" type="time" value="10:00" required />
-                            </div>
-                        </div>
-                    </div>
-                    <button id="findAvailabilityBtn" class="availability-button" type="button" onclick="findAvailableTime()">
-                        <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4M10.5 7.5v3.2l2 1.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                        Tìm giờ trống
-                    </button>
-                    <p id="availabilityMessage" class="availability-message" role="status" hidden></p>
-                    <div id="availabilityResults" class="availability-results" aria-label="Các khung giờ trống"></div>
-                </fieldset>
-
-                <!-- Cuộc họp lặp lại (is_recurring) -->
-                <div class="recurring-row">
-                    <div>
-                        <label class="recurring-label" for="recurrence-select">Lặp lại cuộc họp</label>
-                        <p class="recurring-hint" id="recurrenceHint">Chọn chu kỳ cho cuộc họp</p>
-                    </div>
-                    <select id="recurrence-select" class="text-control recurrence-select" name="recurrence_type">
-                        <option value="none">Không lặp</option>
-                        <option value="monthly">Lặp 1 tháng</option>
-                        <option value="until_changed">Lặp đến khi thay đổi</option>
-                    </select>
-                </div>
-
-                <!-- Mô tả (description) -->
-                <div class="form-field">
-                    <div class="label-row">
-                        <label class="field-label" for="description">Mô tả cuộc họp</label>
-                        <span class="optional">Không bắt buộc</span>
-                    </div>
-                    <textarea id="description" class="textarea-control" name="description" rows="3" placeholder="Nhập nội dung hoặc chương trình cuộc họp..."></textarea>
-                </div>
-
-                <!-- Footer Buttons -->
-                <footer class="modal-footer">
-                    <button class="button button-secondary" type="button" onclick="closeBookingModal()">Hủy</button>
-                    <button class="button button-primary" type="submit">Xác nhận đặt lịch</button>
-                </footer>
-            </form>
-        </section>
-    </div>
-
-    <script src="js/app.js?v=3"></script>
-</body>
-</html>
-````
-
 ## File: app/routers/meetings.py
 ````python
 from typing import List, Optional
@@ -4626,7 +4754,7 @@ def get_meetings(
     end_date: Optional[datetime] = Query(None, description="Lọc đến ngày"),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Meeting).filter(Meeting.status != "canceled")
+    query = db.query(Meeting).filter(Meeting.status.notin_(["CANCELLED", "canceled"]))
 
     if room_id:
         query = query.filter(Meeting.room_id == room_id)
@@ -4660,7 +4788,7 @@ def get_meeting_history(
         db.query(Meeting)
         .filter(
             Meeting.end_time < now,
-            Meeting.status != "canceled",
+            Meeting.status.notin_(["CANCELLED", "canceled"]),
             (
                 (Meeting.organizer_id == current_user.id)
                 | Meeting.id.in_(participant_meeting_ids)
@@ -4673,34 +4801,32 @@ def get_meeting_history(
     return query.all()
 
 
-@router.delete(
-    "/{meeting_id}",
+@router.patch(
+    "/{meeting_id}/cancel",
+    response_model=MeetingResponse,
     status_code=status.HTTP_200_OK,
-    summary="Hủy cuộc họp"
+    summary="H?y cu?c h?p",
 )
 def cancel_meeting(
     meeting_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
-    if not meeting:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Không tìm thấy cuộc họp."
-        )
+    return MeetingService.cancel_meeting(db, meeting_id, current_user)
 
-    is_admin = getattr(current_user, "role", "") == "admin"
-    if meeting.organizer_id != current_user.id and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bạn không có quyền hủy cuộc họp này."
-        )
 
-    meeting.status = "canceled"
-    db.commit()
-
-    return {"status": "success", "message": f"Đã hủy cuộc họp '{meeting.title}' thành công."}
+@router.delete(
+    "/{meeting_id}",
+    status_code=status.HTTP_200_OK,
+    summary="H?y cu?c h?p (t??ng th?ch)",
+)
+def cancel_meeting_legacy(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    return {"status": "success", "message": f"?? h?y cu?c h?p '{meeting.title}' th?nh c?ng."}
 
 
 # ----------------------------------------------------

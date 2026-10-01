@@ -1,6 +1,17 @@
+# app/models/__init__.py
+
 from app.core.database import Base
 from app.models.user import User
 from app.models.room import Room
-from app.models.meeting import Meeting, MeetingParticipant
+from app.models.meeting import Meeting
+from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
 
-__all__ = ["Base", "User", "Room", "Meeting", "MeetingParticipant"]
+__all__ = [
+    "Base",
+    "User",
+    "Room",
+    "Meeting",
+    "Equipment",
+    "MeetingEquipment",
+    "RoomEquipment",
+]

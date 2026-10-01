@@ -1,29 +1,30 @@
-from typing import List, Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from typing import List, Optional
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.orm import Session
 from app.core.security import get_current_user
+from app.db.session import get_db
+from app.models.meeting import Meeting
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
-from app.schemas.room import RoomResponse
 from app.schemas.meeting import (
-    MeetingCreateRequest, 
-    MeetingResponse, 
-    SuggestTimeRequest, 
-    SuggestTimeResponse
+    MeetingCreateRequest,
+    MeetingResponse,
+    SuggestTimeRequest,
+    SuggestTimeResponse,
 )
+from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
 
-router = APIRouter(prefix="/meetings", tags=["Meetings Management"])
+router = APIRouter()
 
 
 @router.get(
-    "/rooms",
+    "",
     response_model=List[RoomResponse],
     summary="Lấy danh sách phòng họp",
-    description="Trả về danh sách các phòng họp đang sẵn sàng cho người dùng chọn."
+    description="Trả về danh sách các phòng họp đang sẵn sàng cho người dùng chọn.",
 )
 def list_rooms(db: Session = Depends(get_db)):
     return MeetingService.get_all_active_rooms(db)
@@ -34,30 +35,45 @@ def list_rooms(db: Session = Depends(get_db)):
     response_model=List[MeetingResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Đặt lịch họp mới (Đơn & Định kỳ)",
-    description="Tạo cuộc họp mới hoặc chuỗi lịch định kỳ. Hệ thống tự động kiểm tra trùng lịch và rollback toàn bộ nếu có xung đột."
+    description="Tạo cuộc họp mới hoặc chuỗi lịch định kỳ (bao gồm mượn thiết bị). Hệ thống tự động kiểm tra trùng lịch, tồn kho thiết bị và rollback toàn bộ nếu có xung đột.",
 )
 def create_meeting(
     payload: MeetingCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     return MeetingService.create_meeting(
         db=db,
         payload=payload,
-        organizer_id=current_user.id
+        organizer_id=current_user.id,
     )
+
+
+@router.post(
+    "/suggest-time",
+    response_model=SuggestTimeResponse,
+    summary="Gợi ý khung giờ họp khả dụng",
+    description="Tìm kiếm khung giờ họp phù hợp dựa trên danh sách người tham gia và phòng họp.",
+)
+def suggest_time(
+    payload: SuggestTimeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.suggest_time(db=db, payload=payload)
 
 
 @router.get(
     "/",
     response_model=List[MeetingResponse],
-    summary="Lấy danh sách các cuộc họp"
+    summary="Lấy danh sách các cuộc họp",
+    description="Lấy danh sách cuộc họp có hỗ trợ lọc theo phòng họp và khoảng thời gian.",
 )
 def get_meetings(
     room_id: Optional[int] = Query(None, description="Lọc theo phòng"),
     start_date: Optional[datetime] = Query(None, description="Lọc từ ngày"),
     end_date: Optional[datetime] = Query(None, description="Lọc đến ngày"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     query = db.query(Meeting).filter(Meeting.status.notin_(["CANCELLED", "canceled"]))
 
@@ -110,7 +126,8 @@ def get_meeting_history(
     "/{meeting_id}/cancel",
     response_model=MeetingResponse,
     status_code=status.HTTP_200_OK,
-    summary="H?y cu?c h?p",
+    summary="Hủy cuộc họp",
+    description="Hủy cuộc họp theo ID. Chỉ người tổ chức (organizer) hoặc admin mới có quyền hủy.",
 )
 def cancel_meeting(
     meeting_id: int,
@@ -122,34 +139,14 @@ def cancel_meeting(
 
 @router.delete(
     "/{meeting_id}",
+    response_model=MeetingResponse,
     status_code=status.HTTP_200_OK,
-    summary="H?y cu?c h?p (t??ng th?ch)",
+    summary="Hủy cuộc họp (Endpoint tương thích)",
+    description="Endpoint tương thích ngược hỗ trợ hủy cuộc họp qua phương thức DELETE.",
 )
 def cancel_meeting_legacy(
     meeting_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
-    return {"status": "success", "message": f"?? h?y cu?c h?p '{meeting.title}' th?nh c?ng."}
-
-
-# ----------------------------------------------------
-# 5. GỢI Ý KHUNG GIỜ TRỐNG CHO NHÓM THAM GIA
-# ----------------------------------------------------
-@router.post(
-    "/suggest-times",
-    response_model=SuggestTimeResponse,
-    summary="Gợi ý khung giờ trống",
-    description="Phân tích lịch bận của danh sách người tham gia để đề xuất các khoảng thời gian trống chung trong ngày."
-)
-def suggest_meeting_times(
-    payload: SuggestTimeRequest,
-    db: Session = Depends(get_db)
-):
-    return MeetingService.calculate_suggested_times(
-        db=db,
-        participant_ids=payload.participant_ids,
-        date_str=payload.date,
-        duration_minutes=payload.duration_minutes
-    )
+    return MeetingService.cancel_meeting(db, meeting_id, current_user)

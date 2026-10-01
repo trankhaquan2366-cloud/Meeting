@@ -1,5 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 :root {
   font-family: "Inter", sans-serif;
@@ -85,30 +85,37 @@ button {
 }
 
 .modal-card {
-  width: 560px;
+  width: 540px;
   max-width: 100%;
-  padding: 24px;
+  max-height: min(92vh, 740px);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
   position: relative;
   z-index: 1;
   background: var(--white);
   border: 1px solid var(--gray-200);
-  border-radius: 12px;
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.11), 0 2px 8px rgba(15, 23, 42, 0.05);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.06);
+  padding: 0;
+  overflow: hidden;
 }
 
 .modal-header {
+  flex-shrink: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--gray-100);
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--gray-200);
+  background: var(--white);
 }
 
 .eyebrow {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   color: var(--blue);
   font-size: 11px;
-  line-height: 16px;
+  line-height: 14px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -118,24 +125,24 @@ button {
 .empty-title {
   margin: 0;
   color: var(--gray-950);
-  font-size: 22px;
-  line-height: 30px;
+  font-size: 18px;
+  line-height: 24px;
   font-weight: 700;
   letter-spacing: -0.02em;
 }
 
 .icon-button {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin: -3px -5px 0 0;
+  margin: 0;
   padding: 0;
   color: var(--gray-500);
   background: transparent;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   transition: color 160ms ease, background 160ms ease;
 }
 
@@ -146,35 +153,65 @@ button {
 
 .icon,
 .select-chevron {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex: none;
 }
 
 .icon-small {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   flex: none;
 }
 
 .booking-form {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding-top: 20px;
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+}
+
+.booking-form-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.booking-form-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.booking-form-body::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.booking-form-body::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.booking-form-body::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
 }
 
 .field-label,
 .recurring-label {
   color: var(--gray-700);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 12.5px;
+  line-height: 16px;
   font-weight: 600;
 }
 
@@ -183,23 +220,27 @@ button {
 .room-select,
 .input-with-icon {
   width: 100%;
+  box-sizing: border-box;
   color: var(--gray-950);
   background: var(--white);
   border: 1px solid var(--gray-300);
-  border-radius: 8px;
+  border-radius: 7px;
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .text-control {
-  height: 44px;
-  padding: 0 13px;
+  height: 38px;
+  padding: 0 11px;
+  font-size: 13px;
 }
 
 .textarea-control {
-  min-height: 84px;
-  padding: 11px 13px;
-  line-height: 21px;
+  min-height: 52px;
+  height: 52px;
+  padding: 7px 11px;
+  line-height: 18px;
+  font-size: 12.5px;
   resize: vertical;
 }
 
@@ -222,11 +263,11 @@ button {
 }
 
 .room-select {
-  min-height: 58px;
+  min-height: 46px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 6px 12px;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -236,14 +277,14 @@ button {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .room-name {
   display: block;
   color: var(--gray-950);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 13.5px;
+  line-height: 18px;
   font-weight: 600;
 }
 
@@ -654,4 +695,251 @@ button {
   .button {
     transition: none;
   }
+}
+
+/* ============================================================
+   DATE PICKER WRAPPER – nút chọn ngày kiểu badge đẹp
+   ============================================================ */
+.date-picker-wrapper {
+  position: relative;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+  user-select: none;
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--gray-500);
+}
+
+.date-picker-wrapper:hover {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.date-display-text {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gray-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   TIME SELECT WRAPPER – dropdown giờ tiếng Việt
+   ============================================================ */
+.time-select-wrapper {
+  position: relative;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 7px;
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--gray-500);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.time-select-wrapper:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.vi-time-select {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--gray-700);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+}
+
+/* ============================================================
+   EQUIPMENT BORROW SECTION – danh sách thiết bị mượn thêm
+   ============================================================ */
+.equipment-borrow-section {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+}
+
+.equipment-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.equipment-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.equipment-icon {
+  font-size: 15px;
+}
+
+.equipment-badge {
+  display: inline-block;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.03em;
+}
+
+.equipment-hint {
+  font-size: 11px;
+  color: #64748b;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.equipment-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.equipment-list-container::-webkit-scrollbar {
+  width: 5px;
+}
+.equipment-list-container::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+.equipment-list-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+.eq-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 9px 12px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.eq-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.08);
+}
+
+.eq-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.eq-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+.eq-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.eq-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eq-stock {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.eq-qty-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.eq-qty-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.eq-qty-input {
+  width: 52px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 0;
+  background: #f1f5f9;
+  color: #94a3b8;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms, background 150ms, color 150ms;
+}
+
+.eq-qty-input:enabled {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: #93c5fd;
+}
+
+.eq-qty-input:enabled:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.equipment-empty {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+.equipment-loading {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  padding: 14px 0;
 }

@@ -1,7 +1,7 @@
+# app/models/meeting.py
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import relationship
-from app.core.database import Base
-
+from app.core.database import Base  # ✅ Chỉ giữ lại 1 dòng import này
 
 class Meeting(Base):
     __tablename__ = "meetings"
@@ -18,7 +18,8 @@ class Meeting(Base):
     status = Column(String(20), nullable=False, default="scheduled")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
-
+    
+    equipments = relationship("MeetingEquipment", back_populates="meeting", cascade="all, delete-orphan")
     room = relationship("Room", lazy="joined")
     organizer = relationship("User", lazy="joined")
     participants = relationship("MeetingParticipant", back_populates="meeting", lazy="selectin")

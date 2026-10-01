@@ -124,21 +124,78 @@ function formatTimeInput(date) {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
+// Chuyển đổi giờ sang nhãn tiếng Việt: 7 giờ sáng, 12 giờ trưa, 14 giờ chiều...
+function formatVietnameseHour(h) {
+    if (h === 0)  return `0 giờ (nửa đêm)`;
+    if (h < 12)  return `${h} giờ sáng`;
+    if (h === 12) return `12 giờ trưa`;
+    if (h < 18)  return `${h} giờ chiều`;
+    return `${h} giờ tối`;
+}
+
+// Tạo danh sách giờ theo tiếng Việt từ 6:00 đến 22:00 (bước 1 giờ)
+function buildViTimeOptions(selectEl, defaultHour) {
+    if (!selectEl) return;
+    selectEl.innerHTML = '';
+    for (let h = 6; h <= 22; h++) {
+        const opt = document.createElement('option');
+        opt.value = `${String(h).padStart(2,'0')}:00`;
+        opt.textContent = formatVietnameseHour(h);
+        if (h === defaultHour) opt.selected = true;
+        selectEl.appendChild(opt);
+    }
+}
+
+// Hiển thị ngày đẹp trên label, đồng bộ với input ẩn
+function updateDateDisplay(dateVal) {
+    const label = document.getElementById('dateDisplayLabel');
+    if (!label || !dateVal) return;
+    const [y, m, d] = dateVal.split('-');
+    const days = ['CN','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
+    const dt = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
+    label.textContent = `${days[dt.getDay()]} ${d}/${m}/${y}`;
+}
+
+// Kích hoạt native date picker thông qua input ẩn
+function triggerDatePicker() {
+    const inp = document.getElementById('meetingDateInput');
+    if (!inp) return;
+    inp.style.position = 'fixed';
+    inp.style.opacity = '0';
+    inp.style.width = '1px';
+    inp.style.height = '1px';
+    inp.style.pointerEvents = 'none';
+    inp.showPicker ? inp.showPicker() : inp.click();
+    inp.addEventListener('change', function onDateChange() {
+        updateDateDisplay(inp.value);
+        inp.removeEventListener('change', onDateChange);
+    }, { once: true });
+}
+
 function setDefaultBookingTimes() {
-    const start = new Date();
-    if (start.getMinutes() || start.getSeconds() || start.getMilliseconds()) {
+    const now = new Date();
+    // Làm tròn lên giờ tiếp theo
+    const start = new Date(now);
+    if (start.getMinutes() > 0 || start.getSeconds() > 0 || start.getMilliseconds() > 0) {
         start.setHours(start.getHours() + 1, 0, 0, 0);
     }
-
     const end = new Date(start);
     end.setHours(end.getHours() + 1);
 
-    const dateInput = document.querySelector('#bookingModal input[name="meeting_date"]');
-    const startInput = document.querySelector('#bookingModal input[name="start_time"]');
-    const endInput = document.querySelector('#bookingModal input[name="end_time"]');
-    if (dateInput) dateInput.value = formatDateInput(start);
-    if (startInput) startInput.value = formatTimeInput(start);
-    if (endInput) endInput.value = formatTimeInput(end);
+    // Cập nhật ngày
+    const dateInp = document.getElementById('meetingDateInput');
+    if (dateInp) {
+        dateInp.value = formatDateInput(start);
+        updateDateDisplay(dateInp.value);
+    }
+
+    // Build + chọn giờ bắt đầu
+    const startSel = document.getElementById('startTimeSelect');
+    buildViTimeOptions(startSel, start.getHours());
+
+    // Build + chọn giờ kết thúc
+    const endSel = document.getElementById('endTimeSelect');
+    buildViTimeOptions(endSel, end.getHours());
 }
 
 async function openQuickBooking() {
@@ -202,7 +259,7 @@ function renderRooms(rooms, isAdmin) {
                 }
             }
             if (Array.isArray(amenitiesList)) {
-                amenitiesHTML = amenitiesList.map(a => `<span class="tag">📺 ${a}</span>`).join(' ');
+                amenitiesHTML = amenitiesList.map(a => `<span class="tag">${getAmenityIcon(a)} ${escapeHtml(a)}</span>`).join(' ');
             }
         }
         
@@ -288,7 +345,7 @@ function closeScheduleModal() {
     if (modal) modal.style.display = 'none';
 }
 
-/* --- MỞ & ĐÓNG MODAL ĐẶT PHÒNG (FIGMA UI) --- */
+/* --- MỞ & ĐÓNG MODAL ĐẶT PHÒNG --- */
 function openBookingModal(roomId) {
     const room = allRooms.find(r => r.id === roomId && r.is_active !== false);
     if (!room) return;
@@ -299,6 +356,55 @@ function openBookingModal(roomId) {
 
     const modal = document.getElementById('bookingModal');
     if (modal) modal.style.display = 'flex';
+    fetchAndRenderEquipments();
+}
+
+function getAmenityIcon(name) {
+    const lower = (name || '').toLowerCase();
+    if (lower.includes('màn hình') || lower.includes('tv') || lower.includes('display')) return '📺';
+    if (lower.includes('wifi') || lower.includes('mạng') || lower.includes('internet')) return '📶';
+    if (lower.includes('video') || lower.includes('camera') || lower.includes('webcam')) return '🎥';
+    if (lower.includes('chiếu') || lower.includes('projector')) return '📽️';
+    if (lower.includes('mic') || lower.includes('loa') || lower.includes('âm thanh') || lower.includes('sound')) return '🎙️';
+    if (lower.includes('đồ uống') || lower.includes('nước') || lower.includes('trà') || lower.includes('cà phê') || lower.includes('coffee')) return '☕';
+    if (lower.includes('bảng') || lower.includes('board') || lower.includes('flipchart')) return '📋';
+    if (lower.includes('điều hòa') || lower.includes('máy lạnh') || lower.includes('ac')) return '❄️';
+    return '✨';
+}
+
+function renderRoomAmenities(room) {
+    const container = document.getElementById('roomAvailableAmenities');
+    if (!container) return;
+
+    if (!room) {
+        container.innerHTML = '<span style="color: #94a3b8; font-size: 0.82rem; font-style: italic;">Chưa chọn phòng họp.</span>';
+        return;
+    }
+
+    let list = room.amenities || [];
+    if (typeof list === 'string') {
+        try {
+            list = JSON.parse(list);
+        } catch (e) {
+            list = list.split(',').map(s => s.trim()).filter(Boolean);
+        }
+    }
+
+    if (!Array.isArray(list) || list.length === 0) {
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; gap:6px; color: #64748b; font-size: 0.82rem; font-style: italic;">
+                <span>ℹ️ Phòng này chưa cấu hình tiện ích cố định.</span>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = list.map(item => `
+        <span style="display: inline-flex; align-items: center; gap: 5px; background: #ffffff; color: #166534; border: 1px solid #86efac; border-radius: 9999px; padding: 4px 10px; font-size: 0.8rem; font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+            <span>${getAmenityIcon(item)}</span>
+            <span>${escapeHtml(item)}</span>
+        </span>
+    `).join('');
 }
 
 function selectBookingRoom(room) {
@@ -309,6 +415,9 @@ function selectBookingRoom(room) {
     if (roomMetaEl) {
         roomMetaEl.innerHTML = `${room.capacity || 10} người · <span class="status-available">Đang hoạt động</span>`;
     }
+
+    // Hiển thị tiện ích có sẵn của phòng đã chọn
+    renderRoomAmenities(room);
 
     const roomMenu = document.getElementById('roomMenu');
     const roomButton = document.getElementById('room-select');
@@ -349,14 +458,14 @@ function toggleRoomMenu() {
 async function findAvailableTime() {
     if (!selectedRoomId) return;
 
-    const form = document.querySelector('#bookingModal .booking-form');
-    const dateInput = form.querySelector('[name="meeting_date"]');
-    const startInput = form.querySelector('[name="start_time"]');
-    const endInput = form.querySelector('[name="end_time"]');
+    const dateInput = document.getElementById('meetingDateInput');
+    const startInput = document.getElementById('startTimeSelect');
+    const endInput = document.getElementById('endTimeSelect');
     const button = document.getElementById('findAvailabilityBtn');
     const message = document.getElementById('availabilityMessage');
     const results = document.getElementById('availabilityResults');
-    const meetingDate = dateInput.value;
+    const meetingDate = dateInput ? dateInput.value : '';
+    if (!meetingDate) return;
     const requestedStart = new Date(`${meetingDate}T${startInput.value}:00`);
     const requestedEnd = new Date(`${meetingDate}T${endInput.value}:00`);
     if (requestedEnd <= requestedStart) requestedEnd.setDate(requestedEnd.getDate() + 1);
@@ -406,9 +515,15 @@ async function findAvailableTime() {
                 option.className = 'time-suggestion';
                 option.textContent = `${slot.start}–${slot.end}`;
                 option.addEventListener('click', () => {
-                    dateInput.value = slot.date;
-                    startInput.value = slot.start;
-                    endInput.value = slot.end;
+                    // Cập nhật ngày
+                    const di = document.getElementById('meetingDateInput');
+                    if (di) { di.value = slot.date; updateDateDisplay(slot.date); }
+                    // Cập nhật giờ bắt đầu
+                    const ss = document.getElementById('startTimeSelect');
+                    if (ss) ss.value = slot.start;
+                    // Cập nhật giờ kết thúc
+                    const es = document.getElementById('endTimeSelect');
+                    if (es) es.value = slot.end;
                     results.querySelectorAll('.time-suggestion').forEach(item => item.classList.remove('selected'));
                     option.classList.add('selected');
                     message.textContent = `Đã chọn ${slot.start}–${slot.end}.`;
@@ -443,9 +558,9 @@ async function handleBookingSubmit(e) {
 
     const form = e.target;
     const title = form.querySelector('[name="title"]')?.value || 'Cuộc họp';
-    const meetingDate = form.querySelector('[name="meeting_date"]')?.value || new Date().toISOString().split('T')[0];
-    const startTime = form.querySelector('[name="start_time"]')?.value || '09:00';
-    const endTime = form.querySelector('[name="end_time"]')?.value || '10:00';
+    const meetingDate = document.getElementById('meetingDateInput')?.value || new Date().toISOString().split('T')[0];
+    const startTime = document.getElementById('startTimeSelect')?.value || '09:00';
+    const endTime = document.getElementById('endTimeSelect')?.value || '10:00';
     const description = form.querySelector('[name="description"]')?.value || '';
 
     const recurrenceType = document.getElementById('recurrence-select')?.value || 'none';
@@ -472,7 +587,8 @@ async function handleBookingSubmit(e) {
         end_time: `${formatDateInput(end)}T${formatTimeInput(end)}:00`,
         is_recurring: isRecurring,
         recurrence_type: recurrenceType,
-        recurrence_end_date: recurrenceEndDate ? `${formatDateInput(recurrenceEndDate)}T${formatTimeInput(recurrenceEndDate)}:00` : null
+        recurrence_end_date: recurrenceEndDate ? `${formatDateInput(recurrenceEndDate)}T${formatTimeInput(recurrenceEndDate)}:00` : null,
+        equipments: getSelectedEquipmentsData()
     };
 
     const token = localStorage.getItem('token') || '';
@@ -515,7 +631,7 @@ async function fetchMyBookings() {
     if (!token) return;
 
     try {
-        const res = await fetch(`${API_BASE}/meetings/`, {
+        const res = await fetch(`${API_BASE}/meetings`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -558,9 +674,28 @@ function renderMyBookings() {
         const timeRange = `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`;
         const status = statusLabels[b.status] || { label: 'Không xác định', className: 'booking-status-unknown' };
 
+        let equipmentsHTML = '';
+        if (b.equipments && b.equipments.length > 0) {
+            const eqList = b.equipments.map(eq => {
+                const name = escapeHtml(eq.equipment_name || 'Thiết bị');
+                return name + ' (x' + eq.quantity + ')';
+            }).join(', ');
+
+            equipmentsHTML = `
+                <div style="margin-top: 4px; font-size: 0.78rem; color: #475569;">
+                    📦 <em>Thiết bị:</em> ${eqList}
+                </div>
+            `;
+        }
+        
+
         return `
             <tr>
-                <td><strong>${escapeHtml(roomName)}</strong></td>
+                <td>
+                    <strong>${escapeHtml(roomName)}</strong>
+                    <div style="font-size:0.82rem; color:#64748b;">${escapeHtml(b.title || 'Cuộc họp')}</div>
+                    ${equipmentsHTML}
+                </td>
                 <td><div class="booking-datetime"><span class="booking-date">${dateLabel}</span><strong class="booking-time">${timeRange}</strong></div></td>
                 <td><span class="booking-status ${status.className}">${status.label}</span></td>
                 <td><button class="btn-admin-action btn-admin-delete" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
@@ -728,7 +863,7 @@ async function handleFormSubmit(e) {
             method: method,
             headers: {
                 'Content-Type': 'application/json',
-                "Authorization": `Bearer ${localStorage.getItem("token")}`
+                "Authorization": `Bearer ${token}`
             },
             body: JSON.stringify(payload)
         });
@@ -779,7 +914,95 @@ function logout() {
 }
 
 /* ==========================================================================
-   GLOBAL EXPORTS
+   XỬ LÝ THIẾT BỊ TRONG FORM ĐẶT PHÒNG
+   ========================================================================== */
+
+async function fetchAndRenderEquipments() {
+    const container = document.getElementById('equipmentListContainer');
+    if (!container) return;
+
+    const token = localStorage.getItem('token') || '';
+    try {
+        const res = await fetch(`${API_BASE}/equipments/`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!res.ok) throw new Error("Không thể lấy danh sách thiết bị");
+
+        const equipments = await res.json();
+        const activeEquipments = equipments.filter(eq => eq.is_active !== false);
+
+        if (!activeEquipments || activeEquipments.length === 0) {
+            container.innerHTML = '<div class="equipment-empty">📭 Hiện không có thiết bị bổ sung trong kho để mượn thêm.</div>';
+            return;
+        }
+
+        container.innerHTML = activeEquipments.map(item => `
+            <div class="eq-card" id="eq-card-${item.id}">
+                <label class="eq-label">
+                    <input type="checkbox"
+                           class="eq-checkbox"
+                           value="${item.id}"
+                           onchange="toggleEquipmentQtyInput(this, ${item.id})">
+                    <div class="eq-info">
+                        <span class="eq-name">${escapeHtml(item.name)}</span>
+                        <span class="eq-stock">Kho: ${item.total_qty || '?'} cái</span>
+                    </div>
+                </label>
+                <div class="eq-qty-group">
+                    <span class="eq-qty-label">SL</span>
+                    <input type="number"
+                           id="eq-qty-${item.id}"
+                           value="1"
+                           min="1"
+                           max="${item.total_qty || 99}"
+                           disabled
+                           class="eq-qty-input">
+                </div>
+            </div>
+        `).join('');
+
+    } catch (err) {
+        console.error("Lỗi tải danh sách thiết bị:", err);
+        container.innerHTML = '<div class="equipment-empty" style="color:#ef4444;">❌ Lỗi tải danh sách thiết bị!</div>';
+    }
+}
+
+function toggleEquipmentQtyInput(checkbox, eqId) {
+    const qtyInput = document.getElementById(`eq-qty-${eqId}`);
+    if (!qtyInput) return;
+
+    if (checkbox.checked) {
+        qtyInput.disabled = false;
+        qtyInput.removeAttribute('style'); // let CSS class handle visuals
+        qtyInput.focus();
+    } else {
+        qtyInput.disabled = true;
+        qtyInput.value = 1;
+        qtyInput.removeAttribute('style');
+    }
+}
+
+function getSelectedEquipmentsData() {
+    const selected = [];
+    const checkboxes = document.querySelectorAll('.eq-checkbox:checked');
+
+    checkboxes.forEach(cb => {
+        const eqId = parseInt(cb.value);
+        const qtyInput = document.getElementById(`eq-qty-${eqId}`);
+        const qty = qtyInput ? (parseInt(qtyInput.value) || 1) : 1;
+
+        selected.push({
+            equipment_id: eqId,
+            quantity: qty
+        });
+    });
+
+    return selected;
+}
+
+/* ==========================================================================
+   GLOBAL EXPORTS (XUẤT TOÀN CỤC CHO HTML CALL)
    ========================================================================== */
 window.toggleSidebar = toggleSidebar;
 window.switchToOverview = switchToOverview;
@@ -792,6 +1015,7 @@ window.findAvailableTime = findAvailableTime;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
 window.openBookingModal = openBookingModal;
+window.openQuickBooking = openQuickBooking;
 window.closeBookingModal = closeBookingModal;
 window.openBookModal = openBookModal;
 window.closeBookModal = closeBookModal;
@@ -808,3 +1032,14 @@ window.closeRoomModal = closeRoomModal;
 window.handleFormSubmit = handleFormSubmit;
 window.deleteRoom = deleteRoom;
 window.logout = logout;
+window.fetchAndRenderEquipments = fetchAndRenderEquipments;
+window.toggleEquipmentQtyInput = toggleEquipmentQtyInput;
+window.getSelectedEquipmentsData = getSelectedEquipmentsData;
+window.renderRoomAmenities = renderRoomAmenities;
+window.getAmenityIcon = getAmenityIcon;
+window.triggerDatePicker = triggerDatePicker;
+window.updateDateDisplay = updateDateDisplay;
+window.buildViTimeOptions = buildViTimeOptions;
+window.formatVietnameseHour = formatVietnameseHour;
+// syncHiddenStartTime: không cần thiết nữa nhưng giữ để tương thích HTML
+window.syncHiddenStartTime = function() {};

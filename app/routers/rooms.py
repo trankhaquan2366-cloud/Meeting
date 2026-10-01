@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -67,12 +68,21 @@ def create_room(
             detail="Tên phòng họp đã tồn tại!"
         )
 
+    amenities_data = room_in.amenities
+    if isinstance(amenities_data, list):
+        amenities_json = json.dumps(amenities_data, ensure_ascii=False)
+    elif isinstance(amenities_data, str) and amenities_data.strip():
+        amenities_json = json.dumps([s.strip() for s in amenities_data.split(',') if s.strip()], ensure_ascii=False)
+    else:
+        amenities_json = None
+
     # Tạo phòng mới
     new_room = Room(
         name=room_in.name,
         capacity=room_in.capacity,
         location=room_in.location,
         description=room_in.description,
+        amenities=amenities_json,
         is_active=room_in.is_active
     )
     db.add(new_room)
@@ -96,6 +106,15 @@ def update_room(
 
     # Cập nhật các trường có gửi lên
     update_data = room_in.model_dump(exclude_unset=True)
+    if "amenities" in update_data:
+        val = update_data["amenities"]
+        if isinstance(val, list):
+            update_data["amenities"] = json.dumps(val, ensure_ascii=False)
+        elif isinstance(val, str) and val.strip():
+            update_data["amenities"] = json.dumps([s.strip() for s in val.split(',') if s.strip()], ensure_ascii=False)
+        else:
+            update_data["amenities"] = None
+
     for key, value in update_data.items():
         setattr(room, key, value)
 
