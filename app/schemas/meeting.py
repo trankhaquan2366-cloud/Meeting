@@ -31,6 +31,15 @@ class MeetingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MeetingEquipmentRequest(BaseModel):
+    equipment_ids: List[int]
+
+
+class MeetingEquipmentResponse(BaseModel):
+    meeting_id: int
+    equipment_ids: List[int]
+
+
 # 3. Schema cho tính năng gợi ý khung giờ trống (Bổ sung mới)
 class SuggestTimeRequest(BaseModel):
     participant_ids: List[int]

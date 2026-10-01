@@ -33,7 +33,7 @@ def get_available_rooms(
             detail="Thời gian kết thúc phải lớn hơn thời gian bắt đầu."
         )
 
-    # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
+    # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH
     busy_rooms_query = db.query(Meeting.room_id).filter(
         Meeting.status != "canceled",  # Bỏ qua các cuộc họp đã hủy
         and_(
@@ -118,8 +118,8 @@ def delete_room(
     # Soft delete: Cập nhật trạng thái thành False thay vì xóa hẳn khỏi DB
     room.is_active = False
     db.commit()
-    
-  return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}  
+
+    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}
 @router.get("/available/", response_model=List[RoomResponse])
 def read_available_rooms(
     start_time: datetime = Query(..., description="Thời gian bắt đầu"),

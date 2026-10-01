@@ -12,7 +12,9 @@ from app.schemas.meeting import (
     MeetingCreateRequest, 
     MeetingResponse, 
     SuggestTimeRequest, 
-    SuggestTimeResponse
+    SuggestTimeResponse,
+    MeetingEquipmentRequest,
+    MeetingEquipmentResponse
 )
 from app.services.meeting_service import MeetingService
 
@@ -104,6 +106,26 @@ def get_meeting_history(
     )
 
     return query.all()
+
+
+@router.post(
+    "/{meeting_id}/equipments",
+    response_model=MeetingEquipmentResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Đặt thiết bị cho cuộc họp",
+)
+def book_meeting_equipments(
+    meeting_id: int,
+    payload: MeetingEquipmentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.book_equipments(
+        db=db,
+        meeting_id=meeting_id,
+        equipment_ids=payload.equipment_ids,
+        current_user=current_user,
+    )
 
 
 @router.delete(

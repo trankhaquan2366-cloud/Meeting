@@ -22,6 +22,12 @@ class Meeting(Base):
     room = relationship("Room", lazy="joined")
     organizer = relationship("User", lazy="joined")
     participants = relationship("MeetingParticipant", back_populates="meeting", lazy="selectin")
+    equipment_links = relationship(
+        "MeetingEquipment",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return f"<Meeting id={self.id} title={self.title!r}>"

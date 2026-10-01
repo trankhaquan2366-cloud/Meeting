@@ -5,10 +5,113 @@ from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting
+from app.models.equipment import Equipment, MeetingEquipment
 from app.models.user import User  # Thêm import model User nếu chưa có
 from app.schemas.meeting import MeetingCreateRequest
 
 class MeetingService:
+
+
+    @staticmethod
+    def book_equipments(db: Session, meeting_id: int, equipment_ids: list[int], current_user: User):
+        """Atomically attach available equipment to a meeting."""
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy cuộc họp.",
+            )
+
+        if meeting.organizer_id != current_user.id and current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn không có quyền đặt thiết bị cho cuộc họp này.",
+            )
+
+        # De-duplicate while preserving the request order.
+        unique_ids = list(dict.fromkeys(equipment_ids))
+        if not unique_ids:
+            return {"meeting_id": meeting.id, "equipment_ids": []}
+
+        try:
+            equipments = (
+                db.query(Equipment)
+                .filter(Equipment.id.in_(unique_ids))
+                .with_for_update()
+                .all()
+            )
+            equipment_by_id = {equipment.id: equipment for equipment in equipments}
+            missing_ids = [equipment_id for equipment_id in unique_ids if equipment_id not in equipment_by_id]
+            if missing_ids:
+                db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Không tìm thấy thiết bị với ID: {missing_ids}",
+                )
+
+            invalid = [
+                equipment for equipment in equipments
+                if not equipment.is_active
+                or (equipment.status or "").strip().lower() in {
+                    "maintenance", "under_maintenance", "under maintenance",
+                }
+            ]
+            if invalid:
+                db.rollback()
+                invalid_ids = [equipment.id for equipment in invalid]
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Thiết bị không hoạt động hoặc đang bảo trì: {invalid_ids}",
+                )
+
+            existing_links = db.query(MeetingEquipment).filter(
+                MeetingEquipment.meeting_id == meeting.id,
+                MeetingEquipment.equipment_id.in_(unique_ids),
+            ).all()
+            existing_ids = {link.equipment_id for link in existing_links}
+
+            # Check each new equipment against all non-cancelled meetings whose
+            # intervals overlap. The target meeting itself is explicitly ignored.
+            for equipment_id in unique_ids:
+                if equipment_id in existing_ids:
+                    continue
+                conflict = (
+                    db.query(MeetingEquipment)
+                    .join(Meeting, Meeting.id == MeetingEquipment.meeting_id)
+                    .filter(
+                        MeetingEquipment.equipment_id == equipment_id,
+                        MeetingEquipment.meeting_id != meeting.id,
+                        Meeting.status.notin_(["CANCELLED", "canceled"]),
+                        Meeting.start_time < meeting.end_time,
+                        Meeting.end_time > meeting.start_time,
+                    )
+                    .first()
+                )
+                if conflict:
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Thiết bị {equipment_id} đã được đặt trong khung giờ trùng với cuộc họp.",
+                    )
+
+            for equipment_id in unique_ids:
+                if equipment_id not in existing_ids:
+                    db.add(MeetingEquipment(meeting_id=meeting.id, equipment_id=equipment_id))
+
+            db.commit()
+            assigned_ids = [
+                link.equipment_id
+                for link in db.query(MeetingEquipment)
+                .filter(MeetingEquipment.meeting_id == meeting.id)
+                .order_by(MeetingEquipment.id)
+                .all()
+            ]
+            return {"meeting_id": meeting.id, "equipment_ids": assigned_ids}
+        except HTTPException:
+            raise
+        except Exception:
+            db.rollback()
+            raise
 
     @staticmethod
     def get_all_active_rooms(db: Session):
