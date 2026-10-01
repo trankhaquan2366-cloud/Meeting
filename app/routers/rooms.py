@@ -16,7 +16,8 @@ router = APIRouter()
 # GET /api/rooms/: Lấy danh sách tất cả phòng
 @router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
 def get_all_rooms(db: Session = Depends(get_db)):
-    return db.query(Room).all()
+    # THÊM FILTER is_active == True
+    return db.query(Room).filter(Room.is_active == True).all()
 
 
 # GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian
@@ -118,8 +119,7 @@ def delete_room(
     # Soft delete: Cập nhật trạng thái thành False thay vì xóa hẳn khỏi DB
     room.is_active = False
     db.commit()
-    
-  return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}  
+    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}  
 @router.get("/available/", response_model=List[RoomResponse])
 def read_available_rooms(
     start_time: datetime = Query(..., description="Thời gian bắt đầu"),

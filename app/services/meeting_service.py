@@ -29,11 +29,12 @@ class MeetingService:
 
         # 1. Kiểm tra phòng họp có tồn tại và active không
         room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
+
         if not room:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Phòng họp không tồn tại hoặc đã bị khóa!"
-            )
+         raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Phòng họp không tồn tại hoặc đã bị ngưng hoạt động!"
+    )
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
