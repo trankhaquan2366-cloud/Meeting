@@ -1,11 +1,68 @@
 from datetime import datetime
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func
 from fastapi import HTTPException, status
 from app.models.equipment import Equipment, MeetingEquipment
 from app.models.meeting import Meeting
-from app.schemas.equipment import MeetingEquipmentItemInput
+from app.schemas.equipment import EquipmentResponse, EquipmentStatusResponse, MeetingEquipmentItemInput
+
+
+def get_equipment_availability(
+    db: Session,
+    start_time: datetime,
+    end_time: datetime,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+) -> List[EquipmentStatusResponse]:
+    booked_quantities = (
+        db.query(
+            MeetingEquipment.equipment_id.label("equipment_id"),
+            func.sum(MeetingEquipment.quantity).label("booked_qty"),
+        )
+        .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
+        .filter(
+            func.upper(Meeting.status) != "CANCELLED",
+            Meeting.start_time < end_time,
+            Meeting.end_time > start_time,
+        )
+        .group_by(MeetingEquipment.equipment_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(Equipment, func.coalesce(booked_quantities.c.booked_qty, 0))
+        .outerjoin(booked_quantities, Equipment.id == booked_quantities.c.equipment_id)
+    )
+    if category:
+        query = query.filter(Equipment.category == category)
+    if search:
+        search_term = f"%{search.strip()}%"
+        query = query.filter(
+            Equipment.name.ilike(search_term) | Equipment.code.ilike(search_term)
+        )
+
+    results = []
+    for equipment, booked_qty in query.order_by(Equipment.name).all():
+        booked_qty = int(booked_qty)
+        available_qty = equipment.total_qty - booked_qty
+        if not equipment.is_active:
+            status_label = "Ngừng hoạt động / Bảo trì"
+        elif available_qty <= 0:
+            status_label = "Đã đặt hết"
+        else:
+            status_label = "Có sẵn"
+
+        response_data = EquipmentResponse.model_validate(equipment).model_dump()
+        response_data.update(
+            {
+                "booked_qty": booked_qty,
+                "available_qty": available_qty,
+                "status_label": status_label,
+            }
+        )
+        results.append(EquipmentStatusResponse.model_validate(response_data))
+    return results
 
 def check_equipment_availability(
     db: Session,

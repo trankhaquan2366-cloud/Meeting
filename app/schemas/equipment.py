@@ -30,6 +30,11 @@ class EquipmentResponse(EquipmentBase):
     class Config:
         from_attributes = True
 
+class EquipmentStatusResponse(EquipmentResponse):
+    booked_qty: int
+    available_qty: int
+    status_label: str
+
 # --- Meeting Equipment Request/Response ---
 class MeetingEquipmentItemInput(BaseModel):
     equipment_id: int

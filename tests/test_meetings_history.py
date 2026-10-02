@@ -142,5 +142,6 @@ class TestResponseShape:
         expected = {
             "id", "title", "description", "room_id", "organizer_id",
             "start_time", "end_time", "status", "is_recurring", "recurring_type",
+            "equipments",
         }
         assert set(item.keys()) == expected
