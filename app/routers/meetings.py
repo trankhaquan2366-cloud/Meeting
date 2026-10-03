@@ -1,11 +1,12 @@
+# app/routers/meetings.py
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
+
 from app.core.security import get_current_user
 from app.db.session import get_db
-from app.models.meeting import Meeting
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import (
@@ -16,6 +17,7 @@ from app.schemas.meeting import (
 )
 from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
+from app.services.notification_service import send_meeting_invitation_notifications
 
 router = APIRouter()
 
@@ -39,14 +41,30 @@ def list_rooms(db: Session = Depends(get_db)):
 )
 def create_meeting(
     payload: MeetingCreateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return MeetingService.create_meeting(
+    # 1. Gọi Service tạo cuộc họp
+    created_meetings = MeetingService.create_meeting(
         db=db,
         payload=payload,
         organizer_id=current_user.id,
     )
+
+    # 2. Gửi thông báo ngầm cho những người được mời tham dự
+    if payload.participant_ids and created_meetings:
+        first_meeting = created_meetings[0] if isinstance(created_meetings, list) else created_meetings
+        start_str = first_meeting.start_time.strftime("%H:%M %d/%m/%Y")
+        background_tasks.add_task(
+            send_meeting_invitation_notifications,
+            db=db,
+            participant_ids=payload.participant_ids,
+            meeting_title=first_meeting.title,
+            start_time_str=start_str,
+        )
+
+    return created_meetings
 
 
 @router.post(

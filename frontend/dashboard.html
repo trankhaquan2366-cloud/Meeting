@@ -4,14 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
-    <link rel="stylesheet" href="css/style.css?v=10">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/booking.css?v=2">
-   <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css?v=11">
 </head>
 <body>
     <div class="app-layout" id="appLayout">
-        <!-- SIDEBAR CHUẨN GỌN GÀNG -->
+        <!-- SIDEBAR -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand" onclick="switchToOverview()" title="Quay về Trang chủ">
                 <span class="logo-icon">RS</span>
@@ -52,7 +50,7 @@
 
         <!-- MAIN CONTENT -->
         <main class="main-content" id="mainContent">
-            <!-- TOPBAR VỚI NÚT 3 GẠCH VÀ TÌM KIẾM -->
+            <!-- TOPBAR -->
             <header class="topbar">
                 <div class="topbar-left">
                     <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
@@ -181,7 +179,7 @@
                     <div class="room-grid" id="roomGridRooms"></div>
                 </div>
 
-                <!-- VIEW: TRẠNG THÁI THIẾT BỊ -->
+                <!-- VIEW 3: TRẠNG THÁI THIẾT BỊ -->
                 <div id="viewEquipments" class="tab-view" style="display: none;">
                     <div class="page-header">
                         <div>
@@ -227,7 +225,7 @@
                     </div>
                 </div>
 
-                <!-- VIEW 3: ĐẶT LỊCH CỦA TÔI -->
+                <!-- VIEW 4: ĐẶT LỊCH CỦA TÔI -->
                 <div id="viewMyBookings" class="tab-view" style="display: none;">
                     <div class="page-header">
                         <h2>Lịch họp đã đặt của tôi</h2>
@@ -247,7 +245,7 @@
                     </div>
                 </div>
 
-                <!-- VIEW 4: CÀI ĐẶT -->
+                <!-- VIEW 5: CÀI ĐẶT -->
                 <div id="viewSettings" class="tab-view" style="display: none;">
                     <div class="page-header">
                         <h2>Cài đặt tài khoản</h2>
@@ -328,8 +326,8 @@
         </div>
     </div>
 
-    <!-- MODAL ĐẶT PHÒNG HỌP (FIGMA UI) -->
-    <div class="page-shell" id="bookingModal">
+    <!-- MODAL ĐẶT PHÒNG HỌP (CHUẨN FIGMA UI) -->
+    <div id="bookingModal" class="modal" style="display: none;">
         <div class="ambient ambient-left"></div>
         <div class="ambient ambient-right"></div>
 
@@ -346,43 +344,40 @@
 
             <form class="booking-form" onsubmit="handleBookingSubmit(event)">
                 <div class="booking-form-body">
-                    <!-- Tên cuộc họp (title) -->
+                    <!-- Tên cuộc họp -->
                     <div class="form-field">
                         <label class="field-label" for="meeting-title">Tên cuộc họp</label>
                         <input id="meeting-title" class="text-control" name="title" placeholder="Nhập tên cuộc họp" required />
                     </div>
 
-                    <!-- Chọn phòng (room_id) -->
+                    <!-- Chọn phòng -->
                     <div class="form-field room-field">
                         <label class="field-label" for="room-select">Chọn phòng</label>
                         <button id="room-select" class="room-select" type="button" aria-expanded="false" onclick="toggleRoomMenu()">
                             <div class="room-select-main">
-                                <span class="room-name">Phòng Orchid</span>
-                                <span class="room-meta">8 người · <span class="status-available">Còn trống</span></span>
+                                <span class="room-name">Phòng họp</span>
+                                <span class="room-meta">Chọn phòng mong muốn</span>
                             </div>
                             <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                         </button>
                         <div id="roomMenu" class="room-menu" role="listbox" hidden></div>
                     </div>
 
-                    <!-- Tiện ích sẵn có của phòng được chọn -->
-                    <div class="form-field" style="margin-top: -2px;">
+                    <!-- Tiện ích phòng -->
+                    <div class="form-field">
                         <div class="label-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                            <label class="field-label" style="font-weight: 600; color: #1e293b; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">
-                                <span>🏢 Tiện ích sẵn có trong phòng:</span>
-                            </label>
+                            <label class="field-label">🏢 Tiện ích sẵn có trong phòng:</label>
                             <span class="optional" style="font-size: 0.72rem; color: #16a34a; font-weight: 500;">✓ Đã bao gồm sẵn trong phòng</span>
                         </div>
                         <div id="roomAvailableAmenities" style="display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; min-height: 36px; align-items: center;">
-                            <span style="color: #64748b; font-size: 0.8rem;">Đang tải tiện ích phòng...</span>
+                            <span style="color: #64748b; font-size: 0.8rem;">Vui lòng chọn phòng để xem tiện ích...</span>
                         </div>
                     </div>
 
-                    <!-- Thời gian (start_time & end_time) -->
+                    <!-- Chọn thời gian -->
                     <fieldset class="time-fieldset">
                         <legend class="field-label">Thời gian</legend>
                         <div class="time-grid">
-                            <!-- Ngày: input ẩn + hiển thị đẹp + lịch -->
                             <div class="date-column">
                                 <span class="mini-label">Ngày họp</span>
                                 <div class="date-picker-wrapper" id="datepickerWrapper" onclick="triggerDatePicker()">
@@ -391,23 +386,19 @@
                                     <input name="meeting_date" id="meetingDateInput" type="date" required style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;" />
                                 </div>
                             </div>
-                            <!-- Giờ bắt đầu: dropdown tiếng Việt -->
                             <div class="time-column">
                                 <span class="mini-label">Bắt đầu</span>
                                 <div class="time-select-wrapper">
                                     <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                    <select name="start_time" id="startTimeSelect" class="vi-time-select" onchange="syncHiddenStartTime(this)" required>
-                                    </select>
+                                    <select name="start_time" id="startTimeSelect" class="vi-time-select" onchange="syncHiddenStartTime(this)" required></select>
                                     <input type="hidden" name="start_time_val" id="startTimeHidden" />
                                 </div>
                             </div>
-                            <!-- Giờ kết thúc: dropdown tiếng Việt -->
                             <div class="time-column">
                                 <span class="mini-label">Kết thúc</span>
                                 <div class="time-select-wrapper">
                                     <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                    <select name="end_time" id="endTimeSelect" class="vi-time-select" required>
-                                    </select>
+                                    <select name="end_time" id="endTimeSelect" class="vi-time-select" required></select>
                                 </div>
                             </div>
                         </div>
@@ -419,7 +410,7 @@
                         <div id="availabilityResults" class="availability-results" aria-label="Các khung giờ trống"></div>
                     </fieldset>
 
-                    <!-- Cuộc họp lặp lại (is_recurring) -->
+                    <!-- Lặp lại -->
                     <div class="recurring-row">
                         <div>
                             <label class="recurring-label" for="recurrence-select">Lặp lại cuộc họp</label>
@@ -432,7 +423,7 @@
                         </select>
                     </div>
 
-                    <!-- THIẾT BỊ MƯỢN THÊM TỪ KHO (TÙY CHỌN) -->
+                    <!-- Mượn thiết bị -->
                     <div class="form-field equipment-borrow-section">
                         <div class="equipment-section-header">
                             <div class="equipment-section-title">
@@ -440,17 +431,21 @@
                                 <span>Mượn thêm thiết bị từ kho</span>
                                 <span class="equipment-badge">Tùy chọn</span>
                             </div>
-                            <span class="equipment-hint">Tick chọn thiết bị cần mượn & nhập số lượng</span>
+                            <span class="equipment-hint">Tích chọn thiết bị & nhập số lượng</span>
                         </div>
-                        <!-- Container danh sách thiết bị -->
                         <div id="equipmentListContainer" class="equipment-list-container">
-                            <div class="equipment-loading">
-                                <span>⏳</span> Đang tải danh sách thiết bị kho...
-                            </div>
+                            <div class="equipment-loading">⏳ Đang tải danh sách thiết bị kho...</div>
                         </div>
                     </div>
 
-                    <!-- Mô tả (description) -->
+                    <!-- Mời người tham dự -->
+                    <div class="form-field">
+                        <label class="field-label">👥 Mời người tham dự cuộc họp:</label>
+                        <div id="participantListContainer" class="participant-picker-list"></div>
+                        <small class="equipment-hint">Tích chọn đồng nghiệp bạn muốn gửi thông báo mời tham dự.</small>
+                    </div>
+
+                    <!-- Mô tả -->
                     <div class="form-field">
                         <div class="label-row">
                             <label class="field-label" for="description">Mô tả cuộc họp</label>
@@ -460,7 +455,6 @@
                     </div>
                 </div>
 
-                <!-- Footer Buttons: Cố định luôn nhìn thấy ở đáy modal -->
                 <footer class="modal-footer">
                     <button class="button button-secondary" type="button" onclick="closeBookingModal()">Hủy</button>
                     <button class="button button-primary" type="submit">Xác nhận đặt lịch</button>
@@ -469,6 +463,6 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=6"></script>
+    <script src="js/app.js?v=7"></script>
 </body>
 </html>

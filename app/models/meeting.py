@@ -1,7 +1,19 @@
 # app/models/meeting.py
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import relationship
-from app.core.database import Base  # ✅ Chỉ giữ lại 1 dòng import này
+
+from app.core.database import Base
+
 
 class Meeting(Base):
     __tablename__ = "meetings"
@@ -18,11 +30,17 @@ class Meeting(Base):
     status = Column(String(20), nullable=False, default="scheduled")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
-    
+
+    # Relationships
     equipments = relationship("MeetingEquipment", back_populates="meeting", cascade="all, delete-orphan")
     room = relationship("Room", lazy="joined")
     organizer = relationship("User", lazy="joined")
-    participants = relationship("MeetingParticipant", back_populates="meeting", lazy="selectin")
+    participants = relationship(
+        "MeetingParticipant",
+        back_populates="meeting",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Meeting id={self.id} title={self.title!r}>"
@@ -46,7 +64,8 @@ class MeetingParticipant(Base):
     )
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
-    meeting = relationship("Meeting", back_populates="participants", lazy="joined")
+    # Relationships
+    meeting = relationship("Meeting", back_populates="participants")
     user = relationship("User", lazy="joined")
 
     __table_args__ = (

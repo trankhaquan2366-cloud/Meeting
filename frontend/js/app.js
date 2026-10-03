@@ -1,11 +1,34 @@
+/* ==========================================================================
+   GLOBAL CONFIGURATION & STATE MANAGEMENT
+   ========================================================================== */
 const API_BASE = "http://localhost:8000/api";
 let allRooms = [];
 let myBookings = [];
 let selectedRoomId = null;
 let equipmentAvailabilityTimer = null;
 
+// Hàm bổ trợ lấy Auth Token
+function getAuthToken() {
+    return localStorage.getItem('token') || localStorage.getItem('access_token') || '';
+}
+
+// Xử lý Escape HTML an toàn
+function escapeHtml(value) {
+    if (!value) return '';
+    return String(value).replace(/[&<>"']/g, character => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    })[character]);
+}
+
+/* ==========================================================================
+   INITIALIZATION & DOM LOAD
+   ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
-    const token = localStorage.getItem('token');
+    const token = getAuthToken();
     if (!token) {
         window.location.href = 'index.html';
         return;
@@ -15,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const role = localStorage.getItem('role') || 'user';
     const isAdmin = role === 'admin';
 
-    // Cập nhật thông tin giao diện người dùng
+    // Cập nhật thông tin người dùng trên giao diện
     const nameDisplay = document.getElementById('userNameDisplay');
     if (nameDisplay) nameDisplay.innerText = userName;
 
@@ -38,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingsRole = document.getElementById('settingsRole');
     if (settingsRole) settingsRole.innerText = roleText;
 
-    // Ngày tháng hiển thị
+    // Hiển thị ngày tháng
     const now = new Date();
     const dateStr = `Thứ ${now.getDay() + 1}, ${now.getDate()} tháng ${now.getMonth() + 1} năm ${now.getFullYear()}`;
     const currentDateText = document.getElementById('currentDateText');
@@ -47,10 +70,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const filterDateLabel = document.getElementById('filterDateLabel');
     if (filterDateLabel) filterDateLabel.innerText = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
 
-    // Set giá trị mặc định cho ô chọn ngày trong Modal Đặt phòng
+    // Cài đặt thời gian mặc định cho Modal
     setDefaultBookingTimes();
 
-    // Ẩn / hiện nút thêm phòng theo quyền Admin
+    // Hiển thị nút quản trị nếu là Admin
     if (isAdmin) {
         const btn1 = document.getElementById('addRoomBtnOverview');
         const btn2 = document.getElementById('addRoomBtnRooms');
@@ -66,7 +89,6 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ==========================================================================
    NAVIGATION & UI CONTROLS
    ========================================================================== */
-
 function toggleSidebar() {
     const layout = document.getElementById('appLayout');
     if (layout) layout.classList.toggle('collapsed');
@@ -120,6 +142,16 @@ function scrollToRooms() {
     if (elem) elem.scrollIntoView({ behavior: 'smooth' });
 }
 
+function toggleNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (popup) {
+        popup.style.display = (popup.style.display === 'none' || !popup.style.display) ? 'block' : 'none';
+    }
+}
+
+/* ==========================================================================
+   DATE & TIME FORMATTING UTILITIES (ĐÃ CẢI TIẾN TIẾNG VIỆT FIGMA UI)
+   ========================================================================== */
 function formatDateInput(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -131,39 +163,63 @@ function formatTimeInput(date) {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-// Chuyển đổi giờ sang nhãn tiếng Việt: 7 giờ sáng, 12 giờ trưa, 14 giờ chiều...
-function formatVietnameseHour(h) {
-    if (h === 0)  return `0 giờ (nửa đêm)`;
-    if (h < 12)  return `${h} giờ sáng`;
-    if (h === 12) return `12 giờ trưa`;
-    if (h < 18)  return `${h} giờ chiều`;
-    return `${h} giờ tối`;
+function formatDateTimeLocal(date) {
+    return `${formatDateInput(date)}T${formatTimeInput(date)}`;
 }
 
-// Tạo danh sách giờ theo tiếng Việt từ 6:00 đến 22:00 (bước 1 giờ)
-function buildViTimeOptions(selectEl, defaultHour) {
+/**
+ * Định dạng nhãn hiển thị thời gian Tiếng Việt (Ví dụ: 08:30 (8h30 sáng), 14:00 (14h chiều))
+ */
+function formatVietnameseTimeLabel(hour, minute) {
+    const timeStr = `${String(hour).padStart(2, '0')}:${minute}`;
+    let period = 'sáng';
+    if (hour === 12) period = 'trưa';
+    else if (hour > 12 && hour < 18) period = 'chiều';
+    else if (hour >= 18) period = 'tối';
+
+    const minText = minute === '00' ? '' : `${minute}`;
+    return `${timeStr} (${hour}h${minText} ${period})`;
+}
+
+/**
+ * Tạo danh sách mốc thời gian mỗi 30 phút từ 07:00 đến 21:00
+ */
+function buildViTimeOptions(selectEl, defaultTimeStr) {
     if (!selectEl) return;
     selectEl.innerHTML = '';
-    for (let h = 6; h <= 22; h++) {
-        const opt = document.createElement('option');
-        opt.value = `${String(h).padStart(2,'0')}:00`;
-        opt.textContent = formatVietnameseHour(h);
-        if (h === defaultHour) opt.selected = true;
-        selectEl.appendChild(opt);
+    
+    for (let h = 7; h <= 21; h++) {
+        for (let m of ['00', '30']) {
+            if (h === 21 && m === '30') continue; // Giới hạn đến 21:00
+            
+            const valueStr = `${String(h).padStart(2, '0')}:${m}`;
+            const opt = document.createElement('option');
+            opt.value = valueStr;
+            opt.textContent = formatVietnameseTimeLabel(h, m);
+            if (defaultTimeStr && valueStr === defaultTimeStr) {
+                opt.selected = true;
+            }
+            selectEl.appendChild(opt);
+        }
     }
 }
 
-// Hiển thị ngày đẹp trên label, đồng bộ với input ẩn
+function syncHiddenStartTime(selectEl) {
+    const hiddenInput = document.getElementById('startTimeHidden');
+    if (hiddenInput && selectEl) {
+        hiddenInput.value = selectEl.value;
+    }
+}
+
 function updateDateDisplay(dateVal) {
     const label = document.getElementById('dateDisplayLabel');
     if (!label || !dateVal) return;
     const [y, m, d] = dateVal.split('-');
-    const days = ['CN','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
-    const dt = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
+    const days = ['CN', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+    const dt = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
     label.textContent = `${days[dt.getDay()]} ${d}/${m}/${y}`;
 }
 
-// Kích hoạt native date picker thông qua input ẩn
 function triggerDatePicker() {
     const inp = document.getElementById('meetingDateInput');
     if (!inp) return;
@@ -181,57 +237,39 @@ function triggerDatePicker() {
 
 function setDefaultBookingTimes() {
     const now = new Date();
-    // Làm tròn lên giờ tiếp theo
-    const start = new Date(now);
-    if (start.getMinutes() > 0 || start.getSeconds() > 0 || start.getMilliseconds() > 0) {
-        start.setHours(start.getHours() + 1, 0, 0, 0);
-    }
-    const end = new Date(start);
-    end.setHours(end.getHours() + 1);
+    let startHour = now.getHours();
+    let startMin = now.getMinutes() < 30 ? '30' : '00';
+    if (now.getMinutes() >= 30) startHour += 1;
 
-    // Cập nhật ngày
+    if (startHour < 7) startHour = 8;
+    if (startHour > 20) startHour = 20;
+
+    let endHour = startHour + 1;
+    
+    const startTimeStr = `${String(startHour).padStart(2, '0')}:${startMin}`;
+    const endTimeStr = `${String(endHour).padStart(2, '0')}:${startMin}`;
+
     const dateInp = document.getElementById('meetingDateInput');
     if (dateInp) {
-        dateInp.value = formatDateInput(start);
+        dateInp.value = formatDateInput(now);
         updateDateDisplay(dateInp.value);
     }
 
-    // Build + chọn giờ bắt đầu
     const startSel = document.getElementById('startTimeSelect');
-    buildViTimeOptions(startSel, start.getHours());
+    buildViTimeOptions(startSel, startTimeStr);
 
-    // Build + chọn giờ kết thúc
     const endSel = document.getElementById('endTimeSelect');
-    buildViTimeOptions(endSel, end.getHours());
-}
+    buildViTimeOptions(endSel, endTimeStr);
 
-async function openQuickBooking() {
-    const isAdmin = localStorage.getItem('role') === 'admin';
-    if (!allRooms.length) await fetchRooms(isAdmin);
-
-    const room = allRooms.find(item => item.is_active !== false);
-    if (!room) {
-        alert('Hiện chưa có phòng họp đang hoạt động.');
-        return;
-    }
-
-    openBookingModal(room.id);
-}
-
-function toggleNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (popup) {
-        popup.style.display = (popup.style.display === 'none' || !popup.style.display) ? 'block' : 'none';
-    }
+    syncHiddenStartTime(startSel);
 }
 
 /* ==========================================================================
-   ROOM MANAGEMENT & FETCH
+   ROOM MANAGEMENT & FETCHING
    ========================================================================== */
-
 async function fetchRooms(isAdmin) {
     try {
-        const token = localStorage.getItem('token') || '';
+        const token = getAuthToken();
         const res = await fetch(`${API_BASE}/rooms/`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -250,8 +288,15 @@ function renderRooms(rooms, isAdmin) {
     const gridOverview = document.getElementById('roomGridOverview');
     const gridRooms = document.getElementById('roomGridRooms');
 
+    if (!rooms || rooms.length === 0) {
+        const emptyHTML = '<p class="text-muted" style="padding: 16px;">Chưa có phòng họp nào trong hệ thống.</p>';
+        if (gridOverview) gridOverview.innerHTML = emptyHTML;
+        if (gridRooms) gridRooms.innerHTML = emptyHTML;
+        return;
+    }
+
     const htmlContent = rooms.map(room => {
-        const isAvailable = room.is_available !== false;
+        const isAvailable = room.is_available !== false && room.is_active !== false;
         const statusClass = isAvailable ? 'status-green' : 'status-red';
         const statusText = isAvailable ? '• Còn trống' : '• Đã đặt';
 
@@ -259,11 +304,8 @@ function renderRooms(rooms, isAdmin) {
         if (room.amenities) {
             let amenitiesList = room.amenities;
             if (typeof amenitiesList === 'string') {
-                try {
-                    amenitiesList = JSON.parse(amenitiesList);
-                } catch (e) {
-                    amenitiesList = [amenitiesList];
-                }
+                try { amenitiesList = JSON.parse(amenitiesList); } 
+                catch (e) { amenitiesList = [amenitiesList]; }
             }
             if (Array.isArray(amenitiesList)) {
                 amenitiesHTML = amenitiesList.map(a => `<span class="tag">${getAmenityIcon(a)} ${escapeHtml(a)}</span>`).join(' ');
@@ -281,12 +323,12 @@ function renderRooms(rooms, isAdmin) {
         return `
             <div class="room-card">
                 <div class="card-image">
-                    <img src="${room.image_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c'}" alt="${room.name}">
+                    <img src="${room.image_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c'}" alt="${escapeHtml(room.name)}">
                     <span class="status-badge ${statusClass}">${statusText}</span>
                 </div>
                 <div class="card-body">
-                    <h3>${room.name}</h3>
-                    <p class="location">📍 ${room.location || 'Tầng 1'} | 👥 ${room.capacity || '10 người'}</p>
+                    <h3>${escapeHtml(room.name)}</h3>
+                    <p class="location">📍 ${escapeHtml(room.location || 'Tầng 1')} | 👥 ${room.capacity || '10'} người</p>
                     <div class="amenities-tags">${amenitiesHTML}</div>
                     <div class="card-actions">
                         <button class="btn-schedule" onclick="openScheduleModal(${room.id})">Xem lịch</button>
@@ -306,11 +348,11 @@ function renderRooms(rooms, isAdmin) {
 
 function updateStats(rooms) {
     const total = rooms.length;
-    const availableCount = rooms.filter(r => r.is_available !== false).length;
-    const inUseCount = rooms.filter(r => r.is_available === false).length;
+    const availableCount = rooms.filter(r => r.is_available !== false && r.is_active !== false).length;
+    const inUseCount = total - availableCount;
     const capacityPercent = total > 0 ? Math.round((inUseCount / total) * 100) : 0;
 
-    const setTxt = (id, val) => { const el = document.getElementById(id); if(el) el.innerText = val; };
+    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
 
     setTxt('statTotal', total);
     setTxt('statAvailable', availableCount);
@@ -320,50 +362,6 @@ function updateStats(rooms) {
 
     setTxt('summaryAvailable', availableCount);
     setTxt('summaryInUse', inUseCount);
-}
-
-/* ==========================================================================
-   BOOKING & SCHEDULE MODALS
-   ========================================================================== */
-
-function openScheduleModal(roomId) {
-    const room = allRooms.find(r => r.id === roomId);
-    if (!room) return;
-
-    const titleEl = document.getElementById('scheduleRoomTitle');
-    if (titleEl) titleEl.innerText = `Lịch trình: ${room.name}`;
-
-    const container = document.getElementById('timelineContainer');
-    if (container) {
-        const isAvail = room.is_available !== false;
-        container.innerHTML = `
-            <div class="timeline-item"><span>08:00 - 09:30</span><span class="time-free">Còn trống</span></div>
-            <div class="timeline-item"><span>10:00 - 11:30</span><span class="${isAvail ? 'time-free' : 'time-busy'}">${isAvail ? 'Còn trống' : 'Đã có cuộc họp'}</span></div>
-            <div class="timeline-item"><span>13:30 - 15:00</span><span class="time-free">Còn trống</span></div>
-            <div class="timeline-item"><span>15:30 - 17:00</span><span class="time-free">Còn trống</span></div>
-        `;
-    }
-    const modal = document.getElementById('scheduleModal');
-    if (modal) modal.style.display = 'flex';
-}
-
-function closeScheduleModal() {
-    const modal = document.getElementById('scheduleModal');
-    if (modal) modal.style.display = 'none';
-}
-
-/* --- MỞ & ĐÓNG MODAL ĐẶT PHÒNG --- */
-function openBookingModal(roomId) {
-    const room = allRooms.find(r => r.id === roomId && r.is_active !== false);
-    if (!room) return;
-
-    setDefaultBookingTimes();
-    selectBookingRoom(room);
-    renderRoomOptions();
-
-    const modal = document.getElementById('bookingModal');
-    if (modal) modal.style.display = 'flex';
-    fetchAndRenderEquipments();
 }
 
 function getAmenityIcon(name) {
@@ -390,11 +388,8 @@ function renderRoomAmenities(room) {
 
     let list = room.amenities || [];
     if (typeof list === 'string') {
-        try {
-            list = JSON.parse(list);
-        } catch (e) {
-            list = list.split(',').map(s => s.trim()).filter(Boolean);
-        }
+        try { list = JSON.parse(list); } 
+        catch (e) { list = list.split(',').map(s => s.trim()).filter(Boolean); }
     }
 
     if (!Array.isArray(list) || list.length === 0) {
@@ -414,6 +409,106 @@ function renderRoomAmenities(room) {
     `).join('');
 }
 
+/* ==========================================================================
+   PARTICIPANT MANAGEMENT
+   ========================================================================== */
+async function fetchAndRenderParticipants() {
+    const container = document.getElementById('participantListContainer');
+    if (!container) return;
+
+    const token = getAuthToken();
+    try {
+        const res = await fetch(`${API_BASE}/users/`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!res.ok) throw new Error("Không thể lấy danh sách người dùng");
+
+        const users = await res.json();
+
+        if (!users || users.length === 0) {
+            container.innerHTML = '<div style="color: #94a3b8; font-size: 0.82rem;">Chưa có người dùng khác trong hệ thống.</div>';
+            return;
+        }
+
+        container.innerHTML = users.map(user => `
+            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.85rem; cursor: pointer; color: #1e293b;">
+                <input type="checkbox" class="participant-checkbox" value="${user.id}">
+                <span><strong>${escapeHtml(user.full_name || 'Người dùng')}</strong> (${escapeHtml(user.email)})</span>
+            </label>
+        `).join('');
+
+    } catch (err) {
+        console.error("Lỗi tải danh sách người dùng:", err);
+        container.innerHTML = '<div style="color: #ef4444; font-size: 0.82rem;">❌ Không thể tải danh sách người dùng!</div>';
+    }
+}
+
+function getSelectedParticipantIds() {
+    const checkboxes = document.querySelectorAll('.participant-checkbox:checked');
+    return Array.from(checkboxes).map(cb => parseInt(cb.value));
+}
+
+/* ==========================================================================
+   BOOKING & SCHEDULE MODALS
+   ========================================================================== */
+function openScheduleModal(roomId) {
+    const room = allRooms.find(r => r.id === roomId);
+    if (!room) return;
+
+    const titleEl = document.getElementById('scheduleRoomTitle');
+    if (titleEl) titleEl.innerText = `Lịch trình: ${room.name}`;
+
+    const container = document.getElementById('timelineContainer');
+    if (container) {
+        const isAvail = room.is_available !== false;
+        container.innerHTML = `
+            <div class="timeline-item"><span>08:00 - 09:30</span><span class="time-free">Còn trống</span></div>
+            <div class="timeline-item"><span>10:00 - 11:30</span><span class="${isAvail ? 'time-free' : 'time-busy'}">${isAvail ? 'Còn trống' : 'Đã có cuộc họp'}</span></div>
+            <div class="timeline-item"><span>13:30 - 15:00</span><span class="time-free">Còn trống</span></div>
+            <div class="timeline-item"><span>15:30 - 17:00</span><span class="time-free">Còn trống</span></div>
+        `;
+    }
+    const modal = document.getElementById('scheduleModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeScheduleModal() {
+    const modal = document.getElementById('scheduleModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function openBookingModal(roomId) {
+    const room = allRooms.find(r => r.id === roomId && r.is_active !== false);
+    if (!room) return;
+
+    setDefaultBookingTimes();
+    selectBookingRoom(room);
+    renderRoomOptions();
+
+    const modal = document.getElementById('bookingModal');
+    if (modal) modal.style.display = 'flex';
+    fetchAndRenderEquipments();
+    fetchAndRenderParticipants();
+}
+
+function closeBookingModal() {
+    const modal = document.getElementById('bookingModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function openQuickBooking() {
+    const role = localStorage.getItem('role') || 'user';
+    if (!allRooms.length) await fetchRooms(role === 'admin');
+
+    const room = allRooms.find(item => item.is_active !== false);
+    if (!room) {
+        alert('Hiện chưa có phòng họp đang hoạt động.');
+        return;
+    }
+    openBookingModal(room.id);
+}
+
 function selectBookingRoom(room) {
     selectedRoomId = room.id;
     const roomNameEl = document.querySelector('#bookingModal .room-name');
@@ -423,7 +518,6 @@ function selectBookingRoom(room) {
         roomMetaEl.innerHTML = `${room.capacity || 10} người · <span class="status-available">Đang hoạt động</span>`;
     }
 
-    // Hiển thị tiện ích có sẵn của phòng đã chọn
     renderRoomAmenities(room);
 
     const roomMenu = document.getElementById('roomMenu');
@@ -472,13 +566,14 @@ async function findAvailableTime() {
     const message = document.getElementById('availabilityMessage');
     const results = document.getElementById('availabilityResults');
     const meetingDate = dateInput ? dateInput.value : '';
+
     if (!meetingDate) return;
     const requestedStart = new Date(`${meetingDate}T${startInput.value}:00`);
     const requestedEnd = new Date(`${meetingDate}T${endInput.value}:00`);
     if (requestedEnd <= requestedStart) requestedEnd.setDate(requestedEnd.getDate() + 1);
 
     const duration = requestedEnd.getTime() - requestedStart.getTime();
-    const workEnd = new Date(`${meetingDate}T17:00:00`);
+    const workEnd = new Date(`${meetingDate}T18:00:00`);
     if (!duration || requestedStart >= workEnd) {
         message.textContent = 'Không còn khung giờ phù hợp trong giờ làm việc hôm nay.';
         message.classList.add('is-error');
@@ -522,13 +617,10 @@ async function findAvailableTime() {
                 option.className = 'time-suggestion';
                 option.textContent = `${slot.start}–${slot.end}`;
                 option.addEventListener('click', () => {
-                    // Cập nhật ngày
                     const di = document.getElementById('meetingDateInput');
                     if (di) { di.value = slot.date; updateDateDisplay(slot.date); }
-                    // Cập nhật giờ bắt đầu
                     const ss = document.getElementById('startTimeSelect');
-                    if (ss) ss.value = slot.start;
-                    // Cập nhật giờ kết thúc
+                    if (ss) { ss.value = slot.start; syncHiddenStartTime(ss); }
                     const es = document.getElementById('endTimeSelect');
                     if (es) es.value = slot.end;
                     results.querySelectorAll('.time-suggestion').forEach(item => item.classList.remove('selected'));
@@ -550,16 +642,6 @@ async function findAvailableTime() {
     }
 }
 
-function closeBookingModal() {
-    const modal = document.getElementById('bookingModal');
-    if (modal) modal.style.display = 'none';
-}
-
-/* Alias hỗ trợ tương thích mã cũ */
-function openBookModal(roomId) { openBookingModal(roomId); }
-function closeBookModal() { closeBookingModal(); }
-
-/* --- XỬ LÝ GỬI LỊCH ĐẶT PHÒNG --- */
 async function handleBookingSubmit(e) {
     e.preventDefault();
 
@@ -595,10 +677,11 @@ async function handleBookingSubmit(e) {
         is_recurring: isRecurring,
         recurrence_type: recurrenceType,
         recurrence_end_date: recurrenceEndDate ? `${formatDateInput(recurrenceEndDate)}T${formatTimeInput(recurrenceEndDate)}:00` : null,
-        equipments: getSelectedEquipmentsData()
+        equipments: getSelectedEquipmentsData(),
+        participant_ids: getSelectedParticipantIds()
     };
 
-    const token = localStorage.getItem('token') || '';
+    const token = getAuthToken();
 
     try {
         const res = await fetch(`${API_BASE}/meetings/book`, {
@@ -613,7 +696,6 @@ async function handleBookingSubmit(e) {
         if (res.ok) {
             alert("Đã đặt lịch họp thành công!");
             closeBookingModal();
-            
             const role = localStorage.getItem('role') || 'user';
             fetchRooms(role === 'admin');
             fetchMyBookings();
@@ -627,14 +709,11 @@ async function handleBookingSubmit(e) {
     }
 }
 
-function handleBookSubmit(e) { handleBookingSubmit(e); }
-
 /* ==========================================================================
    MY BOOKINGS MANAGEMENT
    ========================================================================== */
-
 async function fetchMyBookings() {
-    const token = localStorage.getItem('token') || '';
+    const token = getAuthToken();
     if (!token) return;
 
     try {
@@ -673,11 +752,7 @@ function renderMyBookings() {
         const roomName = allRooms.find(room => room.id === b.room_id)?.name || b.room_name || `Phòng ${b.room_id}`;
         const start = new Date(b.start_time);
         const end = new Date(b.end_time);
-        const dateLabel = start.toLocaleDateString('vi-VN', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-        });
+        const dateLabel = start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
         const timeRange = `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`;
         const status = statusLabels[b.status] || { label: 'Không xác định', className: 'booking-status-unknown' };
 
@@ -685,7 +760,7 @@ function renderMyBookings() {
         if (b.equipments && b.equipments.length > 0) {
             const eqList = b.equipments.map(eq => {
                 const name = escapeHtml(eq.equipment_name || 'Thiết bị');
-                return name + ' (x' + eq.quantity + ')';
+                return `${name} (x${eq.quantity})`;
             }).join(', ');
 
             equipmentsHTML = `
@@ -694,7 +769,6 @@ function renderMyBookings() {
                 </div>
             `;
         }
-        
 
         return `
             <tr>
@@ -711,20 +785,10 @@ function renderMyBookings() {
     }).join('');
 }
 
-function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, character => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-    })[character]);
-}
-
 async function cancelBooking(meetingId) {
     if (!confirm("Bạn có chắc chắn muốn hủy lịch họp này?")) return;
 
-    const token = localStorage.getItem('token') || '';
+    const token = getAuthToken();
     try {
         const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
             method: 'DELETE',
@@ -747,7 +811,6 @@ async function cancelBooking(meetingId) {
 /* ==========================================================================
    SEARCH & FILTERING
    ========================================================================== */
-
 function handleSearch() { applyFilters(); }
 function filterToday() { alert("Đã đồng bộ lịch họp hôm nay!"); }
 
@@ -798,7 +861,6 @@ function setFilter(amenity, btn) {
 /* ==========================================================================
    ADMIN ACTIONS (ADD / EDIT / DELETE ROOMS)
    ========================================================================== */
-
 function openRoomModal() {
     const modalTitle = document.getElementById('modalTitle');
     if (modalTitle) modalTitle.innerText = 'Thêm Phòng Họp Mới';
@@ -851,7 +913,7 @@ function closeRoomModal() {
 
 async function handleFormSubmit(e) {
     e.preventDefault();
-    const token = localStorage.getItem('token') || '';
+    const token = getAuthToken();
     const editId = document.getElementById('editRoomId').value;
 
     const payload = {
@@ -892,7 +954,7 @@ async function handleFormSubmit(e) {
 async function deleteRoom(roomId) {
     if (!confirm("Bạn có chắc chắn muốn xóa phòng này?")) return;
 
-    const token = localStorage.getItem('token') || '';
+    const token = getAuthToken();
 
     try {
         const res = await fetch(`${API_BASE}/rooms/${roomId}/`, {
@@ -921,15 +983,8 @@ function logout() {
 }
 
 /* ==========================================================================
-   XỬ LÝ THIẾT BỊ TRONG FORM ĐẶT PHÒNG
+   EQUIPMENT MANAGEMENT & SELECTION
    ========================================================================== */
-
-function formatDateTimeLocal(date) {
-    const datePart = formatDateInput(date);
-    const timePart = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    return `${datePart}T${timePart}`;
-}
-
 function setDefaultEquipmentAvailabilityTimes() {
     const startInput = document.getElementById('equipmentStartTime');
     const endInput = document.getElementById('equipmentEndTime');
@@ -955,6 +1010,7 @@ async function fetchEquipmentAvailability() {
     const endTime = document.getElementById('equipmentEndTime')?.value;
     const category = document.getElementById('equipmentCategoryFilter')?.value.trim();
     const search = document.getElementById('equipmentSearchFilter')?.value.trim();
+
     if (startTime) params.set('start_time', `${startTime}:00`);
     if (endTime) params.set('end_time', `${endTime}:00`);
     if (category) params.set('category', category);
@@ -962,7 +1018,7 @@ async function fetchEquipmentAvailability() {
 
     tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Đang cập nhật...</td></tr>';
     try {
-        const token = localStorage.getItem('token') || '';
+        const token = getAuthToken();
         const res = await fetch(`${API_BASE}/equipments/availability?${params.toString()}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -1001,7 +1057,7 @@ async function fetchAndRenderEquipments() {
     const container = document.getElementById('equipmentListContainer');
     if (!container) return;
 
-    const token = localStorage.getItem('token') || '';
+    const token = getAuthToken();
     try {
         const res = await fetch(`${API_BASE}/equipments/`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -1054,12 +1110,10 @@ function toggleEquipmentQtyInput(checkbox, eqId) {
 
     if (checkbox.checked) {
         qtyInput.disabled = false;
-        qtyInput.removeAttribute('style'); // let CSS class handle visuals
         qtyInput.focus();
     } else {
         qtyInput.disabled = true;
         qtyInput.value = 1;
-        qtyInput.removeAttribute('style');
     }
 }
 
@@ -1082,7 +1136,7 @@ function getSelectedEquipmentsData() {
 }
 
 /* ==========================================================================
-   GLOBAL EXPORTS (XUẤT TOÀN CỤC CHO HTML CALL)
+   GLOBAL EXPORTS (GẮN VÀO WINDOW CHO EVENT HANDLER)
    ========================================================================== */
 window.toggleSidebar = toggleSidebar;
 window.switchToOverview = switchToOverview;
@@ -1095,12 +1149,12 @@ window.findAvailableTime = findAvailableTime;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
 window.openBookingModal = openBookingModal;
-window.openQuickBooking = openQuickBooking;
 window.closeBookingModal = closeBookingModal;
-window.openBookModal = openBookModal;
-window.closeBookModal = closeBookModal;
+window.openBookModal = openBookingModal;
+window.closeBookModal = closeBookingModal;
+window.openQuickBooking = openQuickBooking;
 window.handleBookingSubmit = handleBookingSubmit;
-window.handleBookSubmit = handleBookSubmit;
+window.handleBookSubmit = handleBookingSubmit;
 window.cancelBooking = cancelBooking;
 window.handleSearch = handleSearch;
 window.filterToday = filterToday;
@@ -1117,11 +1171,12 @@ window.fetchEquipmentAvailability = fetchEquipmentAvailability;
 window.scheduleEquipmentAvailabilityFetch = scheduleEquipmentAvailabilityFetch;
 window.toggleEquipmentQtyInput = toggleEquipmentQtyInput;
 window.getSelectedEquipmentsData = getSelectedEquipmentsData;
+window.fetchAndRenderParticipants = fetchAndRenderParticipants;
+window.getSelectedParticipantIds = getSelectedParticipantIds;
 window.renderRoomAmenities = renderRoomAmenities;
 window.getAmenityIcon = getAmenityIcon;
 window.triggerDatePicker = triggerDatePicker;
 window.updateDateDisplay = updateDateDisplay;
 window.buildViTimeOptions = buildViTimeOptions;
-window.formatVietnameseHour = formatVietnameseHour;
-// syncHiddenStartTime: không cần thiết nữa nhưng giữ để tương thích HTML
-window.syncHiddenStartTime = function() {};
+window.formatVietnameseTimeLabel = formatVietnameseTimeLabel;
+window.syncHiddenStartTime = syncHiddenStartTime;
