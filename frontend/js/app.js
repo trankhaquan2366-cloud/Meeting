@@ -2,6 +2,7 @@ const API_BASE = "http://localhost:8000/api";
 let allRooms = [];
 let myBookings = [];
 let selectedRoomId = null;
+let equipmentAvailabilityTimer = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
@@ -59,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Tải dữ liệu ban đầu
     fetchRooms(isAdmin).then(fetchMyBookings);
+    setDefaultEquipmentAvailabilityTimes();
 });
 
 /* ==========================================================================
@@ -91,6 +93,11 @@ function switchMainTab(tabName, el) {
         const view = document.getElementById('viewRooms');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'flex';
+    } else if (tabName === 'equipments') {
+        const view = document.getElementById('viewEquipments');
+        if (view) view.style.display = 'block';
+        if (searchContainer) searchContainer.style.display = 'none';
+        fetchEquipmentAvailability();
     } else if (tabName === 'my-bookings') {
         const view = document.getElementById('viewMyBookings');
         if (view) view.style.display = 'block';
@@ -917,6 +924,79 @@ function logout() {
    XỬ LÝ THIẾT BỊ TRONG FORM ĐẶT PHÒNG
    ========================================================================== */
 
+function formatDateTimeLocal(date) {
+    const datePart = formatDateInput(date);
+    const timePart = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    return `${datePart}T${timePart}`;
+}
+
+function setDefaultEquipmentAvailabilityTimes() {
+    const startInput = document.getElementById('equipmentStartTime');
+    const endInput = document.getElementById('equipmentEndTime');
+    if (!startInput || !endInput) return;
+
+    const now = new Date();
+    const end = new Date(now.getTime() + 60 * 60 * 1000);
+    startInput.value = formatDateTimeLocal(now);
+    endInput.value = formatDateTimeLocal(end);
+}
+
+function scheduleEquipmentAvailabilityFetch() {
+    clearTimeout(equipmentAvailabilityTimer);
+    equipmentAvailabilityTimer = setTimeout(fetchEquipmentAvailability, 250);
+}
+
+async function fetchEquipmentAvailability() {
+    const tbody = document.getElementById('equipmentAvailabilityTableBody');
+    if (!tbody) return;
+
+    const params = new URLSearchParams();
+    const startTime = document.getElementById('equipmentStartTime')?.value;
+    const endTime = document.getElementById('equipmentEndTime')?.value;
+    const category = document.getElementById('equipmentCategoryFilter')?.value.trim();
+    const search = document.getElementById('equipmentSearchFilter')?.value.trim();
+    if (startTime) params.set('start_time', `${startTime}:00`);
+    if (endTime) params.set('end_time', `${endTime}:00`);
+    if (category) params.set('category', category);
+    if (search) params.set('search', search);
+
+    tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Đang cập nhật...</td></tr>';
+    try {
+        const token = localStorage.getItem('token') || '';
+        const res = await fetch(`${API_BASE}/equipments/availability?${params.toString()}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Không thể tải trạng thái thiết bị');
+
+        const equipments = await res.json();
+        if (!equipments.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Không tìm thấy thiết bị phù hợp.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = equipments.map(item => {
+            const isInactive = item.is_active === false;
+            const isAvailable = item.available_qty > 0;
+            const badgeClass = isInactive ? 'maintenance' : (isAvailable ? 'available' : 'booked-out');
+            const badgeText = isInactive ? 'Đang bảo trì' : (isAvailable ? 'Có sẵn' : 'Đã đặt hết');
+            return `
+                <tr>
+                    <td>${escapeHtml(item.code || '—')}</td>
+                    <td>${escapeHtml(item.name)}</td>
+                    <td>${escapeHtml(item.category || '—')}</td>
+                    <td>${item.total_qty}</td>
+                    <td>${item.booked_qty}</td>
+                    <td>${item.available_qty}</td>
+                    <td><span class="equipment-status-badge ${badgeClass}">${badgeText}</span></td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error('Lỗi tải trạng thái thiết bị:', err);
+        tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message error">Không thể tải trạng thái thiết bị.</td></tr>';
+    }
+}
+
 async function fetchAndRenderEquipments() {
     const container = document.getElementById('equipmentListContainer');
     if (!container) return;
@@ -1033,6 +1113,8 @@ window.handleFormSubmit = handleFormSubmit;
 window.deleteRoom = deleteRoom;
 window.logout = logout;
 window.fetchAndRenderEquipments = fetchAndRenderEquipments;
+window.fetchEquipmentAvailability = fetchEquipmentAvailability;
+window.scheduleEquipmentAvailabilityFetch = scheduleEquipmentAvailabilityFetch;
 window.toggleEquipmentQtyInput = toggleEquipmentQtyInput;
 window.getSelectedEquipmentsData = getSelectedEquipmentsData;
 window.renderRoomAmenities = renderRoomAmenities;
@@ -1042,4 +1124,4 @@ window.updateDateDisplay = updateDateDisplay;
 window.buildViTimeOptions = buildViTimeOptions;
 window.formatVietnameseHour = formatVietnameseHour;
 // syncHiddenStartTime: không cần thiết nữa nhưng giữ để tương thích HTML
-window.syncHiddenStartTime = function() {};
+window.syncHiddenStartTime = function() {};
