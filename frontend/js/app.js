@@ -77,13 +77,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (isAdmin) {
         const btn1 = document.getElementById('addRoomBtnOverview');
         const btn2 = document.getElementById('addRoomBtnRooms');
+        const addEqBtn = document.getElementById('addEquipmentBtn');
+        const adminEqSection = document.getElementById('adminEquipmentSection');
         if (btn1) btn1.style.display = 'block';
         if (btn2) btn2.style.display = 'block';
+        if (addEqBtn) addEqBtn.style.display = 'block';
+        if (adminEqSection) adminEqSection.style.display = 'block';
     }
 
     // Tải dữ liệu ban đầu
     fetchRooms(isAdmin).then(fetchMyBookings);
     setDefaultEquipmentAvailabilityTimes();
+    if (isAdmin) {
+        fetchAdminEquipments();
+    }
 });
 
 /* ==========================================================================
@@ -120,6 +127,10 @@ function switchMainTab(tabName, el) {
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         fetchEquipmentAvailability();
+        const role = localStorage.getItem('role') || 'user';
+        if (role === 'admin') {
+            fetchAdminEquipments();
+        }
     } else if (tabName === 'my-bookings') {
         const view = document.getElementById('viewMyBookings');
         if (view) view.style.display = 'block';
@@ -1151,6 +1162,202 @@ function getSelectedEquipmentsData() {
 }
 
 /* ==========================================================================
+   ADMIN EQUIPMENT MANAGEMENT (CRUD & TOGGLE)
+   ========================================================================== */
+let adminEquipmentsCache = [];
+
+async function fetchAdminEquipments() {
+    const tbody = document.getElementById('adminEquipmentTableBody');
+    if (!tbody) return;
+
+    const token = getAuthToken();
+    tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>';
+    try {
+        const res = await fetch(`${API_BASE}/equipments/?include_inactive=true`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        if (!res.ok) throw new Error('Không thể tải danh sách thiết bị cho Admin');
+
+        const equipments = await res.json();
+        adminEquipmentsCache = equipments;
+
+        if (!equipments.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Chưa có thiết bị nào trong hệ thống.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = equipments.map(item => {
+            const isChecked = item.is_active !== false;
+            return `
+                <tr>
+                    <td>${escapeHtml(item.code || '—')}</td>
+                    <td>${escapeHtml(item.name)}</td>
+                    <td>${escapeHtml(item.category || '—')}</td>
+                    <td><strong>${item.total_qty}</strong></td>
+                    <td>
+                        <label class="switch" title="${isChecked ? 'Đang hoạt động' : 'Tắt / Bảo trì'}">
+                            <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleEquipmentActive(${item.id}, this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                    <td>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" class="btn-action edit" onclick="openEditEquipmentModal(${item.id})" style="padding: 4px 10px; font-size: 0.78rem; background: #e0f2fe; color: #0369a1; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">✏️ Sửa</button>
+                            <button type="button" class="btn-action delete" onclick="deleteEquipment(${item.id})" style="padding: 4px 10px; font-size: 0.78rem; background: #fee2e2; color: #b91c1c; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">🗑️ Xóa</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error('Lỗi tải danh sách Admin equipment:', err);
+        tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message error">Không thể tải dữ liệu Admin.</td></tr>';
+    }
+}
+
+// Khi Admin toggle trạng thái thiết bị thành Inactive, ở phía User tự động API /availability (do team khác phát triển) sẽ đánh dấu là Đang bảo trì
+async function toggleEquipmentActive(equipmentId, isActive) {
+    const token = getAuthToken();
+    try {
+        const res = await fetch(`${API_BASE}/equipments/${equipmentId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ is_active: isActive })
+        });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || 'Không thể cập nhật trạng thái thiết bị');
+        }
+        await fetchAdminEquipments();
+        fetchEquipmentAvailability();
+    } catch (err) {
+        console.error('Lỗi toggle trạng thái thiết bị:', err);
+        alert(`Lỗi: ${err.message}`);
+        fetchAdminEquipments();
+    }
+}
+
+function openEquipmentModal() {
+    const editIdInput = document.getElementById('editEquipmentId');
+    const nameInput = document.getElementById('equipmentName');
+    const codeInput = document.getElementById('equipmentCode');
+    const categoryInput = document.getElementById('equipmentCategory');
+    const totalQtyInput = document.getElementById('equipmentTotalQty');
+    const titleEl = document.getElementById('equipmentModalTitle');
+
+    if (editIdInput) editIdInput.value = '';
+    if (nameInput) nameInput.value = '';
+    if (codeInput) codeInput.value = '';
+    if (categoryInput) categoryInput.value = '';
+    if (totalQtyInput) totalQtyInput.value = 1;
+    if (titleEl) titleEl.innerText = 'Thêm Thiết Bị Mới';
+
+    const modal = document.getElementById('equipmentModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function openEditEquipmentModal(id) {
+    const equip = adminEquipmentsCache.find(item => item.id === id);
+    if (!equip) return;
+
+    const editIdInput = document.getElementById('editEquipmentId');
+    const nameInput = document.getElementById('equipmentName');
+    const codeInput = document.getElementById('equipmentCode');
+    const categoryInput = document.getElementById('equipmentCategory');
+    const totalQtyInput = document.getElementById('equipmentTotalQty');
+    const titleEl = document.getElementById('equipmentModalTitle');
+
+    if (editIdInput) editIdInput.value = equip.id;
+    if (nameInput) nameInput.value = equip.name || '';
+    if (codeInput) codeInput.value = equip.code || '';
+    if (categoryInput) categoryInput.value = equip.category || '';
+    if (totalQtyInput) totalQtyInput.value = equip.total_qty || 1;
+    if (titleEl) titleEl.innerText = 'Sửa Thông Tin Thiết Bị';
+
+    const modal = document.getElementById('equipmentModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeEquipmentModal() {
+    const modal = document.getElementById('equipmentModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function handleEquipmentFormSubmit(event) {
+    event.preventDefault();
+    const token = getAuthToken();
+    const editId = document.getElementById('editEquipmentId')?.value;
+    const name = document.getElementById('equipmentName')?.value.trim();
+    const code = document.getElementById('equipmentCode')?.value.trim() || null;
+    const category = document.getElementById('equipmentCategory')?.value.trim() || null;
+    const totalQty = parseInt(document.getElementById('equipmentTotalQty')?.value || '1', 10);
+
+    const payload = {
+        name,
+        code,
+        category,
+        total_qty: totalQty
+    };
+
+    const isEdit = Boolean(editId);
+    const url = isEdit ? `${API_BASE}/equipments/${editId}` : `${API_BASE}/equipments/`;
+    const method = isEdit ? 'PUT' : 'POST';
+
+    try {
+        const res = await fetch(url, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || 'Thao tác thất bại');
+        }
+
+        closeEquipmentModal();
+        await fetchAdminEquipments();
+        fetchEquipmentAvailability();
+        alert(isEdit ? 'Cập nhật thiết bị thành công!' : 'Thêm thiết bị mới thành công!');
+    } catch (err) {
+        console.error('Lỗi lưu thông tin thiết bị:', err);
+        alert(`Lỗi: ${err.message}`);
+    }
+}
+
+async function deleteEquipment(id) {
+    if (!confirm('Bạn có chắc chắn muốn chuyển thiết bị này sang trạng thái ngừng hoạt động / xóa?')) return;
+    const token = getAuthToken();
+    try {
+        const res = await fetch(`${API_BASE}/equipments/${id}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || 'Không thể xóa thiết bị');
+        }
+
+        await fetchAdminEquipments();
+        fetchEquipmentAvailability();
+    } catch (err) {
+        console.error('Lỗi khi xóa thiết bị:', err);
+        alert(`Lỗi: ${err.message}`);
+    }
+}
+
+/* ==========================================================================
    GLOBAL EXPORTS (GẮN VÀO WINDOW CHO EVENT HANDLER)
    ========================================================================== */
 window.toggleSidebar = toggleSidebar;
@@ -1195,3 +1402,10 @@ window.updateDateDisplay = updateDateDisplay;
 window.buildViTimeOptions = buildViTimeOptions;
 window.formatVietnameseTimeLabel = formatVietnameseTimeLabel;
 window.syncHiddenStartTime = syncHiddenStartTime;
+window.fetchAdminEquipments = fetchAdminEquipments;
+window.toggleEquipmentActive = toggleEquipmentActive;
+window.openEquipmentModal = openEquipmentModal;
+window.openEditEquipmentModal = openEditEquipmentModal;
+window.closeEquipmentModal = closeEquipmentModal;
+window.handleEquipmentFormSubmit = handleEquipmentFormSubmit;
+window.deleteEquipment = deleteEquipment;
