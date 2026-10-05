@@ -9,8 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (errorAlert) errorAlert.classList.add('hidden');
 
-        const usernameInput = document.getElementById('username');
-        const passwordInput = document.getElementById('password');
+        const usernameInput = document.getElementById('username') || document.getElementById('loginEmail');
+        const passwordInput = document.getElementById('password') || document.getElementById('loginPassword');
 
         if (!usernameInput || !passwordInput) {
             console.error("Không tìm thấy input username/password!");

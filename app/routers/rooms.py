@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from sqlalchemy import and_
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -37,7 +38,7 @@ def get_available_rooms(
 
     # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
     busy_rooms_query = db.query(Meeting.room_id).filter(
-        Meeting.status != "canceled",  # Bỏ qua các cuộc họp đã hủy
+        Meeting.status.notin_(["CANCELLED", "canceled"]),
         and_(
             Meeting.start_time < end_time,
             Meeting.end_time > start_time

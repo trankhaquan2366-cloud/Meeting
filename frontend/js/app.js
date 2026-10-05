@@ -717,7 +717,7 @@ async function fetchMyBookings() {
     if (!token) return;
 
     try {
-        const res = await fetch(`${API_BASE}/meetings`, {
+        const res = await fetch(`${API_BASE}/meetings/`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -745,16 +745,26 @@ function renderMyBookings() {
         in_progress: { label: 'Đang diễn ra', className: 'booking-status-progress' },
         completed: { label: 'Đã hoàn thành', className: 'booking-status-completed' },
         canceled: { label: 'Đã hủy', className: 'booking-status-canceled' },
+        cancelled: { label: 'Đã hủy', className: 'booking-status-canceled' },
     };
     const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
 
     tbody.innerHTML = myBookings.map(b => {
-        const roomName = allRooms.find(room => room.id === b.room_id)?.name || b.room_name || `Phòng ${b.room_id}`;
+        const roomName = allRooms.find(room => room.id === b.room_id)?.name
+            || b.room?.name
+            || b.room_name
+            || (b.room_id ? `Phòng ${b.room_id}` : 'Phòng chưa xác định');
         const start = new Date(b.start_time);
         const end = new Date(b.end_time);
-        const dateLabel = start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        const timeRange = `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`;
-        const status = statusLabels[b.status] || { label: 'Không xác định', className: 'booking-status-unknown' };
+        const hasValidDate = !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime());
+        const dateLabel = hasValidDate
+            ? start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : 'Chưa có ngày';
+        const timeRange = hasValidDate
+            ? `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`
+            : 'Chưa có thời gian';
+        const statusKey = String(b.status || '').toLowerCase();
+        const status = statusLabels[statusKey] || { label: 'Không xác định', className: 'booking-status-unknown' };
 
         let equipmentsHTML = '';
         if (b.equipments && b.equipments.length > 0) {
@@ -764,22 +774,27 @@ function renderMyBookings() {
             }).join(', ');
 
             equipmentsHTML = `
-                <div style="margin-top: 4px; font-size: 0.78rem; color: #475569;">
-                    📦 <em>Thiết bị:</em> ${eqList}
+                <div class="booking-equipment-summary">
+                    Thiết bị: ${eqList}
                 </div>
             `;
         }
 
         return `
             <tr>
-                <td>
-                    <strong>${escapeHtml(roomName)}</strong>
-                    <div style="font-size:0.82rem; color:#64748b;">${escapeHtml(b.title || 'Cuộc họp')}</div>
+                <td class="booking-room-cell">
+                    <strong class="booking-room-name">${escapeHtml(roomName)}</strong>
+                    <span class="booking-meeting-title">${escapeHtml(b.title || 'Cuộc họp')}</span>
                     ${equipmentsHTML}
                 </td>
-                <td><div class="booking-datetime"><span class="booking-date">${dateLabel}</span><strong class="booking-time">${timeRange}</strong></div></td>
+                <td>
+                    <div class="booking-datetime">
+                        <span class="booking-date">${dateLabel}</span>
+                        <strong class="booking-time">${timeRange}</strong>
+                    </div>
+                </td>
                 <td><span class="booking-status ${status.className}">${status.label}</span></td>
-                <td><button class="btn-admin-action btn-admin-delete" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
+                <td class="booking-action-cell"><button class="booking-cancel-button" type="button" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
             </tr>
         `;
     }).join('');
