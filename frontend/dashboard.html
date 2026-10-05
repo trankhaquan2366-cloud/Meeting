@@ -187,6 +187,9 @@
                             <h2>Trạng thái và khả dụng thiết bị</h2>
                             <p class="subtitle">Số lượng khả dụng được tính theo khung thời gian đã chọn.</p>
                         </div>
+                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()" style="display: none;">
+                            + Thêm thiết bị mới
+                        </button>
                     </div>
                     <div class="equipment-availability-filters">
                         <label class="equipment-filter-field">
@@ -223,6 +226,33 @@
                                 <tr><td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td></tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- BẢNG DỮ LIỆU ADMIN (ADMIN TABLE) -->
+                    <div id="adminEquipmentSection" style="display: none; margin-top: 28px;">
+                        <div class="page-header" style="margin-bottom: 14px;">
+                            <div>
+                                <h3 style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">Bảng Quản Lý Thiết Bị (Admin Table)</h3>
+                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle Bật/Tắt và Chỉnh sửa / Xóa.</p>
+                            </div>
+                        </div>
+                        <div class="table-card equipment-availability-table-wrap">
+                            <table class="data-table equipment-availability-table">
+                                <thead>
+                                    <tr>
+                                        <th>Mã thiết bị</th>
+                                        <th>Tên</th>
+                                        <th>Phân loại</th>
+                                        <th>Số lượng tổng</th>
+                                        <th>Trạng thái (Bật/Tắt)</th>
+                                        <th>Hành động</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="adminEquipmentTableBody">
+                                    <tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -323,6 +353,36 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL QUẢN LÝ THIẾT BỊ (ADMIN - CRUD FORM) -->
+    <div id="equipmentModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="equipmentModalTitle">Thêm Thiết Bị Mới</h3>
+            <form id="equipmentForm" onsubmit="handleEquipmentFormSubmit(event)">
+                <input type="hidden" id="editEquipmentId">
+                <div class="form-group">
+                    <label>Tên thiết bị <span style="color:red;">*</span></label>
+                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony" required>
+                </div>
+                <div class="form-group">
+                    <label>Mã thiết bị</label>
+                    <input type="text" id="equipmentCode" class="form-control" placeholder="Ví dụ: MIC-001">
+                </div>
+                <div class="form-group">
+                    <label>Phân loại</label>
+                    <input type="text" id="equipmentCategory" class="form-control" placeholder="Ví dụ: Audio, Visual, Cable">
+                </div>
+                <div class="form-group">
+                    <label>Số lượng tổng (total_qty) <span style="color:red;">*</span></label>
+                    <input type="number" id="equipmentTotalQty" class="form-control" min="1" value="1" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeEquipmentModal()" class="btn-cancel">Hủy</button>
                     <button type="submit" class="btn-save">Lưu thông tin</button>
                 </div>
             </form>
