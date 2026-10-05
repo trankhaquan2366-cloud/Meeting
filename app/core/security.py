@@ -49,8 +49,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def authenticate_user(db: Session, username: str, password: str) -> User:
-    """Authenticate exclusively against the MySQL users table."""
-    user = db.query(User).filter(User.username == username).first()
+    """Authenticate with a username or email against the MySQL users table."""
+    user = db.query(User).filter(
+        (User.username == username) | (User.email == username)
+    ).first()
     invalid = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Sai tên đăng nhập hoặc mật khẩu",

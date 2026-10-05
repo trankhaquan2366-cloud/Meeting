@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=11">
+    <link rel="stylesheet" href="css/style.css?v=13">
+    <link rel="stylesheet" href="css/booking.css?v=2">
 </head>
 <body>
     <div class="app-layout" id="appLayout">
@@ -231,7 +232,8 @@
                         <h2>Lịch họp đã đặt của tôi</h2>
                     </div>
                     <div class="table-card">
-                        <table class="data-table">
+                        <div class="table-scroll my-bookings-scroll">
+                        <table class="data-table my-bookings-table">
                             <thead>
                                 <tr>
                                     <th>Phòng họp</th>
@@ -242,6 +244,7 @@
                             </thead>
                             <tbody id="myBookingsTableBody"></tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
 
@@ -463,6 +466,6 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=7"></script>
+    <script src="js/app.js?v=8"></script>
 </body>
 </html>

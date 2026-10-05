@@ -331,7 +331,12 @@ button {
   top: calc(100% + 7px);
   left: 0;
   right: 0;
-  padding: 5px;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
   background: var(--white);
   border: 1px solid var(--gray-200);
   border-radius: 10px;
@@ -343,16 +348,18 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 10px;
+  min-height: 42px;
+  padding: 9px 11px;
   text-align: left;
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
 }
 
 .room-option:hover,
 .room-option.selected {
   background: var(--blue-soft);
+  border-color: var(--blue);
 }
 
 .room-option > .icon-small {

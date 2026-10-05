@@ -360,6 +360,30 @@ body {
 .data-table { width: 100%; border-collapse: collapse; text-align: left; }
 .data-table th, .data-table td { padding: 14px; border-bottom: 1px solid #f1f5f9; }
 .data-table th { font-size: 12px; color: #64748b; font-weight: 600; }
+.my-bookings-scroll { overflow-x: auto; }
+.my-bookings-table { min-width: 660px; table-layout: fixed; }
+.my-bookings-table th:nth-child(1) { width: 27%; }
+.my-bookings-table th:nth-child(2) { width: 35%; }
+.my-bookings-table th:nth-child(3) { width: 18%; }
+.my-bookings-table th:nth-child(4) { width: 20%; }
+.my-bookings-table th, .my-bookings-table td { padding: 16px 14px; vertical-align: middle; }
+.my-bookings-table th:last-child, .my-bookings-table td:last-child { text-align: right; }
+.booking-room-cell { overflow-wrap: anywhere; }
+.booking-room-name, .booking-meeting-title { display: block; }
+.booking-room-name { color: #0f172a; font-size: 14px; font-weight: 700; }
+.booking-meeting-title { margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.45; }
+.booking-equipment-summary { margin-top: 7px; color: #64748b; font-size: 11px; line-height: 1.5; }
+.booking-datetime { display: flex; flex-direction: column; gap: 4px; }
+.booking-date { color: #64748b; font-size: 12px; }
+.booking-time { color: #0f172a; font-size: 13px; white-space: nowrap; }
+.booking-status { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.booking-status-scheduled { color: #1d4ed8; background: #eff6ff; }
+.booking-status-progress { color: #b45309; background: #fffbeb; }
+.booking-status-completed { color: #15803d; background: #f0fdf4; }
+.booking-status-canceled, .booking-status-unknown { color: #64748b; background: #f1f5f9; }
+.booking-cancel-button { padding: 7px 11px; color: #b91c1c; background: #fff; border: 1px solid #fecaca; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.booking-cancel-button:hover { background: #fef2f2; border-color: #f87171; }
+.table-empty-state { padding: 28px 14px !important; color: #64748b; text-align: center; }
 
 .equipment-availability-filters { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
 .equipment-filter-field { display: flex; flex-direction: column; gap: 6px; color: #475569; font-size: 12px; font-weight: 600; }
@@ -469,6 +493,46 @@ body {
 
 .modal-footer {
     padding: 16px 24px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; background: #ffffff;
+}
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.modal-actions button {
+    min-height: 38px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.modal-actions .btn-cancel {
+    color: #475569;
+    background: #ffffff;
+    border-color: #cbd5e1;
+}
+
+.modal-actions .btn-cancel:hover {
+    background: #f8fafc;
+    border-color: #94a3b8;
+}
+
+.modal-actions .btn-save {
+    color: #ffffff;
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.modal-actions .btn-save:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
 }
 .button { padding: 9px 18px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: none; }
 .button-secondary { background: #f1f5f9; color: #475569; }

@@ -54,6 +54,7 @@ app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
 app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
+app.include_router(notifications.router, prefix="/api", tags=["notifications"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 
 # 8. Endpoints Đăng nhập & Root
