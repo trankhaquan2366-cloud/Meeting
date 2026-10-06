@@ -213,7 +213,27 @@ body {
 
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 .notification-wrapper { position: relative; }
-.icon-btn { background: transparent; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; }
+.icon-btn { background: transparent; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; position: relative; }
+
+/* Chấm đỏ nhấp nháy trên nút chuông */
+.notification-dot {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 9px;
+    height: 9px;
+    background-color: #ef4444;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+    animation: notifPulse 1.5s ease-in-out infinite;
+    z-index: 10;
+}
+
+@keyframes notifPulse {
+    0%   { transform: scale(1);   opacity: 1; }
+    50%  { transform: scale(1.35); opacity: 0.7; }
+    100% { transform: scale(1);   opacity: 1; }
+}
 
 .notification-popup {
     position: absolute; right: 0; top: 36px; width: 280px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 10px 20px -5px rgba(0,0,0,0.1); padding: 14px; z-index: 20;
@@ -491,6 +511,129 @@ body {
     max-height: 130px; overflow-y: auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; background: #ffffff; display: flex; flex-direction: column; gap: 6px;
 }
 
+/* Ô nhập tên + gmail mời thủ công */
+.invite-manual-wrapper {
+    position: relative;
+    margin-bottom: 8px;
+}
+.invite-manual-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.invite-input {
+    flex: 1;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    color: #1e293b;
+    background: #f8fafc;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.invite-input:focus {
+    border-color: #3b82f6;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+.invite-add-btn {
+    white-space: nowrap;
+    height: 36px;
+    padding: 0 14px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.invite-add-btn:hover { background: #1d4ed8; }
+
+/* Dropdown gợi ý autocomplete */
+.invite-suggestions {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 999;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px -4px rgba(0,0,0,0.12);
+    list-style: none;
+    padding: 4px 0;
+    margin: 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.invite-suggestions li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.83rem;
+    color: #1e293b;
+    transition: background 0.1s;
+}
+.invite-suggestions li:hover,
+.invite-suggestions li.active {
+    background: #eff6ff;
+}
+.invite-suggestions li .sug-avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.75rem;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+.invite-suggestions li .sug-info strong { display: block; font-size: 0.83rem; }
+.invite-suggestions li .sug-info span  { font-size: 0.76rem; color: #64748b; }
+.invite-suggestions li mark {
+    background: #fef08a;
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* Danh sách người đã thêm thủ công */
+.manual-guest-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.manual-guest-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px 3px 10px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    color: #1d4ed8;
+    font-weight: 500;
+}
+.manual-guest-tag button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #64748b;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0;
+    margin-left: 2px;
+}
+.manual-guest-tag button:hover { color: #ef4444; }
+
 .modal-footer {
     padding: 16px 24px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; background: #ffffff;
 }
@@ -591,4 +734,62 @@ input:checked + .slider {
 
 input:checked + .slider:before {
     transform: translateX(20px);
-}
+}
+/* ==========================================
+   SỬA GIAO DIỆN FORM MODAL (THÊM / SỬA PHÒNG & THIẾT BỊ)
+   ========================================== */
+#roomModal .modal-content,
+#equipmentModal .modal-content {
+    background: #ffffff;
+    padding: 28px;
+    border-radius: 16px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+#roomModal h3,
+#equipmentModal h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.form-control {
+    width: 100%;
+    height: 42px;
+    padding: 0 12px;
+    font-size: 13.5px;
+    color: #0f172a;
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.form-control::placeholder {
+    color: #94a3b8;
+}

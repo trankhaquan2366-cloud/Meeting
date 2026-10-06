@@ -66,8 +66,9 @@
                 
                 <div class="topbar-right">
                     <div class="notification-wrapper">
-                        <button class="icon-btn" onclick="toggleNotificationPopup()" title="Thông báo">
+                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()" title="Thông báo">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                            <span id="notificationDot" class="notification-dot" style="display: none;"></span>
                         </button>
                         <div id="notificationPopup" class="notification-popup" style="display: none;">
                             <h4>Thông báo mới</h4>
@@ -504,9 +505,23 @@
                     <!-- Mời người tham dự -->
                     <div class="form-field">
                         <label class="field-label">👥 Mời người tham dự cuộc họp:</label>
+
+                        <!-- Nhập tên + gmail người muốn mời thủ công -->
+                        <div class="invite-manual-wrapper">
+                            <div class="invite-manual-row">
+                                <input type="text" id="inviteGuestName" class="invite-input" placeholder="Tên người được mời" autocomplete="off" oninput="onInviteInput()" />
+                                <input type="email" id="inviteGuestEmail" class="invite-input" placeholder="Gmail (vd: nguyen@gmail.com)" autocomplete="off" oninput="onInviteInput()" />
+                                <button type="button" class="invite-add-btn" onclick="addManualGuest()">+ Thêm</button>
+                            </div>
+                            <!-- Dropdown gợi ý autocomplete -->
+                            <ul id="inviteSuggestions" class="invite-suggestions" style="display:none;"></ul>
+                        </div>
+                        <div id="manualGuestList" class="manual-guest-list"></div>
+
                         <div id="participantListContainer" class="participant-picker-list"></div>
-                        <small class="equipment-hint">Tích chọn đồng nghiệp bạn muốn gửi thông báo mời tham dự.</small>
+                        <small class="equipment-hint">Tích chọn đồng nghiệp hoặc nhập gmail người ngoài hệ thống để gửi lời mời.</small>
                     </div>
+
 
                     <!-- Mô tả -->
                     <div class="form-field">

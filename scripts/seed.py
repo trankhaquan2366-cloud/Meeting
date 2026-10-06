@@ -28,7 +28,11 @@ DEMO_USERS = (
     ("demo.alex", "demo.alex@example.test", "Alex Nguyen", "employee", True),
     ("demo.linh", "demo.linh@example.test", "Linh Tran", "employee", True),
     ("demo.inactive", "demo.inactive@example.test", "Inactive User", "employee", False),
+    ("demo.manager", "demo.manager@example.test", "Quản lý Bùi Văn Nam", "manager", True),
+    ("demo.tester1", "demo.tester1@example.test", "Tester Nguyễn Thu Hoa", "employee", True),
+    ("demo.tester2", "demo.tester2@example.test", "Tester Trần Văn Bình", "employee", True),
 )
+
 
 DEMO_ROOMS = (
     {
@@ -178,12 +182,21 @@ def _add_equipment(db, meeting, equipment, quantity, note):
         )
 
 
-def _add_notification(db, user, title, content, is_read):
+def _add_notification(db, user, title, content, is_read=False):
     exists = (
-        db.query(Notification)
+        db.query(Notification.id)
         .filter_by(user_id=user.id, title=title, content=content)
         .first()
     )
+    if not exists:
+        db.add(
+            Notification(
+                user_id=user.id,
+                title=title,
+                content=content,
+                is_read=is_read,
+            )
+        )
     if not exists:
         db.add(
             Notification(

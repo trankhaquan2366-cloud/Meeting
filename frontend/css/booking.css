@@ -48,16 +48,20 @@ button {
   z-index: 9999;
 
   /* Căn giữa Form đặt phòng */
-  display: none; /* Mặc định ẩn form; khi JS bật sẽ chuyển thành display: flex */
+  display: none;
+  /* Mặc định ẩn form; khi JS bật sẽ chuyển thành display: flex */
   align-items: center;
   justify-content: center;
 
   /* Nền mờ phía sau giúp nổi bật Modal */
-  background: rgba(15, 23, 42, 0.45); /* Lớp phủ đen trong suốt */
-  backdrop-filter: blur(4px); /* Làm mờ nhẹ nền trang web đằng sau */
+  background: rgba(15, 23, 42, 0.45);
+  /* Lớp phủ đen trong suốt */
+  backdrop-filter: blur(4px);
+  /* Làm mờ nhẹ nền trang web đằng sau */
 
   padding: 20px;
-  overflow-y: auto; /* Cho phép cuộn nếu màn hình thiết bị quá nhỏ */
+  overflow-y: auto;
+  /* Cho phép cuộn nếu màn hình thiết bị quá nhỏ */
 }
 
 .ambient {
@@ -362,7 +366,7 @@ button {
   border-color: var(--blue);
 }
 
-.room-option > .icon-small {
+.room-option>.icon-small {
   color: var(--blue);
 }
 
@@ -373,7 +377,7 @@ button {
   border: 0;
 }
 
-.time-fieldset > .field-label {
+.time-fieldset>.field-label {
   margin-bottom: 8px;
 }
 
@@ -692,6 +696,7 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .icon-button,
   .text-control,
   .textarea-control,
@@ -840,8 +845,16 @@ button {
 .equipment-list-container::-webkit-scrollbar {
   width: 5px;
 }
-.equipment-list-container::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
-.equipment-list-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+.equipment-list-container::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 3px;
+}
+
+.equipment-list-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
 
 .eq-card {
   display: flex;

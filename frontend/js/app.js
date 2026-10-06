@@ -153,12 +153,312 @@ function scrollToRooms() {
     if (elem) elem.scrollIntoView({ behavior: 'smooth' });
 }
 
-function toggleNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (popup) {
-        popup.style.display = (popup.style.display === 'none' || !popup.style.display) ? 'block' : 'none';
+/* ==========================================================================
+   NOTIFICATION MANAGEMENT
+   ========================================================================== */
+
+async function fetchNotifications() {
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/notifications/`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+            const notifications = await res.json();
+            renderNotifications(notifications);
+        }
+    } catch (err) {
+        console.error("Lỗi lấy danh sách thông báo:", err);
     }
 }
+
+function renderNotifications(notifications) {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    if (!notifications || notifications.length === 0) {
+        popup.innerHTML = '<div style="padding: 16px; color: #94a3b8; text-align: center; font-size: 0.85rem;">Không có thông báo nào.</div>';
+        updateNotificationDot(0);
+        return;
+    }
+
+    const unreadCount = notifications.filter(n => !n.is_read).length;
+
+    // Chỉ cập nhật chấm đỏ khi popup ĐANG ĐÓNG (fetch nền / trang tải)
+    // Khi popup đang mở thì không tự động ẩn chấm đỏ qua hàm này
+    const popupVisible = popup.style.display !== 'none';
+    if (!popupVisible) {
+        updateNotificationDot(unreadCount);
+    }
+
+    popup.innerHTML = `
+        <div style="padding: 12px 16px; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+            <span>Thông báo</span>
+            ${unreadCount > 0 ? `<span style="font-size: 0.75rem; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 9999px;">${unreadCount} chưa đọc</span>` : ''}
+        </div>
+        <div style="max-height: 320px; overflow-y: auto;">
+            ${notifications.map(n => `
+                <div style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9; background-color: ${n.is_read ? '#ffffff' : '#f0fdf4'}; cursor: pointer;">
+                    <div style="font-weight: 600; font-size: 0.85rem; color: #0f172a; margin-bottom: 4px;">${escapeHtml(n.title)}</div>
+                    <div style="font-size: 0.8rem; color: #475569; line-height: 1.4;">${escapeHtml(n.content)}</div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Hiển thị hoặc ẩn chấm đỏ nhấp nháy trên nút chuông
+function updateNotificationDot(unreadCount) {
+    const dot = document.getElementById('notificationDot');
+    if (!dot) return;
+    dot.style.display = unreadCount > 0 ? 'block' : 'none';
+}
+
+// Toggle popup thông báo: mở thì ẩn chấm đỏ ngay + load data; đóng thì ẩn popup
+function toggleNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    const isHidden = popup.style.display === 'none' || !popup.style.display;
+    popup.style.display = isHidden ? 'block' : 'none';
+
+    if (isHidden) {
+        // Ẩn chấm đỏ ngay khi người dùng mở popup (đã "xem" thông báo)
+        updateNotificationDot(0);
+        fetchNotifications();
+    }
+}
+
+// Đóng popup khi bấm ra ngoài vùng notification-wrapper
+document.addEventListener('click', function (e) {
+    const wrapper = document.querySelector('.notification-wrapper');
+    const popup = document.getElementById('notificationPopup');
+    if (!wrapper || !popup) return;
+    if (!wrapper.contains(e.target) && popup.style.display !== 'none') {
+        popup.style.display = 'none';
+    }
+});
+
+// Fetch khi trang tải để hiển thị chấm đỏ nếu có thông báo chưa đọc
+document.addEventListener('DOMContentLoaded', () => {
+    fetchNotifications();
+});
+
+window.fetchNotifications = fetchNotifications;
+window.updateNotificationDot = updateNotificationDot;
+
+/* ==========================================================================
+   MANUAL GUEST INVITE (nhập tên + gmail người ngoài hệ thống)
+   ========================================================================== */
+// Mảng lưu danh sách khách mời thủ công
+let _manualGuests = [];
+
+function addManualGuest() {
+    const nameInput  = document.getElementById('inviteGuestName');
+    const emailInput = document.getElementById('inviteGuestEmail');
+    if (!nameInput || !emailInput) return;
+
+    const name  = nameInput.value.trim();
+    const email = emailInput.value.trim();
+
+    if (!name && !email) {
+        nameInput.focus();
+        return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        emailInput.style.borderColor = '#ef4444';
+        emailInput.focus();
+        setTimeout(() => emailInput.style.borderColor = '', 1500);
+        return;
+    }
+
+    // Tránh trùng email
+    if (_manualGuests.find(g => g.email === email)) {
+        emailInput.style.borderColor = '#f59e0b';
+        setTimeout(() => emailInput.style.borderColor = '', 1500);
+        return;
+    }
+
+    _manualGuests.push({ name, email });
+    nameInput.value  = '';
+    emailInput.value = '';
+    nameInput.focus();
+    renderManualGuestList();
+}
+
+function removeManualGuest(email) {
+    _manualGuests = _manualGuests.filter(g => g.email !== email);
+    renderManualGuestList();
+}
+
+function renderManualGuestList() {
+    const container = document.getElementById('manualGuestList');
+    if (!container) return;
+    if (_manualGuests.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = _manualGuests.map(g => `
+        <span class="manual-guest-tag" title="${g.email}">
+            ${g.name ? `<strong>${escapeHtml(g.name)}</strong>&nbsp;` : ''}
+            <span style="opacity:0.75">${escapeHtml(g.email)}</span>
+            <button type="button" onclick="removeManualGuest('${g.email}')" title="Xóa">✕</button>
+        </span>
+    `).join('');
+}
+
+// Cho phép nhấn Enter trên ô email để thêm nhanh + keyboard navigation cho suggestions
+document.addEventListener('DOMContentLoaded', () => {
+    const emailInput = document.getElementById('inviteGuestEmail');
+    const nameInput  = document.getElementById('inviteGuestName');
+
+    if (emailInput) {
+        emailInput.addEventListener('keydown', e => {
+            if (handleSuggestionKeydown(e)) return;
+            if (e.key === 'Enter') { e.preventDefault(); addManualGuest(); }
+        });
+    }
+    if (nameInput) {
+        nameInput.addEventListener('keydown', e => {
+            if (handleSuggestionKeydown(e)) return;
+            if (e.key === 'Enter') { e.preventDefault(); emailInput?.focus(); }
+        });
+    }
+
+    // Bấm ngoài vùng invite → ẩn suggestions
+    document.addEventListener('click', e => {
+        const wrapper = document.querySelector('.invite-manual-wrapper');
+        if (wrapper && !wrapper.contains(e.target)) hideSuggestions();
+    });
+});
+
+/* ---------- AUTOCOMPLETE LOGIC ---------- */
+let _activeSugIndex = -1;
+
+function onInviteInput() {
+    const nameVal  = (document.getElementById('inviteGuestName')?.value  || '').trim().toLowerCase();
+    const emailVal = (document.getElementById('inviteGuestEmail')?.value || '').trim().toLowerCase();
+    const query    = nameVal || emailVal;
+
+    if (!query || query.length < 1 || _allUsers.length === 0) {
+        hideSuggestions();
+        return;
+    }
+
+    // Lọc users khớp tên hoặc email, loại trừ người đã thêm
+    const addedEmails = new Set(_manualGuests.map(g => g.email.toLowerCase()));
+    const matches = _allUsers.filter(u => {
+        if (addedEmails.has((u.email || '').toLowerCase())) return false;
+        const fullName = (u.full_name || '').toLowerCase();
+        const email    = (u.email || '').toLowerCase();
+        return fullName.includes(query) || email.includes(query);
+    }).slice(0, 8); // tối đa 8 gợi ý
+
+    if (matches.length === 0) { hideSuggestions(); return; }
+
+    renderSuggestions(matches, query);
+}
+
+function highlightMatch(text, query) {
+    if (!query) return escapeHtml(text);
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escapeHtml(text);
+    return escapeHtml(text.slice(0, idx))
+        + `<mark>${escapeHtml(text.slice(idx, idx + query.length))}</mark>`
+        + escapeHtml(text.slice(idx + query.length));
+}
+
+function renderSuggestions(users, query) {
+    const list = document.getElementById('inviteSuggestions');
+    if (!list) return;
+    _activeSugIndex = -1;
+
+    list.innerHTML = users.map((u, i) => {
+        const initials = (u.full_name || u.email || '?')[0].toUpperCase();
+        return `
+        <li data-index="${i}" data-name="${escapeHtml(u.full_name || '')}" data-email="${escapeHtml(u.email || '')}"
+            onmousedown="selectSuggestion('${escapeHtml(u.full_name || '')}', '${escapeHtml(u.email || '')}')">
+            <div class="sug-avatar">${initials}</div>
+            <div class="sug-info">
+                <strong>${highlightMatch(u.full_name || 'Người dùng', query)}</strong>
+                <span>${highlightMatch(u.email || '', query)}</span>
+            </div>
+        </li>`;
+    }).join('');
+
+    list.style.display = 'block';
+}
+
+function selectSuggestion(name, email) {
+    const nameInput  = document.getElementById('inviteGuestName');
+    const emailInput = document.getElementById('inviteGuestEmail');
+    if (nameInput)  nameInput.value  = name;
+    if (emailInput) emailInput.value = email;
+    hideSuggestions();
+    // Tự động thêm ngay khi chọn
+    addManualGuest();
+}
+
+function hideSuggestions() {
+    const list = document.getElementById('inviteSuggestions');
+    if (list) { list.style.display = 'none'; list.innerHTML = ''; }
+    _activeSugIndex = -1;
+}
+
+function handleSuggestionKeydown(e) {
+    const list = document.getElementById('inviteSuggestions');
+    if (!list || list.style.display === 'none') return false;
+    const items = list.querySelectorAll('li');
+    if (!items.length) return false;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _activeSugIndex = Math.min(_activeSugIndex + 1, items.length - 1);
+        items.forEach((li, i) => li.classList.toggle('active', i === _activeSugIndex));
+        return true;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _activeSugIndex = Math.max(_activeSugIndex - 1, 0);
+        items.forEach((li, i) => li.classList.toggle('active', i === _activeSugIndex));
+        return true;
+    }
+    if (e.key === 'Enter' && _activeSugIndex >= 0) {
+        e.preventDefault();
+        const active = items[_activeSugIndex];
+        if (active) selectSuggestion(active.dataset.name, active.dataset.email);
+        return true;
+    }
+    if (e.key === 'Escape') {
+        hideSuggestions();
+        return true;
+    }
+    return false;
+}
+
+// Lấy danh sách guest thủ công để gửi cùng form (nếu cần)
+function getManualGuests() { return [..._manualGuests]; }
+
+// Reset khi đóng modal
+function resetManualGuests() {
+    _manualGuests = [];
+    renderManualGuestList();
+    hideSuggestions();
+    const nameInput  = document.getElementById('inviteGuestName');
+    const emailInput = document.getElementById('inviteGuestEmail');
+    if (nameInput)  nameInput.value  = '';
+    if (emailInput) emailInput.value = '';
+}
+
+window.addManualGuest    = addManualGuest;
+window.removeManualGuest = removeManualGuest;
+window.getManualGuests   = getManualGuests;
+window.resetManualGuests = resetManualGuests;
+window.onInviteInput     = onInviteInput;
+window.selectSuggestion  = selectSuggestion;
 
 /* ==========================================================================
    DATE & TIME FORMATTING UTILITIES (ĐÃ CẢI TIẾN TIẾNG VIỆT FIGMA UI)
@@ -423,6 +723,8 @@ function renderRoomAmenities(room) {
 /* ==========================================================================
    PARTICIPANT MANAGEMENT
    ========================================================================== */
+let _allUsers = []; // Cache danh sách người dùng để dùng cho autocomplete
+
 async function fetchAndRenderParticipants() {
     const container = document.getElementById('participantListContainer');
     if (!container) return;
@@ -436,6 +738,7 @@ async function fetchAndRenderParticipants() {
         if (!res.ok) throw new Error("Không thể lấy danh sách người dùng");
 
         const users = await res.json();
+        _allUsers = users || []; // Lưu cache
 
         if (!users || users.length === 0) {
             container.innerHTML = '<div style="color: #94a3b8; font-size: 0.82rem;">Chưa có người dùng khác trong hệ thống.</div>';
@@ -506,6 +809,7 @@ function openBookingModal(roomId) {
 function closeBookingModal() {
     const modal = document.getElementById('bookingModal');
     if (modal) modal.style.display = 'none';
+    if (typeof resetManualGuests === 'function') resetManualGuests();
 }
 
 async function openQuickBooking() {
