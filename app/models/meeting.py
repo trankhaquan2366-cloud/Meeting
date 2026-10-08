@@ -21,9 +21,14 @@ class Meeting(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String(200), nullable=False, index=True)
     description = Column(Text, nullable=True)
+    # meeting_type: 'online' | 'offline' — online meetings do not require a room
+    meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
+    # online_link: used when meeting_type == 'online'
+    online_link = Column(String(500), nullable=True)
     is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
     recurring_type = Column(String(20), nullable=True)
-    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    # room_id is nullable: online meetings have no room
+    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True, index=True)
     organizer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)

@@ -29,8 +29,9 @@ function escapeHtml(value) {
    ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
     const token = getAuthToken();
-    if (!token) {
-        window.location.href = 'index.html';
+    const isMeetingPreview = new URLSearchParams(location.search).get('preview') === 'meeting';
+    if (!token && !isMeetingPreview) {
+        window.location.href = 'login.html';
         return;
     }
 
@@ -643,8 +644,8 @@ function renderRooms(rooms, isAdmin) {
                     <div class="amenities-tags">${amenitiesHTML}</div>
                     <div class="card-actions">
                         <button class="btn-schedule" onclick="openScheduleModal(${room.id})">Xem lịch</button>
-                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openBookingModal(${room.id})"` : 'disabled'}>
-                            ${isAvailable ? 'Đặt ngay' : 'Hết chỗ'}
+                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openCreateMeeting({ roomId: ${room.id} })"` : 'disabled'}>
+                            ${isAvailable ? 'Tạo cuộc họp' : 'Hết chỗ'}
                         </button>
                         ${adminButtons}
                     </div>
@@ -793,35 +794,21 @@ function closeScheduleModal() {
 }
 
 function openBookingModal(roomId) {
-    const room = allRooms.find(r => r.id === roomId && r.is_active !== false);
-    if (!room) return;
-
-    setDefaultBookingTimes();
-    selectBookingRoom(room);
-    renderRoomOptions();
-
-    const modal = document.getElementById('bookingModal');
-    if (modal) modal.style.display = 'flex';
-    fetchAndRenderEquipments();
-    fetchAndRenderParticipants();
+    if (typeof openCreateMeeting === 'function') {
+        openCreateMeeting(roomId ? { roomId } : {});
+        return;
+    }
 }
 
 function closeBookingModal() {
-    const modal = document.getElementById('bookingModal');
-    if (modal) modal.style.display = 'none';
-    if (typeof resetManualGuests === 'function') resetManualGuests();
+    if (typeof closeCreateMeeting === 'function') closeCreateMeeting();
 }
 
 async function openQuickBooking() {
-    const role = localStorage.getItem('role') || 'user';
-    if (!allRooms.length) await fetchRooms(role === 'admin');
-
-    const room = allRooms.find(item => item.is_active !== false);
-    if (!room) {
-        alert('Hiện chưa có phòng họp đang hoạt động.');
+    if (typeof openCreateMeeting === 'function') {
+        openCreateMeeting();
         return;
     }
-    openBookingModal(room.id);
 }
 
 function selectBookingRoom(room) {
@@ -1309,7 +1296,7 @@ async function deleteRoom(roomId) {
 
 function logout() {
     localStorage.clear();
-    window.location.href = 'index.html';
+    window.location.href = 'login.html';
 }
 
 /* ==========================================================================

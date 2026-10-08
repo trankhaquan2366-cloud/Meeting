@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, List, Optional
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentItemOutput
 
@@ -9,7 +9,12 @@ from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentIte
 class MeetingCreateRequest(BaseModel):
     title: str
     description: Optional[str] = None
-    room_id: int
+    # meeting_type: 'online' | 'offline'
+    meeting_type: str = 'offline'
+    # online_link: bắt buộc khi meeting_type='online'
+    online_link: Optional[str] = None
+    # room_id: bắt buộc khi meeting_type='offline', phải NULL khi 'online'
+    room_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
 
@@ -22,13 +27,36 @@ class MeetingCreateRequest(BaseModel):
     equipments: Optional[List[MeetingEquipmentItemInput]] = []
     participant_ids: Optional[List[int]] = []
 
+    @field_validator('meeting_type')
+    @classmethod
+    def validate_meeting_type(cls, v: str) -> str:
+        if v not in ('online', 'offline'):
+            raise ValueError("meeting_type phải là 'online' hoặc 'offline'")
+        return v
+
+    @model_validator(mode='after')
+    def validate_meeting_mode(self) -> 'MeetingCreateRequest':
+        if self.meeting_type == 'online':
+            if self.room_id is not None:
+                raise ValueError(
+                    "Cuộc họp online không được có room_id. Hãy gửi room_id = null."
+                )
+            if not self.online_link or not self.online_link.strip():
+                raise ValueError("Cuộc họp online cần có online_link.")
+        elif self.meeting_type == 'offline':
+            if not self.room_id:
+                raise ValueError("Cuộc họp offline cần có room_id hợp lệ.")
+        return self
+
 
 # 2. Schema phản hồi thông tin cuộc họp trả về cho Client (Response)
 class MeetingResponse(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
-    room_id: int
+    meeting_type: str = 'offline'
+    online_link: Optional[str] = None
+    room_id: Optional[int] = None
     organizer_id: Optional[int] = None
     start_time: datetime
     end_time: datetime

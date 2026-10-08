@@ -140,8 +140,11 @@ class TestResponseShape:
         assert resp.status_code == 200
         item = resp.json()[0]
         expected = {
-            "id", "title", "description", "room_id", "organizer_id",
-            "start_time", "end_time", "status", "is_recurring", "recurring_type",
-            "equipments",
+            "id", "title", "description",
+            "meeting_type", "online_link",
+            "room_id", "organizer_id",
+            "start_time", "end_time", "status",
+            "is_recurring", "recurring_type",
+            "equipments", "participant_ids",
         }
         assert set(item.keys()) == expected

@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=13">
-    <link rel="stylesheet" href="css/booking.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=14">
+    <link rel="stylesheet" href="css/booking.css?v=3">
+    <link rel="stylesheet" href="css/create-meeting.css?v=1">
 </head>
 <body>
     <div class="app-layout" id="appLayout">
@@ -65,6 +66,7 @@
                 </div>
                 
                 <div class="topbar-right">
+                    <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                     <div class="notification-wrapper">
                         <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()" title="Thông báo">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
@@ -95,7 +97,7 @@
                             <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
                             <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
                             <div class="hero-actions">
-                                <button class="btn-hero-primary" onclick="openQuickBooking()">Đặt phòng ngay</button>
+                                <button class="btn-hero-primary" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                                 <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
                             </div>
                         </div>
@@ -390,157 +392,157 @@
         </div>
     </div>
 
-    <!-- MODAL ĐẶT PHÒNG HỌP (CHUẨN FIGMA UI) -->
-    <div id="bookingModal" class="modal" style="display: none;">
-        <div class="ambient ambient-left"></div>
-        <div class="ambient ambient-right"></div>
-
-        <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booking-title">
-            <header class="modal-header">
+    <!-- MODAL TẠO CUỘC HỌP -->
+    <div id="createMeetingModal" class="cm-overlay" aria-hidden="true">
+        <section id="cmDialog" class="cm-dialog" role="dialog" aria-modal="true" aria-labelledby="cmHeading">
+            <header class="cm-header">
                 <div>
-                    <p class="eyebrow">Lịch làm việc</p>
-                    <h1 id="booking-title" class="modal-title">Đặt lịch phòng họp</h1>
+                    <p class="cm-kicker">Cuộc họp</p>
+                    <h1 id="cmHeading">Tạo cuộc họp</h1>
                 </div>
-                <button class="icon-button" type="button" aria-label="Đóng" onclick="closeBookingModal()">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                </button>
+                <button class="cm-icon-btn" type="button" aria-label="Đóng" onclick="closeCreateMeeting()">×</button>
             </header>
 
-            <form class="booking-form" onsubmit="handleBookingSubmit(event)">
-                <div class="booking-form-body">
-                    <!-- Tên cuộc họp -->
-                    <div class="form-field">
-                        <label class="field-label" for="meeting-title">Tên cuộc họp</label>
-                        <input id="meeting-title" class="text-control" name="title" placeholder="Nhập tên cuộc họp" required />
-                    </div>
-
-                    <!-- Chọn phòng -->
-                    <div class="form-field room-field">
-                        <label class="field-label" for="room-select">Chọn phòng</label>
-                        <button id="room-select" class="room-select" type="button" aria-expanded="false" onclick="toggleRoomMenu()">
-                            <div class="room-select-main">
-                                <span class="room-name">Phòng họp</span>
-                                <span class="room-meta">Chọn phòng mong muốn</span>
-                            </div>
-                            <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        </button>
-                        <div id="roomMenu" class="room-menu" role="listbox" hidden></div>
-                    </div>
-
-                    <!-- Tiện ích phòng -->
-                    <div class="form-field">
-                        <div class="label-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                            <label class="field-label">🏢 Tiện ích sẵn có trong phòng:</label>
-                            <span class="optional" style="font-size: 0.72rem; color: #16a34a; font-weight: 500;">✓ Đã bao gồm sẵn trong phòng</span>
+            <form id="createMeetingForm" class="cm-layout">
+                <div class="cm-form-pane">
+                    <section class="cm-section">
+                        <div class="cm-section-head">
+                            <p class="cm-section-title">Thông tin cuộc họp</p>
+                            <p class="cm-help">Xác định cuộc họp và nội dung trước khi lựa chọn vị trí hoặc phòng.</p>
                         </div>
-                        <div id="roomAvailableAmenities" style="display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; min-height: 36px; align-items: center;">
-                            <span style="color: #64748b; font-size: 0.8rem;">Vui lòng chọn phòng để xem tiện ích...</span>
-                        </div>
-                    </div>
+                        <label class="cm-label" for="cmTitle">Tên cuộc họp</label>
+                        <input id="cmTitle" class="cm-title-input" name="title" maxlength="120" placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
+                        <p id="cmTitleError" class="cm-field-error">Nhập tên cuộc họp trước khi tạo.</p>
+                    </section>
 
-                    <!-- Chọn thời gian -->
-                    <fieldset class="time-fieldset">
-                        <legend class="field-label">Thời gian</legend>
-                        <div class="time-grid">
-                            <div class="date-column">
-                                <span class="mini-label">Ngày họp</span>
-                                <div class="date-picker-wrapper" id="datepickerWrapper" onclick="triggerDatePicker()">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12H4V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                    <span id="dateDisplayLabel" class="date-display-text">--/--/----</span>
-                                    <input name="meeting_date" id="meetingDateInput" type="date" required style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;" />
-                                </div>
-                            </div>
-                            <div class="time-column">
-                                <span class="mini-label">Bắt đầu</span>
-                                <div class="time-select-wrapper">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                    <select name="start_time" id="startTimeSelect" class="vi-time-select" onchange="syncHiddenStartTime(this)" required></select>
-                                    <input type="hidden" name="start_time_val" id="startTimeHidden" />
-                                </div>
-                            </div>
-                            <div class="time-column">
-                                <span class="mini-label">Kết thúc</span>
-                                <div class="time-select-wrapper">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                    <select name="end_time" id="endTimeSelect" class="vi-time-select" required></select>
-                                </div>
-                            </div>
-                        </div>
-                        <button id="findAvailabilityBtn" class="availability-button" type="button" onclick="findAvailableTime()">
-                            <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4M10.5 7.5v3.2l2 1.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                            Tìm giờ trống
-                        </button>
-                        <p id="availabilityMessage" class="availability-message" role="status" hidden></p>
-                        <div id="availabilityResults" class="availability-results" aria-label="Các khung giờ trống"></div>
-                    </fieldset>
+                    <section class="cm-section">
+                        <label class="cm-label" for="cmDescription">Mô tả ngắn</label>
+                        <textarea id="cmDescription" class="cm-textarea" rows="3" placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
+                    </section>
 
-                    <!-- Lặp lại -->
-                    <div class="recurring-row">
-                        <div>
-                            <label class="recurring-label" for="recurrence-select">Lặp lại cuộc họp</label>
-                            <p class="recurring-hint" id="recurrenceHint">Chọn chu kỳ cho cuộc họp</p>
+                    <section class="cm-section">
+                        <div class="cm-section-head">
+                            <p class="cm-section-title">Thời gian</p>
+                            <p class="cm-help">Chọn ngày và khung giờ diễn ra để xác định thời điểm cuộc họp.</p>
                         </div>
-                        <select id="recurrence-select" class="text-control recurrence-select" name="recurrence_type">
+                        <div class="cm-time-grid">
+                            <label>
+                                <span class="cm-mini-label">Ngày</span>
+                                <input id="cmDate" class="cm-input" type="date" />
+                            </label>
+                            <label>
+                                <span class="cm-mini-label">Giờ bắt đầu</span>
+                                <select id="cmStart" class="cm-select"></select>
+                            </label>
+                            <label>
+                                <span class="cm-mini-label">Giờ kết thúc</span>
+                                <select id="cmEnd" class="cm-select"></select>
+                            </label>
+                        </div>
+                        <div class="cm-seg" role="group" aria-label="Lặp lại">
+                            <button type="button" id="cmRecNone" aria-pressed="true" onclick="setRecurrence('none')">Không lặp</button>
+                            <button type="button" id="cmRecWeekly" aria-pressed="false" onclick="setRecurrence('weekly')">Hàng tuần</button>
+                            <button type="button" id="cmRecMonthly" aria-pressed="false" onclick="setRecurrence('monthly')">Hàng tháng</button>
+                        </div>
+                        <select id="cmRecurrence" class="cm-select" hidden>
                             <option value="none">Không lặp</option>
-                            <option value="monthly">Lặp 1 tháng</option>
-                            <option value="until_changed">Lặp đến khi thay đổi</option>
+                            <option value="weekly">Hàng tuần</option>
+                            <option value="monthly">Hàng tháng</option>
                         </select>
-                    </div>
+                        <div id="cmRecurringExtra" class="cm-recurring-extra">
+                            <p id="cmRecurrenceNote" class="cm-help">Lặp vào thứ Hai hàng tuần</p>
+                            <label>
+                                <span class="cm-mini-label">Kết thúc vào ngày</span>
+                                <input id="cmRecurrenceUntil" class="cm-input" type="date" />
+                            </label>
+                        </div>
+                    </section>
 
-                    <!-- Mượn thiết bị -->
-                    <div class="form-field equipment-borrow-section">
-                        <div class="equipment-section-header">
-                            <div class="equipment-section-title">
-                                <span class="equipment-icon">📦</span>
-                                <span>Mượn thêm thiết bị từ kho</span>
-                                <span class="equipment-badge">Tùy chọn</span>
+                    <section class="cm-section">
+                        <div class="cm-inline-actions">
+                            <label class="cm-label" for="cmAttendeeSearch">Người tham dự</label>
+                            <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
+                        </div>
+                        <div class="cm-attendee-search">
+                            <input id="cmAttendeeSearch" class="cm-search" type="search" placeholder="Tìm người tham dự..." autocomplete="off" />
+                            <ul id="cmAttendeeSuggest" class="cm-suggest"></ul>
+                        </div>
+                        <div id="cmAttendeeChips" class="cm-chips"></div>
+                        <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên nhóm</button>
+                    </section>
+
+                    <section class="cm-section">
+                        <p class="cm-section-title">Vị trí</p>
+                        <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp">
+                            <button type="button" id="cmModeOnline" aria-pressed="false" onclick="setCreateMeetingMode('online')">🌐 Online</button>
+                            <button type="button" id="cmModeOffline" aria-pressed="true" onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
+                        </div>
+                        <div id="cmOnlineBox" class="cm-online-box">
+                            <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
+                            <input id="cmMeetingLink" class="cm-input" type="url" placeholder="https://meet.roomsync.vn/..." />
+                            <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo link</button>
+                        </div>
+
+                        <div id="cmResources" class="cm-resources is-open">
+                            <p class="cm-section-title">Yêu cầu phòng</p>
+                            <div class="cm-fixed-requirements">
+                                <span class="cm-label">Thiết bị cố định bắt buộc</span>
+                                <p class="cm-help">Chọn các thiết bị/tiện nghi bắt buộc phòng họp phải có.</p>
+                                <div id="cmFixedAmenityOptions" class="cm-amenity-options">
+                                    <p class="cm-help">Đang tải tiện nghi phòng...</p>
+                                </div>
                             </div>
-                            <span class="equipment-hint">Tích chọn thiết bị & nhập số lượng</span>
-                        </div>
-                        <div id="equipmentListContainer" class="equipment-list-container">
-                            <div class="equipment-loading">⏳ Đang tải danh sách thiết bị kho...</div>
-                        </div>
-                    </div>
 
-                    <!-- Mời người tham dự -->
-                    <div class="form-field">
-                        <label class="field-label">👥 Mời người tham dự cuộc họp:</label>
-
-                        <!-- Nhập tên + gmail người muốn mời thủ công -->
-                        <div class="invite-manual-wrapper">
-                            <div class="invite-manual-row">
-                                <input type="text" id="inviteGuestName" class="invite-input" placeholder="Tên người được mời" autocomplete="off" oninput="onInviteInput()" />
-                                <input type="email" id="inviteGuestEmail" class="invite-input" placeholder="Gmail (vd: nguyen@gmail.com)" autocomplete="off" oninput="onInviteInput()" />
-                                <button type="button" class="invite-add-btn" onclick="addManualGuest()">+ Thêm</button>
+                            <div class="cm-capacity">
+                                <div>
+                                    <span class="cm-help">Sức chứa cần thiết</span>
+                                    <strong id="cmCapacityValue">1 người</strong>
+                                    <span id="cmCapacityMin" class="cm-help">Phòng tối thiểu: 1 chỗ</span>
+                                </div>
+                                <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost" onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
                             </div>
-                            <!-- Dropdown gợi ý autocomplete -->
-                            <ul id="inviteSuggestions" class="invite-suggestions" style="display:none;"></ul>
+                            <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                            <div id="cmRoomResults" class="cm-room-list">
+                                <div class="cm-empty">Chọn điều kiện phòng rồi bấm “Tìm phòng phù hợp”.</div>
+                            </div>
                         </div>
-                        <div id="manualGuestList" class="manual-guest-list"></div>
+                    </section>
 
-                        <div id="participantListContainer" class="participant-picker-list"></div>
-                        <small class="equipment-hint">Tích chọn đồng nghiệp hoặc nhập gmail người ngoài hệ thống để gửi lời mời.</small>
-                    </div>
+                    <section id="cmEquipmentSection" class="cm-section" hidden>
+                        <p class="cm-section-title">Thiết bị cần mượn thêm</p>
+                        <p class="cm-help">Thiết bị di động được đặt riêng sau khi chọn phòng.</p>
+                        <div id="cmBorrowEquipment" class="cm-borrow-eq"></div>
+                        <div id="cmEquipConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                    </section>
 
-
-                    <!-- Mô tả -->
-                    <div class="form-field">
-                        <div class="label-row">
-                            <label class="field-label" for="description">Mô tả cuộc họp</label>
-                            <span class="optional">Không bắt buộc</span>
-                        </div>
-                        <textarea id="description" class="textarea-control" name="description" rows="2" placeholder="Nhập nội dung hoặc chương trình cuộc họp..."></textarea>
-                    </div>
+                    <div id="cmFormError" class="cm-alert cm-alert-error" role="alert"></div>
+                    <div id="cmApiError" class="cm-alert cm-alert-error" role="alert"></div>
                 </div>
 
-                <footer class="modal-footer">
-                    <button class="button button-secondary" type="button" onclick="closeBookingModal()">Hủy</button>
-                    <button class="button button-primary" type="submit">Xác nhận đặt lịch</button>
-                </footer>
+                <aside class="cm-summary-pane">
+                    <div class="cm-summary-card">
+                        <h2>Kiểm tra cuộc họp</h2>
+                        <ul id="cmSummaryList" class="cm-summary-list"></ul>
+                    </div>
+                    <div id="cmSummaryStatus" class="cm-status is-ok">✓ Không có xung đột</div>
+                    <div class="cm-summary-actions">
+                        <button id="cmSubmit" class="cm-btn cm-btn-primary" type="submit">TẠO CUỘC HỌP</button>
+                        <button class="cm-btn cm-btn-secondary" type="button" onclick="closeCreateMeeting()">Hủy</button>
+                    </div>
+                </aside>
             </form>
+
+            <div class="cm-success" role="status">
+                <div class="cm-success-icon" aria-hidden="true">✓</div>
+                <h2>Đã tạo cuộc họp</h2>
+                <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
+                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp khác</button>
+                <button type="button" class="cm-btn cm-btn-secondary" onclick="closeCreateMeeting()">Đóng</button>
+            </div>
         </section>
     </div>
 
-    <script src="js/app.js?v=8"></script>
+    <script src="js/app.js?v=9"></script>
+    <script src="js/create-meeting.js?v=2"></script>
 </body>
 </html>

@@ -35,6 +35,9 @@ The content is organized as follows:
 
 # Directory Structure
 ````
+.agents/
+  tasks/
+    plan.md
 alembic/
   env.py
   README
@@ -78,9 +81,11 @@ frontend/
     index-DPhpmZ5j.js
   css/
     booking.css
+    create-meeting.css
     style.css
   js/
     app.js
+    create-meeting.js
     login.js
   dashboard.html
   index.html
@@ -91,6 +96,7 @@ migrations/
   002_add_meeting_participants.sql
   003_add_equipment_tables.sql
   004_add_room_amenities.sql
+  005_align_meetings_schema.sql
 scripts/
   patch_db.py
   seed.py
@@ -113,6 +119,2230 @@ schema.sql
 ````
 
 # Files
+
+## File: .agents/tasks/plan.md
+````markdown
+# Implementation Plan — Tạo cuộc họp hoàn chỉnh
+
+> Dựa trên: đọc trực tiếp source code hiện tại (tất cả file liên quan)
+> Ghi chú: `python-dateutil` **KHÔNG có** trong `requirements.txt` → dùng `calendar` stdlib để xử lý monthly recurrence.
+
+---
+
+## Tổng quan các vấn đề phát hiện khi đọc code
+
+| File | Vấn đề |
+|---|---|
+| `models/meeting.py` | `room_id` nullable=False + ondelete='CASCADE' — cần đổi cho phép NULL với SET NULL |
+| `schemas/meeting.py` | Thiếu `meeting_type`, `meeting_link`; `MeetingCreateResponse` chưa có; `room_id` bắt buộc |
+| `services/meeting_service.py` | Monthly dùng `timedelta(days=30)` sai; conflict → reject toàn bộ thay vì skip; không lưu participants; không có alias `suggest_time`; không check `meeting_type` |
+| `routers/meetings.py` | GET `""` trả `RoomResponse` thay vì meetings; gọi `suggest_time` nhưng service có method `calculate_suggested_times`; response_model POST `/book` là `List[MeetingResponse]` thay vì `MeetingCreateResponse` |
+| `routers/rooms.py` | Có 2 endpoint trùng: `/available` và `/available/`; endpoint `/available/` có `min_capacity` nhưng `/available` thì không |
+| `create-meeting.js` | Online meeting → early return trước khi gọi API; mockIds filter loại bỏ IDs hợp lệ; `meeting_type`/`meeting_link` không có trong payload; không auto-search khi switch offline; không hiển thị skipped; không validate min 15 phút |
+| `create-meeting.css` | Thiếu style `.cm-skipped-notice` |
+
+---
+
+## STEP 1 — Database Migration + Model Update
+
+- [ ] 1. Tạo file SQL migration `005_add_meeting_type_and_link.sql`.
+
+  Tạo file mới tại `c:\Users\ADMIN\Desktop\Meeting\migrations\005_add_meeting_type_and_link.sql` với nội dung:
+
+  ```sql
+  USE meeting_db;
+  ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meeting_type VARCHAR(10) NOT NULL DEFAULT 'offline' AFTER description;
+  ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meeting_link VARCHAR(500) NULL AFTER meeting_type;
+  ALTER TABLE meetings DROP FOREIGN KEY IF EXISTS fk_meetings_room;
+  ALTER TABLE meetings MODIFY COLUMN room_id INT NULL;
+  ALTER TABLE meetings ADD CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL ON UPDATE CASCADE;
+  ```
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\migrations\005_add_meeting_type_and_link.sql`
+
+- [ ] 2. Cập nhật `app/models/meeting.py` để phản ánh schema mới.
+
+  **Các thay đổi cụ thể trong file (giữ nguyên phần còn lại):**
+
+  - Dòng hiện tại (~line 22): `room_id = Column(Integer, ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True)`
+    → Đổi thành: `room_id = Column(Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True, index=True)`
+
+  - Sau field `description` (line 20), thêm 2 field mới:
+    ```python
+    meeting_type = Column(String(10), nullable=False, default='offline')
+    meeting_link = Column(String(500), nullable=True)
+    ```
+
+  **Giữ nguyên:** Tất cả relationships, `__tablename__`, `MeetingParticipant`, các field khác.
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\app\models\meeting.py`
+
+  **Verify:** `python -c "from app.models.meeting import Meeting; print(Meeting.meeting_type, Meeting.meeting_link, Meeting.room_id)"` không raise ImportError. Nếu có DB kết nối: chạy migration SQL và kiểm tra `DESCRIBE meetings;` thấy 2 cột mới + room_id nullable.
+
+---
+
+## STEP 2 — Schemas + Service Logic
+
+- [ ] 3. Cập nhật `app/schemas/meeting.py` — thêm fields và schema mới.
+
+  **Thay đổi tại `MeetingCreateRequest` (hiện tại dòng 10–18):**
+  - Đổi `room_id: int` → `room_id: Optional[int] = None` (bỏ required, vì online meeting không cần)
+  - Thêm 2 field sau `description`:
+    ```python
+    meeting_type: str = 'offline'
+    meeting_link: Optional[str] = None
+    ```
+  - Thêm validator cho `meeting_type`:
+    ```python
+    @field_validator('meeting_type')
+    @classmethod
+    def validate_meeting_type(cls, v):
+        if v not in ('online', 'offline'):
+            raise ValueError("meeting_type phải là 'online' hoặc 'offline'")
+        return v
+    ```
+
+  **Thay đổi tại `MeetingResponse` (hiện tại dòng 22–35):**
+  - Đổi `room_id: int` → `room_id: Optional[int] = None`
+  - Thêm 2 field mới:
+    ```python
+    meeting_type: str = 'offline'
+    meeting_link: Optional[str] = None
+    ```
+
+  **Thêm class mới `MeetingCreateResponse` sau `MeetingResponse`:**
+  ```python
+  class MeetingCreateResponse(BaseModel):
+      created: List[MeetingResponse]
+      skipped: List[dict]
+  ```
+
+  **Giữ nguyên:** `FrequentUserResponse`, `NotificationResponse`, `SuggestTimeRequest`, `TimeSlot`, `SuggestTimeResponse`, validator `parse_equipments`.
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\app\schemas\meeting.py`
+
+- [ ] 4. Cập nhật `app/services/meeting_service.py` — 7 fix quan trọng.
+
+  **Import cần thêm ở đầu file:**
+  ```python
+  import calendar
+  from app.models.meeting import MeetingParticipant
+  ```
+
+  **Fix A — Validate meeting_type (thêm vào đầu method `create_meeting`, sau kiểm tra `start_time < now`):**
+  ```python
+  meeting_type = getattr(payload, 'meeting_type', 'offline') or 'offline'
+  meeting_link = getattr(payload, 'meeting_link', None)
+
+  if meeting_type == 'online':
+      if not meeting_link:
+          raise HTTPException(status_code=400, detail="Cuộc họp online cần có meeting_link!")
+      room = None  # online không cần phòng
+  else:  # offline
+      if not payload.room_id:
+          raise HTTPException(status_code=400, detail="Cuộc họp offline cần chọn phòng họp!")
+      room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
+      if not room:
+          raise HTTPException(status_code=400, detail="Phòng họp không tồn tại hoặc đã bị ngưng hoạt động!")
+  ```
+  → **Xóa block kiểm tra phòng hiện tại** (lines ~40–46 kiểm tra room cứng nhắc) vì đã được xử lý trong Fix A.
+
+  **Fix B — Monthly recurrence dùng calendar (thay `timedelta(days=30)` trong vòng lặp):**
+  ```python
+  elif recurrence_type in ("monthly", "until_changed"):
+      # Tính đúng ngày tháng tiếp theo bằng calendar arithmetic
+      year = current_start.year
+      month = current_start.month + 1
+      if month > 12:
+          month = 1
+          year += 1
+      day = min(current_start.day, calendar.monthrange(year, month)[1])
+      delta = current_start.replace(year=year, month=month, day=day) - current_start
+      current_start += delta
+      current_end += delta
+  ```
+
+  **Fix C — Skip conflict thay vì reject toàn bộ (thay block `if overlapping_meeting`):**
+  - Khai báo `skipped = []` trước vòng lặp `for s_time, e_time in meeting_dates`.
+  - Thay đoạn raise HTTPException khi conflict bằng:
+    ```python
+    if overlapping_meeting:
+        date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
+        skipped.append({
+            "date": date_str,
+            "reason": f"Phòng đã có lịch vào {date_str}"
+        })
+        continue  # bỏ qua occurrence này, tiếp tục tạo những cái khác
+    ```
+  - Sau vòng lặp, thêm guard:
+    ```python
+    if not created_meetings:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Tất cả các mốc thời gian đều bị xung đột lịch phòng!")
+    ```
+
+  **Fix D — Lưu participants sau `db.flush()` (thêm ngay sau block lưu equipments):**
+  ```python
+  participant_ids = getattr(payload, 'participant_ids', []) or []
+  for pid in participant_ids:
+      if pid == organizer_id:
+          continue  # không thêm organizer vào participants
+      participant = MeetingParticipant(
+          meeting_id=new_meeting.id,
+          user_id=pid
+      )
+      db.add(participant)
+  ```
+
+  **Fix E — Không check room conflict khi online (trong vòng lặp `for s_time, e_time`):**
+  ```python
+  # Chỉ kiểm tra conflict phòng khi offline
+  if meeting_type == 'offline':
+      overlapping_meeting = db.query(Meeting).filter(
+          Meeting.room_id == payload.room_id,
+          ...
+      ).first()
+      if overlapping_meeting:
+          ...  # skip logic từ Fix C
+  ```
+
+  **Fix F — Truyền `meeting_type` và `meeting_link` vào `Meeting(...)` constructor:**
+  ```python
+  new_meeting = Meeting(
+      title=payload.title,
+      description=payload.description,
+      room_id=payload.room_id if meeting_type == 'offline' else None,
+      meeting_type=meeting_type,
+      meeting_link=meeting_link,
+      organizer_id=organizer_id,
+      start_time=s_time,
+      end_time=e_time,
+      is_recurring=recurrence_type not in (None, "none"),
+      recurring_type=recurrence_type if recurrence_type != "none" else None,
+      status="scheduled"
+  )
+  ```
+
+  **Fix G — Return dict thay vì list + thêm alias `suggest_time`:**
+  - Đổi `return created_meetings` cuối method thành:
+    ```python
+    return {'created': created_meetings, 'skipped': skipped}
+    ```
+  - Thêm alias method sau `calculate_suggested_times`:
+    ```python
+    @staticmethod
+    def suggest_time(db: Session, payload):
+        return MeetingService.calculate_suggested_times(
+            db=db,
+            participant_ids=payload.participant_ids,
+            date_str=payload.date,
+            duration_minutes=payload.duration_minutes
+        )
+    ```
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\app\services\meeting_service.py`
+
+  **Verify:** `python -c "from app.services.meeting_service import MeetingService; print('OK')"` không raise ImportError.
+
+---
+
+## STEP 3 — Router Update
+
+- [ ] 5. Cập nhật `app/routers/meetings.py` — 3 fix.
+
+  **Fix A — Import `MeetingCreateResponse`:**
+  Thêm `MeetingCreateResponse` vào import block từ `app.schemas.meeting`:
+  ```python
+  from app.schemas.meeting import (
+      MeetingCreateRequest,
+      MeetingCreateResponse,
+      MeetingResponse,
+      SuggestTimeRequest,
+      SuggestTimeResponse,
+  )
+  ```
+
+  **Fix B — Endpoint GET `""` (dòng ~20–29) trả sai kiểu:**
+  Hiện tại: `response_model=List[RoomResponse]` và gọi `MeetingService.get_all_active_rooms(db)`.
+  → Đổi thành trả meetings, hoặc xóa endpoint này vì đã có GET `/` bên dưới. **Quyết định: xóa endpoint GET `""` vì GET `/` đã cover đúng chức năng.**
+  
+  Xóa toàn bộ block:
+  ```python
+  @router.get(
+      "",
+      response_model=List[RoomResponse],
+      ...
+  )
+  def list_rooms(db: Session = Depends(get_db)):
+      return MeetingService.get_all_active_rooms(db)
+  ```
+  Đồng thời xóa import `RoomResponse` từ `app.schemas.room` nếu không dùng ở đâu khác.
+
+  **Fix C — Endpoint POST `/book` đổi response_model:**
+  ```python
+  @router.post(
+      "/book",
+      response_model=MeetingCreateResponse,   # ← đổi từ List[MeetingResponse]
+      status_code=status.HTTP_201_CREATED,
+      ...
+  )
+  def create_meeting(...):
+      result = MeetingService.create_meeting(...)   # giờ trả dict
+      
+      # Gửi notification dùng result['created'] thay vì created_meetings
+      if payload.participant_ids and result['created']:
+          first_meeting = result['created'][0]
+          start_str = first_meeting.start_time.strftime("%H:%M %d/%m/%Y")
+          background_tasks.add_task(
+              send_meeting_invitation_notifications,
+              db=db,
+              participant_ids=payload.participant_ids,
+              meeting_title=first_meeting.title,
+              start_time_str=start_str,
+          )
+      
+      return result   # dict {'created': [...], 'skipped': [...]}
+  ```
+
+  **Giữ nguyên:** Tất cả endpoint khác (`/suggest-time`, `/`, `/history`, `/{meeting_id}/cancel`, `/{meeting_id}`).
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\app\routers\meetings.py`
+
+- [ ] 6. Cập nhật `app/routers/rooms.py` — gộp 2 endpoint `/available`.
+
+  **Vấn đề:** Có 2 endpoint:
+  - `GET /available` (line ~25) — không có `min_capacity`
+  - `GET /available/` (line ~120) — có `min_capacity`, dùng `room_service.get_available_rooms()`
+
+  **Quyết định:** Gộp thành 1 endpoint duy nhất `GET /available`, dùng logic từ `room_service.get_available_rooms()` (đầy đủ hơn).
+
+  Xóa endpoint `GET /available` cũ (không có min_capacity) và **đổi tên** endpoint `GET /available/` (trailing slash) thành `GET /available`:
+  ```python
+  @router.get("/available", response_model=List[RoomResponse], summary="Tìm phòng trống")
+  def read_available_rooms(
+      start_time: datetime = Query(...),
+      end_time: datetime = Query(...),
+      min_capacity: Optional[int] = Query(0),
+      db: Session = Depends(get_db),
+  ):
+      if start_time >= end_time:
+          raise HTTPException(status_code=400, detail="Thời gian bắt đầu phải nhỏ hơn thời gian kết thúc!")
+      return room_service.get_available_rooms(db=db, start_time=start_time, end_time=end_time, min_capacity=min_capacity)
+  ```
+
+  **Giữ nguyên:** Tất cả endpoint khác (`GET /`, `POST /`, `PUT /{room_id}`, `DELETE /{room_id}`).
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\app\routers\rooms.py`
+
+  **Verify:** `python -c "from app.routers.meetings import router; from app.routers.rooms import router as rr; print('Routers OK')"` không raise ImportError.
+
+---
+
+## STEP 4 — Frontend JS Fix
+
+- [ ] 7. Sửa `frontend/js/create-meeting.js` — 7 fix.
+
+  **Fix 1 — Thêm `meeting_type` và `meeting_link` vào payload** (trong `handleCreateMeetingSubmit`, khu vực build `payload` object, hiện tại từ line ~764):
+
+  Sau dòng `room_id: ...`, thêm:
+  ```js
+  meeting_type: cmState.mode,  // 'online' hoặc 'offline'
+  meeting_link: cmState.mode === 'online' ? (cmEl('cmMeetingLink')?.value.trim() || null) : null,
+  ```
+
+  **Fix 2 — Xóa early return cho online meeting** (lines ~779–783):
+  Xóa block:
+  ```js
+  if (cmState.mode === 'online') {
+      payload.equipments = [];
+      rememberAttendees(realParticipantIds);
+      showCreateMeetingSuccess();
+      return;
+  }
+  ```
+  → Online meeting phải gọi API thật như offline. Giữ `payload.equipments = []` nếu mode === 'online' bằng cách thay vào logic build equipments:
+  ```js
+  equipments: cmState.mode === 'online' ? [] : Object.entries(cmState.borrowQty)
+      .filter(([, qty]) => qty > 0)
+      .map(([equipment_id, quantity]) => ({ equipment_id: parseInt(equipment_id, 10), quantity })),
+  ```
+
+  **Fix 3 — Xóa `mockIds` filter** (lines ~771–774), gửi tất cả integer IDs:
+  Xóa:
+  ```js
+  const mockIds = new Set(CM_MOCK_USERS.map(u => u.id));
+  const realParticipantIds = cmState.attendees
+      .map(a => a.id)
+      .filter(id => Number.isInteger(id) && !mockIds.has(id));
+  ```
+  Thay bằng:
+  ```js
+  const realParticipantIds = cmState.attendees
+      .map(a => a.id)
+      .filter(id => Number.isInteger(id));
+  ```
+
+  **Fix 4 — Auto-search phòng khi `setCreateMeetingMode('offline')`:**
+  Trong function `setCreateMeetingMode(mode)`, sau dòng `updateCreateMeetingSummary()`, thêm:
+  ```js
+  if (mode === 'offline') {
+      const { date, start, end } = cmGetTimes();
+      if (date && start && end) {
+          searchMatchingRooms();
+      }
+  }
+  ```
+
+  **Fix 5 — Room search thêm `min_capacity` vào query params** (trong `searchMatchingRooms()`, khu vực build `params`):
+  ```js
+  const params = new URLSearchParams({
+      start_time: `${date}T${start}:00`,
+      end_time: `${date}T${end}:00`,
+      min_capacity: String(cmNeededSeats()),   // ← thêm dòng này
+  });
+  ```
+
+  **Fix 6 — Hiển thị `skipped` occurrences sau tạo thành công** (trong `handleCreateMeetingSubmit`, sau `if (!res.ok)` block, trong try block):
+  Thay:
+  ```js
+  rememberAttendees(realParticipantIds);
+  showCreateMeetingSuccess();
+  ```
+  Bằng:
+  ```js
+  const result = await res.json();
+  rememberAttendees(realParticipantIds);
+  showCreateMeetingSuccess();
+
+  // Hiển thị skipped nếu có
+  if (result.skipped && result.skipped.length > 0) {
+      const skipDates = result.skipped.map(s => s.date || s.reason || JSON.stringify(s)).join(', ');
+      const noticeEl = document.createElement('div');
+      noticeEl.className = 'cm-skipped-notice';
+      noticeEl.textContent = `⚠ ${result.skipped.length} khung giờ bị bỏ qua do xung đột: ${skipDates}`;
+      cmEl('cmDialog')?.appendChild(noticeEl);
+  }
+  ```
+
+  **Fix 7 — Validate min 15 phút duration** (trong `validateCreateMeeting()`):
+  Sau block kiểm tra `end <= start`, thêm:
+  ```js
+  if (date && start && end) {
+      const startMs = new Date(`${date}T${start}:00`).getTime();
+      const endMs = new Date(`${date}T${end}:00`).getTime();
+      if (endMs - startMs < 15 * 60 * 1000) {
+          showFormError('Cuộc họp phải có thời lượng tối thiểu 15 phút.');
+          ok = false;
+      }
+  }
+  ```
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\frontend\js\create-meeting.js`
+
+  **Verify:** Mở browser console, gọi `openCreateMeeting()`, kiểm tra không có JS errors. Test flow: chọn mode online → không early return → gọi API. Test validate duration < 15 phút → hiển thị error.
+
+---
+
+## STEP 5 — CSS Minor Update
+
+- [ ] 8. Thêm style `.cm-skipped-notice` vào `frontend/css/create-meeting.css`.
+
+  Append vào cuối file (sau CSS rule cuối cùng):
+  ```css
+  /* Thông báo các lịch bị bỏ qua (skipped occurrences) */
+  .cm-skipped-notice {
+      background: var(--cm-warning-soft);
+      border: 1px solid #fde68a;
+      border-radius: var(--cm-radius);
+      padding: 12px 16px;
+      font-size: 13px;
+      color: var(--cm-warning);
+      margin-top: 12px;
+  }
+  ```
+
+  CSS sử dụng các biến đã khai báo trong `:root` (`--cm-warning-soft: #fffbeb`, `--cm-warning: #b45309`, `--cm-radius: 10px`) — không cần thêm biến mới.
+
+  **Files:** `c:\Users\ADMIN\Desktop\Meeting\frontend\css\create-meeting.css`
+
+  **Verify:** Mở file HTML của create-meeting trong browser, tạo element `<div class="cm-skipped-notice">Test</div>` qua DevTools console, kiểm tra style áp dụng đúng (nền vàng nhạt, chữ vàng đậm, border vàng).
+
+---
+
+## Ghi chú thứ tự dependency
+
+- STEP 1 phải hoàn thành trước STEP 2 (model phải có field mới trước khi service dùng chúng).
+- STEP 2 phải hoàn thành trước STEP 3 (schema `MeetingCreateResponse` phải tồn tại trước khi router import).
+- STEP 3 và STEP 4 có thể làm song song (backend router độc lập với frontend JS).
+- STEP 5 độc lập hoàn toàn, có thể làm bất kỳ lúc nào.
+- Không cần cài thêm dependency: `calendar` là stdlib Python, `python-dateutil` không có trong `requirements.txt` và không cần thiết.
+````
+
+## File: frontend/css/create-meeting.css
+````css
+/* Create Meeting — enterprise form (not a room-search dashboard) */
+
+:root {
+    --cm-primary: #2563eb;
+    --cm-primary-dark: #1d4ed8;
+    --cm-primary-soft: #eff6ff;
+    --cm-success: #15803d;
+    --cm-success-soft: #f0fdf4;
+    --cm-warning: #b45309;
+    --cm-warning-soft: #fffbeb;
+    --cm-error: #b91c1c;
+    --cm-error-soft: #fef2f2;
+    --cm-neutral-950: #0f172a;
+    --cm-neutral-700: #334155;
+    --cm-neutral-500: #64748b;
+    --cm-neutral-400: #94a3b8;
+    --cm-neutral-300: #cbd5e1;
+    --cm-neutral-200: #e2e8f0;
+    --cm-neutral-100: #f1f5f9;
+    --cm-neutral-50: #f8fafc;
+    --cm-white: #ffffff;
+    --cm-radius: 10px;
+    --cm-radius-lg: 16px;
+    --cm-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
+    --cm-focus: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.cm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 240;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(4px);
+}
+
+.cm-overlay.is-open {
+    display: flex;
+}
+
+.cm-dialog {
+    width: min(1120px, 100%);
+    max-height: min(92vh, 860px);
+    display: flex;
+    flex-direction: column;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: var(--cm-radius-lg);
+    box-shadow: var(--cm-shadow);
+    overflow: hidden;
+}
+
+.cm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--cm-neutral-200);
+    flex-shrink: 0;
+}
+
+.cm-kicker {
+    margin: 0 0 2px;
+    color: var(--cm-primary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.cm-header h1 {
+    margin: 0;
+    color: var(--cm-neutral-950);
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 700;
+}
+
+.cm-icon-btn {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cm-neutral-500);
+    background: var(--cm-neutral-50);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 999px;
+}
+
+.cm-icon-btn:hover,
+.cm-icon-btn:focus-visible {
+    color: var(--cm-error);
+    background: var(--cm-error-soft);
+    outline: none;
+    box-shadow: var(--cm-focus);
+}
+
+.cm-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.7fr);
+    min-height: 0;
+    flex: 1;
+}
+
+#createMeetingForm.cm-layout {
+    min-height: 0;
+}
+
+.cm-form-pane {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px 22px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.cm-summary-pane {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 18px 20px;
+    background: var(--cm-neutral-50);
+    border-left: 1px solid var(--cm-neutral-200);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.cm-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cm-section-title {
+    margin: 0;
+    color: var(--cm-neutral-950);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.cm-help {
+    margin: 0;
+    color: var(--cm-neutral-500);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.cm-label {
+    color: var(--cm-neutral-700);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.cm-title-input {
+    width: 100%;
+    min-height: 52px;
+    padding: 12px 14px;
+    color: var(--cm-neutral-950);
+    font-size: 17px;
+    font-weight: 650;
+    line-height: 1.35;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-300);
+    border-radius: 12px;
+}
+
+.cm-title-input::placeholder {
+    color: var(--cm-neutral-400);
+    font-weight: 500;
+}
+
+.cm-input,
+.cm-select,
+.cm-textarea {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 12px;
+    color: var(--cm-neutral-950);
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-300);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.cm-textarea {
+    min-height: 72px;
+    resize: vertical;
+    line-height: 1.45;
+}
+
+.cm-title-input:focus,
+.cm-input:focus,
+.cm-select:focus,
+.cm-textarea:focus,
+.cm-search:focus {
+    outline: none;
+    border-color: var(--cm-primary);
+    box-shadow: var(--cm-focus);
+}
+
+.cm-title-input.is-invalid,
+.cm-input.is-invalid,
+.cm-select.is-invalid,
+.cm-textarea.is-invalid {
+    border-color: var(--cm-error);
+    box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.12);
+}
+
+.cm-field-error {
+    display: none;
+    color: var(--cm-error);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.cm-field-error.is-visible {
+    display: block;
+}
+
+.cm-time-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr 1fr;
+    gap: 10px;
+}
+
+.cm-mini-label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--cm-neutral-500);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.cm-seg {
+    display: flex;
+    gap: 6px;
+    padding: 4px;
+    background: var(--cm-neutral-100);
+    border-radius: 10px;
+    width: fit-content;
+}
+
+.cm-seg button {
+    min-height: 34px;
+    padding: 0 12px;
+    color: var(--cm-neutral-700);
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.cm-seg button[aria-pressed="true"] {
+    color: var(--cm-primary-dark);
+    background: var(--cm-white);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.cm-seg button:focus-visible {
+    outline: none;
+    box-shadow: var(--cm-focus);
+}
+
+.cm-recurring-extra {
+    display: none;
+    gap: 10px;
+    padding: 12px;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: var(--cm-radius);
+}
+
+.cm-recurring-extra.is-open {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.cm-attendee-search {
+    position: relative;
+}
+
+.cm-search {
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 12px 8px 38px;
+    border: 1px solid var(--cm-neutral-300);
+    border-radius: 8px;
+    background: var(--cm-white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='M11 11l3 3'/%3E%3C/svg%3E") 12px 50% no-repeat;
+}
+
+.cm-suggest {
+    position: absolute;
+    z-index: 6;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    display: none;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.cm-suggest.is-open {
+    display: block;
+}
+
+.cm-suggest button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+}
+
+.cm-suggest button:hover,
+.cm-suggest button.is-active,
+.cm-suggest button:focus-visible {
+    background: var(--cm-primary-soft);
+    outline: none;
+}
+
+.cm-avatar {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cm-white);
+    background: var(--cm-primary);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.cm-suggest-meta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.cm-suggest-meta strong {
+    font-size: 13px;
+    color: var(--cm-neutral-950);
+}
+
+.cm-suggest-meta span {
+    font-size: 11.5px;
+    color: var(--cm-neutral-500);
+}
+
+.cm-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.cm-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 4px;
+    background: var(--cm-primary-soft);
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    color: var(--cm-primary-dark);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.cm-chip button {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    color: var(--cm-neutral-500);
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.cm-chip button:hover,
+.cm-chip button:focus-visible {
+    color: var(--cm-error);
+    outline: none;
+}
+
+.cm-inline-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.cm-link-btn {
+    padding: 0;
+    color: var(--cm-primary);
+    background: transparent;
+    border: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.cm-link-btn:hover,
+.cm-link-btn:focus-visible {
+    color: var(--cm-primary-dark);
+    outline: none;
+    text-decoration: underline;
+}
+
+.cm-mode {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.cm-mode button {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 12px;
+    color: var(--cm-neutral-700);
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-300);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.cm-mode button[aria-pressed="true"] {
+    color: var(--cm-primary-dark);
+    background: var(--cm-primary-soft);
+    border-color: var(--cm-primary);
+}
+
+.cm-mode button:focus-visible {
+    outline: none;
+    box-shadow: var(--cm-focus);
+}
+
+.cm-online-box,
+.cm-resources {
+    display: none;
+    gap: 10px;
+    padding: 14px;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 12px;
+}
+
+.cm-online-box.is-open,
+.cm-resources.is-open {
+    display: flex;
+    flex-direction: column;
+}
+
+.cm-capacity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--cm-neutral-50);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 10px;
+}
+
+.cm-capacity strong {
+    display: block;
+    font-size: 14px;
+}
+
+.cm-btn {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 650;
+    border: 1px solid transparent;
+}
+
+.cm-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--cm-focus);
+}
+
+.cm-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.cm-btn-primary {
+    color: var(--cm-white);
+    background: var(--cm-primary);
+    border-color: var(--cm-primary);
+}
+
+.cm-btn-primary:hover:not(:disabled) {
+    background: var(--cm-primary-dark);
+}
+
+.cm-btn-secondary {
+    color: var(--cm-neutral-700);
+    background: var(--cm-white);
+    border-color: var(--cm-neutral-300);
+}
+
+.cm-btn-ghost {
+    color: var(--cm-primary);
+    background: var(--cm-primary-soft);
+    border-color: #bfdbfe;
+}
+
+.cm-room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cm-room-card {
+    padding: 12px 14px;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 12px;
+}
+
+.cm-room-card.is-selected {
+    border-color: var(--cm-primary);
+    background: var(--cm-primary-soft);
+}
+
+.cm-room-card.is-busy {
+    opacity: 0.78;
+    background: var(--cm-neutral-50);
+}
+
+.cm-room-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.cm-room-top h3 {
+    margin: 0;
+    font-size: 14px;
+}
+
+.cm-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.cm-badge::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.cm-badge-ok {
+    color: var(--cm-success);
+    background: var(--cm-success-soft);
+}
+
+.cm-badge-busy {
+    color: var(--cm-error);
+    background: var(--cm-error-soft);
+}
+
+.cm-room-meta,
+.cm-room-amenities {
+    margin: 6px 0 0;
+    color: var(--cm-neutral-500);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.cm-room-actions {
+    margin-top: 10px;
+}
+
+.cm-fixed-eq,
+.cm-borrow-eq {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cm-fixed-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--cm-success);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.cm-eq-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 10px;
+}
+
+.cm-eq-row.is-empty {
+    background: var(--cm-error-soft);
+}
+
+.cm-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.cm-stepper button {
+    width: 28px;
+    height: 28px;
+    color: var(--cm-neutral-700);
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-300);
+    border-radius: 6px;
+    font-weight: 700;
+}
+
+.cm-stepper button:focus-visible {
+    outline: none;
+    box-shadow: var(--cm-focus);
+}
+
+.cm-stepper span {
+    min-width: 22px;
+    text-align: center;
+    font-weight: 700;
+}
+
+.cm-alert {
+    display: none;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    line-height: 18px;
+}
+
+.cm-alert.is-open {
+    display: flex;
+    flex-direction: column;
+}
+
+.cm-alert-warn {
+    color: #92400e;
+    background: var(--cm-warning-soft);
+    border: 1px solid #fde68a;
+}
+
+.cm-alert-error {
+    color: var(--cm-error);
+    background: var(--cm-error-soft);
+    border: 1px solid #fecaca;
+}
+
+.cm-alert-ok {
+    color: var(--cm-success);
+    background: var(--cm-success-soft);
+    border: 1px solid #bbf7d0;
+}
+
+.cm-summary-card {
+    padding: 12px;
+    background: var(--cm-white);
+    border: 1px solid var(--cm-neutral-200);
+    border-radius: 12px;
+}
+
+.cm-summary-card h2 {
+    margin: 0 0 10px;
+    font-size: 14px;
+}
+
+.cm-summary-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+    color: var(--cm-neutral-700);
+}
+
+.cm-summary-list li {
+    display: flex;
+    gap: 8px;
+    line-height: 1.4;
+}
+
+.cm-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    font-weight: 650;
+}
+
+.cm-status.is-ok {
+    color: var(--cm-success);
+    background: var(--cm-success-soft);
+}
+
+.cm-status.is-warn {
+    color: var(--cm-warning);
+    background: var(--cm-warning-soft);
+}
+
+.cm-summary-actions {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cm-empty,
+.cm-loading {
+    padding: 16px 8px;
+    color: var(--cm-neutral-500);
+    font-size: 13px;
+    text-align: center;
+}
+
+.cm-skeleton {
+    height: 72px;
+    border-radius: 12px;
+    background: linear-gradient(90deg, #f1f5f9, #e2e8f0, #f1f5f9);
+    background-size: 200% 100%;
+    animation: cmPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes cmPulse {
+    0% { background-position: 0 0; }
+    100% { background-position: -200% 0; }
+}
+
+.cm-success {
+    display: none;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+}
+
+.cm-dialog.is-success .cm-layout {
+    display: none;
+}
+
+.cm-dialog.is-success .cm-success {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cm-success-icon {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cm-success);
+    background: var(--cm-success-soft);
+    border-radius: 14px;
+    font-size: 24px;
+}
+
+.cm-top-create {
+    min-height: 36px;
+    padding: 0 14px;
+    color: var(--cm-white);
+    background: var(--cm-primary);
+    border: 0;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 650;
+}
+
+.cm-top-create:hover {
+    background: var(--cm-primary-dark);
+}
+
+@media (max-width: 860px) {
+    .cm-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .cm-summary-pane {
+        border-left: 0;
+        border-top: 1px solid var(--cm-neutral-200);
+    }
+
+    .cm-time-grid,
+    .cm-recurring-extra.is-open,
+    .cm-mode {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cm-skeleton {
+        animation: none;
+    }
+}
+````
+
+## File: frontend/js/create-meeting.js
+````javascript
+/* Create Meeting flow — meeting-first, resources second */
+
+const CM_WEEKDAYS = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+const CM_PREVIEW = new URLSearchParams(location.search).get('preview') === 'meeting';
+
+const cmState = {
+    mode: 'offline',
+    attendees: [],
+    selectedRoom: null,
+    roomsResult: [],
+    searching: false,
+    borrowQty: {},
+    equipment: [],
+    users: [],
+    suggestIndex: -1,
+    submitting: false,
+    apiError: '',
+    suggestedRooms: [],
+};
+
+const CM_MOCK_USERS = [
+    { id: 101, full_name: 'Nguyễn Văn A', email: 'a.nguyen@congty.com', title: 'Product Owner' },
+    { id: 102, full_name: 'Trần Văn B', email: 'b.tran@congty.com', title: 'Tech Lead' },
+    { id: 103, full_name: 'Lê Thị C', email: 'c.le@congty.com', title: 'Designer' },
+    { id: 104, full_name: 'Phạm Minh D', email: 'd.pham@congty.com', title: 'QA' },
+    { id: 105, full_name: 'Hoàng E', email: 'e.hoang@congty.com', title: 'Backend' },
+    { id: 106, full_name: 'Đỗ F', email: 'f.do@congty.com', title: 'Frontend' },
+    { id: 107, full_name: 'Vũ G', email: 'g.vu@congty.com', title: 'Scrum Master' },
+    { id: 108, full_name: 'Bùi H', email: 'h.bui@congty.com', title: 'BA' },
+];
+
+const CM_MOCK_EQUIPMENT = [
+    { id: 1, name: 'Laptop', available_qty: 5, total_qty: 10, is_active: true },
+    { id: 2, name: 'Micro không dây', available_qty: 2, total_qty: 4, is_active: true },
+    { id: 3, name: 'Webcam', available_qty: 0, total_qty: 3, is_active: true },
+];
+
+function cmEl(id) {
+    return document.getElementById(id);
+}
+
+function cmInitials(name) {
+    const parts = String(name || '?').trim().split(/\s+/);
+    return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+function cmParseAmenities(room) {
+    let list = room?.amenities || [];
+    if (typeof list === 'string') {
+        try { list = JSON.parse(list); }
+        catch (e) { list = list.split(',').map(s => s.trim()).filter(Boolean); }
+    }
+    return Array.isArray(list) ? list : [];
+}
+
+function cmCapacityNumber(room) {
+    const n = parseInt(room?.capacity, 10);
+    return Number.isFinite(n) ? n : 8;
+}
+
+function cmAttendeeCount() {
+    return Math.max(cmState.attendees.length, 1);
+}
+
+function cmNeededSeats() {
+    return cmAttendeeCount();
+}
+
+function cmGetTimes() {
+    const date = cmEl('cmDate')?.value;
+    const start = cmEl('cmStart')?.value;
+    const end = cmEl('cmEnd')?.value;
+    return { date, start, end };
+}
+
+function cmFormatViDate(iso) {
+    if (!iso) return 'Chưa chọn ngày';
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function cmRecurrenceLabel() {
+    const type = cmEl('cmRecurrence')?.value || 'none';
+    if (type === 'none') return 'Không lặp';
+    const extra = cmEl('cmRecurrenceNote')?.textContent || '';
+    return extra || (type === 'weekly' ? 'Hàng tuần' : 'Hàng tháng');
+}
+
+function frequentIds() {
+    try {
+        return JSON.parse(localStorage.getItem('cm_frequent_ids') || '[]');
+    } catch (e) {
+        return [];
+    }
+}
+
+function rememberAttendees(ids) {
+    const prev = frequentIds();
+    const next = [...ids, ...prev.filter(id => !ids.includes(id))].slice(0, 20);
+    localStorage.setItem('cm_frequent_ids', JSON.stringify(next));
+}
+
+function rankUsers(users, query) {
+    const q = query.trim().toLowerCase();
+    const freq = new Set(frequentIds());
+    return users
+        .filter(u => {
+            if (!q) return true;
+            const blob = `${u.full_name || ''} ${u.email || ''} ${u.title || ''}`.toLowerCase();
+            return blob.includes(q);
+        })
+        .sort((a, b) => {
+            const aRel = q && String(a.full_name || '').toLowerCase().startsWith(q) ? 0 : 1;
+            const bRel = q && String(b.full_name || '').toLowerCase().startsWith(q) ? 0 : 1;
+            if (aRel !== bRel) return aRel - bRel;
+            const aF = freq.has(a.id) ? 0 : 1;
+            const bF = freq.has(b.id) ? 0 : 1;
+            return aF - bF;
+        })
+        .slice(0, 8);
+}
+
+function openCreateMeeting(options = {}) {
+    const overlay = cmEl('createMeetingModal');
+    if (!overlay) return;
+
+    resetCreateMeeting();
+    cmEl('cmDialog')?.classList.remove('is-success');
+    overlay.classList.add('is-open');
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    const title = cmEl('cmTitle');
+    if (title) setTimeout(() => title.focus(), 30);
+
+    loadCreateMeetingData().then(() => {
+        if (options.roomId) {
+            const room = (typeof allRooms !== 'undefined' ? allRooms : []).find(r => r.id === options.roomId);
+            if (room) selectCreateMeetingRoom(room, { silent: true });
+        }
+        updateCreateMeetingSummary();
+    });
+}
+
+function closeCreateMeeting() {
+    const overlay = cmEl('createMeetingModal');
+    if (!overlay) return;
+    overlay.classList.remove('is-open');
+    overlay.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    const dialog = cmEl('cmDialog');
+    if (dialog) dialog.classList.remove('is-success');
+}
+
+function resetCreateMeeting() {
+    cmState.mode = 'offline';
+    cmState.attendees = [];
+    cmState.selectedRoom = null;
+    cmState.roomsResult = [];
+    cmState.searching = false;
+    cmState.borrowQty = {};
+    cmState.suggestIndex = -1;
+    cmState.submitting = false;
+    cmState.apiError = '';
+    cmState.suggestedRooms = [];
+
+    const formIds = ['cmTitle', 'cmDescription', 'cmMeetingLink', 'cmAttendeeSearch'];
+    formIds.forEach(id => {
+        const el = cmEl(id);
+        if (el) {
+            el.value = '';
+            el.classList.remove('is-invalid');
+        }
+    });
+    setCreateMeetingMode('offline');
+    setRecurrence('none');
+    setDefaultCreateMeetingTimes();
+    renderAttendeeChips();
+    renderRoomResults();
+    renderEquipment();
+    hideCmAlerts();
+    updateCreateMeetingSummary();
+}
+
+function setDefaultCreateMeetingTimes() {
+    const now = new Date();
+    let startHour = now.getHours();
+    let startMin = now.getMinutes() < 30 ? '30' : '00';
+    if (now.getMinutes() >= 30) startHour += 1;
+    if (startHour < 7) startHour = 9;
+    if (startHour > 20) startHour = 9;
+    const endHour = Math.min(startHour + 1, 21);
+    const dateVal = typeof formatDateInput === 'function' ? formatDateInput(now) : now.toISOString().slice(0, 10);
+    const startVal = `${String(startHour).padStart(2, '0')}:${startMin}`;
+    const endVal = `${String(endHour).padStart(2, '0')}:${startMin}`;
+
+    const dateEl = cmEl('cmDate');
+    const startEl = cmEl('cmStart');
+    const endEl = cmEl('cmEnd');
+    if (dateEl) dateEl.value = dateVal;
+    if (typeof buildViTimeOptions === 'function') {
+        buildViTimeOptions(startEl, startVal);
+        buildViTimeOptions(endEl, endVal);
+    } else {
+        if (startEl) startEl.value = startVal;
+        if (endEl) endEl.value = endVal;
+    }
+}
+
+async function loadCreateMeetingData() {
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : '';
+    try {
+        if (typeof _allUsers !== 'undefined' && _allUsers.length) {
+            cmState.users = _allUsers;
+        } else if (token) {
+            const res = await fetch(`${API_BASE}/users/`, { headers: { Authorization: `Bearer ${token}` } });
+            if (res.ok) cmState.users = await res.json();
+        }
+    } catch (e) {
+        console.warn('Không tải được người dùng', e);
+    }
+    if (!cmState.users.length) cmState.users = CM_MOCK_USERS;
+
+    try {
+        const { date, start, end } = cmGetTimes();
+        const params = new URLSearchParams();
+        if (date && start && end) {
+            params.set('start_time', `${date}T${start}:00`);
+            params.set('end_time', `${date}T${end}:00`);
+        }
+        if (token) {
+            const res = await fetch(`${API_BASE}/equipments/availability?${params}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) cmState.equipment = (await res.json()).filter(eq => eq.is_active !== false);
+        }
+    } catch (e) {
+        console.warn('Không tải được thiết bị', e);
+    }
+    if (!cmState.equipment.length) cmState.equipment = CM_MOCK_EQUIPMENT;
+    renderEquipment();
+    updateCapacityHint();
+}
+
+function setCreateMeetingMode(mode) {
+    cmState.mode = mode;
+    const onlineBtn = cmEl('cmModeOnline');
+    const offlineBtn = cmEl('cmModeOffline');
+    if (onlineBtn) onlineBtn.setAttribute('aria-pressed', String(mode === 'online'));
+    if (offlineBtn) offlineBtn.setAttribute('aria-pressed', String(mode === 'offline'));
+    cmEl('cmOnlineBox')?.classList.toggle('is-open', mode === 'online');
+    cmEl('cmResources')?.classList.toggle('is-open', mode === 'offline');
+    updateCreateMeetingSummary();
+}
+
+function setRecurrence(type) {
+    const select = cmEl('cmRecurrence');
+    if (select && type) select.value = type;
+    const value = select?.value || 'none';
+    const extra = cmEl('cmRecurringExtra');
+    extra?.classList.toggle('is-open', value !== 'none');
+    cmEl('cmRecNone')?.setAttribute('aria-pressed', String(value === 'none'));
+    cmEl('cmRecWeekly')?.setAttribute('aria-pressed', String(value === 'weekly'));
+    cmEl('cmRecMonthly')?.setAttribute('aria-pressed', String(value === 'monthly'));
+    updateRecurrenceNote();
+    updateCreateMeetingSummary();
+}
+
+function updateRecurrenceNote() {
+    const type = cmEl('cmRecurrence')?.value || 'none';
+    const note = cmEl('cmRecurrenceNote');
+    const until = cmEl('cmRecurrenceUntil')?.value;
+    const { date } = cmGetTimes();
+    if (!note) return;
+    if (type === 'none') {
+        note.textContent = '';
+        return;
+    }
+    const dt = date ? new Date(`${date}T00:00:00`) : new Date();
+    const weekday = CM_WEEKDAYS[dt.getDay()];
+    const day = dt.getDate();
+    const untilText = until ? `, kết thúc ${cmFormatViDate(until)}` : '';
+    note.textContent = type === 'weekly'
+        ? `Lặp vào ${weekday} hàng tuần${untilText}`
+        : `Lặp hàng tháng vào ngày ${day}${untilText}`;
+}
+
+function renderAttendeeChips() {
+    const wrap = cmEl('cmAttendeeChips');
+    const count = cmEl('cmAttendeeCount');
+    if (count) count.textContent = `${cmState.attendees.length} người tham dự`;
+    if (!wrap) return;
+    if (!cmState.attendees.length) {
+        wrap.innerHTML = '<p class="cm-help">Chưa có người tham dự. Bạn vẫn có thể tạo cuộc họp với tư cách người tổ chức.</p>';
+        updateCapacityHint();
+        updateCreateMeetingSummary();
+        return;
+    }
+    wrap.innerHTML = cmState.attendees.map(u => `
+        <span class="cm-chip">
+            <span class="cm-avatar" aria-hidden="true">${escapeHtml(cmInitials(u.full_name || u.email))}</span>
+            ${escapeHtml(u.full_name || u.email)}
+            <button type="button" aria-label="Xóa ${escapeHtml(u.full_name || u.email)}" onclick="removeCreateMeetingAttendee(${u.id})">×</button>
+        </span>
+    `).join('');
+    updateCapacityHint();
+    updateCreateMeetingSummary();
+}
+
+function addCreateMeetingAttendee(user) {
+    if (cmState.attendees.some(a => a.id === user.id || (user.email && a.email === user.email))) return;
+    cmState.attendees.push(user);
+    renderAttendeeChips();
+}
+
+function removeCreateMeetingAttendee(id) {
+    cmState.attendees = cmState.attendees.filter(a => a.id !== id);
+    renderAttendeeChips();
+}
+
+function addAllTeamMembers() {
+    const domain = (localStorage.getItem('user_email') || cmState.users[0]?.email || '').split('@')[1];
+    cmState.users
+        .filter(u => !domain || String(u.email || '').endsWith(`@${domain}`))
+        .forEach(addCreateMeetingAttendee);
+    closeAttendeeSuggest();
+}
+
+function onAttendeeSearchInput() {
+    const input = cmEl('cmAttendeeSearch');
+    const list = cmEl('cmAttendeeSuggest');
+    if (!input || !list) return;
+    const query = input.value;
+    const selected = new Set(cmState.attendees.map(a => a.id));
+    const matches = rankUsers(cmState.users.filter(u => !selected.has(u.id)), query);
+    if (!query.trim() || !matches.length) {
+        closeAttendeeSuggest();
+        return;
+    }
+    cmState.suggestIndex = -1;
+    list.innerHTML = matches.map((u, i) => `
+        <li>
+            <button type="button" data-index="${i}" onclick="pickCreateMeetingAttendee(${u.id})">
+                <span class="cm-avatar">${escapeHtml(cmInitials(u.full_name || u.email))}</span>
+                <span class="cm-suggest-meta">
+                    <strong>${escapeHtml(u.full_name || 'Người dùng')}</strong>
+                    <span>${escapeHtml(u.email || '')}${u.title ? ' · ' + escapeHtml(u.title) : ''}</span>
+                </span>
+            </button>
+        </li>
+    `).join('');
+    list.classList.add('is-open');
+    list.dataset.ids = matches.map(u => u.id).join(',');
+}
+
+function pickCreateMeetingAttendee(id) {
+    const user = cmState.users.find(u => u.id === id);
+    if (user) addCreateMeetingAttendee(user);
+    const input = cmEl('cmAttendeeSearch');
+    if (input) input.value = '';
+    closeAttendeeSuggest();
+}
+
+function closeAttendeeSuggest() {
+    cmEl('cmAttendeeSuggest')?.classList.remove('is-open');
+    cmState.suggestIndex = -1;
+}
+
+function handleAttendeeKeydown(event) {
+    const list = cmEl('cmAttendeeSuggest');
+    if (!list?.classList.contains('is-open')) return;
+    const buttons = [...list.querySelectorAll('button')];
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        cmState.suggestIndex = Math.min(cmState.suggestIndex + 1, buttons.length - 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        cmState.suggestIndex = Math.max(cmState.suggestIndex - 1, 0);
+    } else if (event.key === 'Enter' && cmState.suggestIndex >= 0) {
+        event.preventDefault();
+        buttons[cmState.suggestIndex]?.click();
+        return;
+    } else if (event.key === 'Escape') {
+        closeAttendeeSuggest();
+        return;
+    }
+    buttons.forEach((btn, i) => btn.classList.toggle('is-active', i === cmState.suggestIndex));
+}
+
+function updateCapacityHint() {
+    const needed = cmNeededSeats();
+    const label = cmEl('cmCapacityValue');
+    if (label) label.textContent = `${needed} người`;
+    const min = cmEl('cmCapacityMin');
+    if (min) min.textContent = `Phòng tối thiểu: ${needed} chỗ`;
+}
+
+function hideCmAlerts() {
+    ['cmRoomConflict', 'cmEquipConflict', 'cmFormError', 'cmApiError'].forEach(id => {
+        cmEl(id)?.classList.remove('is-open');
+    });
+}
+
+async function searchMatchingRooms() {
+    const results = cmEl('cmRoomResults');
+    const { date, start, end } = cmGetTimes();
+    if (!date || !start || !end) {
+        showFormError('Chọn ngày và giờ trước khi tìm phòng.');
+        return;
+    }
+    cmState.searching = true;
+    if (results) {
+        results.innerHTML = '<div class="cm-skeleton"></div><div class="cm-skeleton"></div>';
+    }
+    hideCmAlerts();
+
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : '';
+    const roomsSource = (typeof allRooms !== 'undefined' && allRooms.length) ? allRooms : [];
+    let availableIds = new Set();
+    try {
+        const params = new URLSearchParams({
+            start_time: `${date}T${start}:00`,
+            end_time: `${date}T${end}:00`,
+        });
+        const res = await fetch(`${API_BASE}/rooms/available?${params}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (res.ok) {
+            const available = await res.json();
+            availableIds = new Set(available.map(r => r.id));
+        }
+    } catch (e) {
+        console.warn('Không kiểm tra được phòng trống', e);
+        roomsSource.forEach(r => {
+            if (r.is_available !== false && r.is_active !== false) availableIds.add(r.id);
+        });
+    }
+
+    const needed = cmNeededSeats();
+    const mapped = roomsSource
+        .filter(r => r.is_active !== false)
+        .map(room => {
+            const capacity = cmCapacityNumber(room);
+            const available = availableIds.has(room.id) && room.is_available !== false;
+            const fit = capacity >= needed;
+            return { room, capacity, available, fit, score: available && fit ? capacity - needed : 999 };
+        })
+        .sort((a, b) => {
+            if (a.available !== b.available) return a.available ? -1 : 1;
+            if (a.fit !== b.fit) return a.fit ? -1 : 1;
+            return a.score - b.score;
+        });
+
+    if (!roomsSource.length) {
+        cmState.roomsResult = [
+            { room: { id: 'a301', name: 'Phòng A301', location: 'Tòa A • Tầng 3', capacity: 12, amenities: ['Màn hình', 'Micro', 'Máy chiếu'] }, available: true, fit: true, capacity: 12 },
+            { room: { id: 'a302', name: 'Phòng A302', location: 'Tòa A • Tầng 3', capacity: 8, amenities: ['Màn hình'] }, available: false, fit: true, capacity: 8 },
+            { room: { id: 'b201', name: 'Phòng B201', location: 'Tòa B • Tầng 2', capacity: 16, amenities: ['Máy chiếu', 'Micro'] }, available: true, fit: true, capacity: 16 },
+        ];
+    } else {
+        cmState.roomsResult = mapped;
+    }
+
+    cmState.searching = false;
+    renderRoomResults();
+    updateCreateMeetingSummary();
+}
+
+function renderRoomResults() {
+    const results = cmEl('cmRoomResults');
+    if (!results) return;
+    if (cmState.searching) return;
+    if (!cmState.roomsResult.length) {
+        results.innerHTML = '<div class="cm-empty">Chưa tìm phòng. Hệ thống sẽ gợi ý phòng đủ chỗ theo số người tham dự.</div>';
+        return;
+    }
+
+    const availableFit = cmState.roomsResult.filter(item => item.available && item.fit);
+    if (!availableFit.length) {
+        results.innerHTML = `
+            <div class="cm-empty">Không tìm thấy phòng phù hợp</div>
+            <button type="button" class="cm-btn cm-btn-secondary" onclick="searchMatchingRooms()">Xem phòng khác</button>
+        `;
+        return;
+    }
+
+    results.innerHTML = cmState.roomsResult.map(item => {
+        const room = item.room;
+        const selected = cmState.selectedRoom && String(cmState.selectedRoom.id) === String(room.id);
+        const amenities = cmParseAmenities(room);
+        const status = item.available
+            ? '<span class="cm-badge cm-badge-ok">Trống</span>'
+            : '<span class="cm-badge cm-badge-busy">Đang được đặt</span>';
+        const action = item.available
+            ? `<button type="button" class="cm-btn cm-btn-ghost" onclick="selectCreateMeetingRoomById('${room.id}')">Chọn phòng</button>`
+            : `<span class="cm-help">Không cho chọn · ${escapeHtml(cmGetTimes().start || '')} – ${escapeHtml(cmGetTimes().end || '')} đã có cuộc họp.</span>`;
+        return `
+            <article class="cm-room-card ${selected ? 'is-selected' : ''} ${item.available ? '' : 'is-busy'}">
+                <div class="cm-room-top">
+                    <h3>${escapeHtml(room.name)}</h3>
+                    ${status}
+                </div>
+                <p class="cm-room-meta">${escapeHtml(room.location || 'Chưa có vị trí')} · ${item.capacity} chỗ · Phù hợp ${item.capacity}/${cmNeededSeats()}</p>
+                <p class="cm-room-amenities">${amenities.length ? amenities.map(a => `${typeof getAmenityIcon === 'function' ? getAmenityIcon(a) : ''} ${escapeHtml(a)}`).join(' · ') : 'Chưa có tiện ích / thiết bị cố định'}</p>
+                <div class="cm-room-actions">${action}</div>
+            </article>
+        `;
+    }).join('');
+}
+
+function selectCreateMeetingRoomById(id) {
+    const found = cmState.roomsResult.find(item => String(item.room.id) === String(id));
+    if (found) selectCreateMeetingRoom(found.room);
+}
+
+function selectCreateMeetingRoom(room, { silent } = {}) {
+    if (!room) return;
+    cmState.selectedRoom = room;
+    if (!cmState.roomsResult.some(item => String(item.room.id) === String(room.id))) {
+        cmState.roomsResult.unshift({
+            room,
+            available: true,
+            fit: cmCapacityNumber(room) >= cmNeededSeats(),
+            capacity: cmCapacityNumber(room),
+        });
+    }
+    renderRoomResults();
+    renderFixedEquipment(room);
+    if (!silent) updateCreateMeetingSummary();
+}
+
+function renderFixedEquipment(room) {
+    const box = cmEl('cmFixedEquipment');
+    if (!box) return;
+    const amenities = cmParseAmenities(room);
+    if (!amenities.length) {
+        box.innerHTML = '<p class="cm-help">Phòng này chưa cấu hình thiết bị cố định.</p>';
+        return;
+    }
+    box.innerHTML = amenities.map(item => `<div class="cm-fixed-item">✓ ${escapeHtml(item)}</div>`).join('');
+}
+
+function renderEquipment() {
+    const box = cmEl('cmBorrowEquipment');
+    if (!box) return;
+    if (!cmState.equipment.length) {
+        box.innerHTML = '<p class="cm-help">Không có thiết bị để mượn thêm.</p>';
+        return;
+    }
+    box.innerHTML = cmState.equipment.map(eq => {
+        const qty = cmState.borrowQty[eq.id] || 0;
+        const available = eq.available_qty ?? eq.total_qty ?? 0;
+        const empty = available <= 0;
+        return `
+            <div class="cm-eq-row ${empty ? 'is-empty' : ''}">
+                <div>
+                    <strong>${escapeHtml(eq.name)}</strong>
+                    <div class="cm-help">Available: ${available} / ${eq.total_qty ?? available}</div>
+                </div>
+                ${empty
+                    ? '<span class="cm-badge cm-badge-busy">Hết thiết bị</span>'
+                    : `<div class="cm-stepper">
+                        <button type="button" aria-label="Giảm ${escapeHtml(eq.name)}" onclick="changeBorrowQty(${eq.id}, -1)">−</button>
+                        <span>${qty}</span>
+                        <button type="button" aria-label="Tăng ${escapeHtml(eq.name)}" onclick="changeBorrowQty(${eq.id}, 1)">+</button>
+                       </div>`}
+            </div>
+        `;
+    }).join('');
+    updateEquipmentConflict();
+}
+
+function changeBorrowQty(id, delta) {
+    const eq = cmState.equipment.find(item => item.id === id);
+    if (!eq) return;
+    const available = eq.available_qty ?? eq.total_qty ?? 0;
+    const next = Math.max(0, (cmState.borrowQty[id] || 0) + delta);
+    cmState.borrowQty[id] = Math.min(next, available);
+    renderEquipment();
+    updateCreateMeetingSummary();
+}
+
+function reduceEquipmentToAvailable(id) {
+    const eq = cmState.equipment.find(item => item.id === id);
+    if (!eq) return;
+    cmState.borrowQty[id] = eq.available_qty ?? 0;
+    renderEquipment();
+    updateCreateMeetingSummary();
+}
+
+function clearBorrowQty(id) {
+    cmState.borrowQty[id] = 0;
+    renderEquipment();
+    updateCreateMeetingSummary();
+}
+
+function updateEquipmentConflict() {
+    const alert = cmEl('cmEquipConflict');
+    if (!alert) return;
+    const issues = cmState.equipment.filter(eq => (cmState.borrowQty[eq.id] || 0) > (eq.available_qty ?? eq.total_qty ?? 0));
+    if (!issues.length) {
+        alert.classList.remove('is-open');
+        alert.innerHTML = '';
+        return;
+    }
+    const eq = issues[0];
+    alert.classList.add('is-open');
+    alert.innerHTML = `
+        <strong>⚠ ${escapeHtml(eq.name)} không đủ số lượng</strong>
+        <span>Available: ${eq.available_qty} · Yêu cầu: ${cmState.borrowQty[eq.id]}</span>
+        <span>
+            <button type="button" class="cm-link-btn" onclick="reduceEquipmentToAvailable(${eq.id})">Giảm số lượng</button>
+            ·
+            <button type="button" class="cm-link-btn" onclick="clearBorrowQty(${eq.id})">Chọn thiết bị khác</button>
+        </span>
+    `;
+}
+
+function generateMeetingLink() {
+    const input = cmEl('cmMeetingLink');
+    if (!input) return;
+    const slug = Math.random().toString(36).slice(2, 8);
+    input.value = `https://meet.roomsync.vn/${slug}`;
+    updateCreateMeetingSummary();
+}
+
+function collectConflicts() {
+    const conflicts = [];
+    if (cmState.mode === 'offline' && cmState.selectedRoom) {
+        const match = cmState.roomsResult.find(item => String(item.room.id) === String(cmState.selectedRoom.id));
+        if (match && match.available === false) {
+            conflicts.push(`Phòng ${cmState.selectedRoom.name} không khả dụng trong khung giờ đã chọn.`);
+            cmState.suggestedRooms = cmState.roomsResult.filter(item => item.available).slice(0, 2).map(item => item.room);
+        }
+    }
+    cmState.equipment.forEach(eq => {
+        const qty = cmState.borrowQty[eq.id] || 0;
+        const available = eq.available_qty ?? 0;
+        if (qty > available) conflicts.push(`${eq.name} không đủ số lượng.`);
+    });
+    return conflicts;
+}
+
+function updateCreateMeetingSummary() {
+    const title = cmEl('cmTitle')?.value.trim() || 'Chưa đặt tên cuộc họp';
+    const { date, start, end } = cmGetTimes();
+    const borrowed = cmState.equipment.filter(eq => (cmState.borrowQty[eq.id] || 0) > 0);
+    const conflicts = collectConflicts();
+    const roomConflict = cmEl('cmRoomConflict');
+    if (roomConflict) {
+        if (conflicts.some(c => c.startsWith('Phòng'))) {
+            const suggestions = cmState.suggestedRooms.map(r => escapeHtml(r.name)).join(', ');
+            roomConflict.classList.add('is-open');
+            roomConflict.innerHTML = `
+                <strong>⚠ Phòng ${escapeHtml(cmState.selectedRoom.name)} không khả dụng</strong>
+                <span>${escapeHtml(start || '')} – ${escapeHtml(end || '')} đã có cuộc họp.</span>
+                ${suggestions ? `<span>Đề xuất: ${suggestions}</span>` : ''}
+            `;
+        } else {
+            roomConflict.classList.remove('is-open');
+        }
+    }
+
+    const list = cmEl('cmSummaryList');
+    if (list) {
+        const items = [
+            `📌 ${title}`,
+            `📅 ${cmFormatViDate(date)}`,
+            `🕐 ${start || '--:--'} – ${end || '--:--'}`,
+            `👥 ${cmAttendeeCount()} người`,
+            cmState.mode === 'online' ? '🌐 Online' : `🏢 ${cmState.selectedRoom ? cmState.selectedRoom.name : 'Chưa chọn phòng'}`,
+            cmState.mode === 'online' ? `🔗 ${cmEl('cmMeetingLink')?.value || 'Chưa có link'}` : null,
+            ...borrowed.map(eq => `🎤 ${eq.name} x${cmState.borrowQty[eq.id]}`),
+            `🔁 ${cmRecurrenceLabel()}`,
+        ].filter(Boolean);
+        list.innerHTML = items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    }
+
+    const status = cmEl('cmSummaryStatus');
+    if (status) {
+        status.className = `cm-status ${conflicts.length ? 'is-warn' : 'is-ok'}`;
+        status.textContent = conflicts.length ? '⚠ Có vấn đề cần xử lý' : '✓ Không có xung đột';
+    }
+
+    const submit = cmEl('cmSubmit');
+    if (submit) {
+        submit.disabled = cmState.submitting || Boolean(conflicts.length);
+        submit.textContent = cmState.submitting ? 'Đang tạo...' : 'TẠO CUỘC HỌP';
+    }
+}
+
+function showFormError(message) {
+    const box = cmEl('cmFormError');
+    if (!box) return;
+    box.classList.add('is-open');
+    box.textContent = message;
+}
+
+function validateCreateMeeting() {
+    hideCmAlerts();
+    const title = cmEl('cmTitle');
+    const { date, start, end } = cmGetTimes();
+    let ok = true;
+    title?.classList.remove('is-invalid');
+    if (!title?.value.trim()) {
+        title.classList.add('is-invalid');
+        cmEl('cmTitleError')?.classList.add('is-visible');
+        ok = false;
+    } else {
+        cmEl('cmTitleError')?.classList.remove('is-visible');
+    }
+    if (!date || !start || !end || end <= start) {
+        showFormError('Giờ kết thúc phải sau giờ bắt đầu.');
+        ok = false;
+    }
+    if (cmState.mode === 'offline' && !cmState.selectedRoom) {
+        showFormError('Cuộc họp offline cần một phòng phù hợp.');
+        ok = false;
+    }
+    if (cmState.mode === 'online' && !cmEl('cmMeetingLink')?.value.trim()) {
+        showFormError('Cuộc họp online cần link. Bấm Tạo link nếu chưa có.');
+        ok = false;
+    }
+    if (collectConflicts().length) {
+        showFormError('Hãy xử lý xung đột trước khi tạo cuộc họp.');
+        ok = false;
+    }
+    return ok;
+}
+
+async function handleCreateMeetingSubmit(event) {
+    event.preventDefault();
+    if (!validateCreateMeeting()) return;
+
+    const title = cmEl('cmTitle').value.trim();
+    const { date, start, end } = cmGetTimes();
+    const descriptionParts = [];
+    const desc = cmEl('cmDescription')?.value.trim();
+    if (desc) descriptionParts.push(desc);
+
+    const recurrenceType = cmEl('cmRecurrence')?.value || 'none';
+    const until = cmEl('cmRecurrenceUntil')?.value;
+    let recurrenceEndDate = null;
+    if (recurrenceType !== 'none') {
+        if (until) recurrenceEndDate = `${until}T${end}:00`;
+        else {
+            const d = new Date(`${date}T${end}:00`);
+            d.setMonth(d.getMonth() + (recurrenceType === 'weekly' ? 2 : 1));
+            recurrenceEndDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${end}:00`;
+        }
+    }
+
+    const realParticipantIds = cmState.attendees
+        .map(a => a.id)
+        .filter(id => Number.isInteger(id));
+
+    const payload = {
+        title,
+        description: descriptionParts.join('\n') || null,
+        meeting_type: cmState.mode,
+        online_link: cmState.mode === 'online'
+            ? (cmEl('cmMeetingLink')?.value.trim() || null)
+            : null,
+        room_id: cmState.mode === 'offline'
+            ? (cmState.selectedRoom ? parseInt(cmState.selectedRoom.id, 10) : null)
+            : null,
+        start_time: `${date}T${start}:00`,
+        end_time:   `${date}T${end}:00`,
+        is_recurring: recurrenceType !== 'none',
+        recurrence_type: recurrenceType,
+        recurrence_end_date: recurrenceEndDate,
+        equipments: cmState.mode === 'offline'
+            ? Object.entries(cmState.borrowQty)
+                .filter(([, qty]) => qty > 0)
+                .map(([eid, qty]) => ({
+                    equipment_id: parseInt(eid, 10),
+                    quantity: qty
+                }))
+            : [],
+        participant_ids: realParticipantIds,
+    };
+
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : '';
+    if (!token) {
+        const box = cmEl('cmApiError');
+        if (box) {
+            box.classList.add('is-open');
+            box.textContent = 'Vui lòng đăng nhập để tạo cuộc họp.';
+        }
+        return;
+    }
+
+    cmState.submitting = true;
+    updateCreateMeetingSummary();
+    try {
+        const res = await fetch(`${API_BASE}/meetings/book`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Không thể tạo cuộc họp.');
+        }
+        rememberAttendees(realParticipantIds);
+        showCreateMeetingSuccess();
+        if (typeof fetchRooms === 'function') fetchRooms(localStorage.getItem('role') === 'admin');
+        if (typeof fetchMyBookings === 'function') fetchMyBookings();
+    } catch (error) {
+        const box = cmEl('cmApiError');
+        if (box) {
+            box.classList.add('is-open');
+            box.textContent = `Không tạo được cuộc họp. ${error.message}`;
+        }
+    } finally {
+        cmState.submitting = false;
+        updateCreateMeetingSummary();
+    }
+}
+
+function findFallbackRoomId() {
+    const rooms = typeof allRooms !== 'undefined' ? allRooms : [];
+    const room = rooms.find(r => r.is_active !== false);
+    return room ? room.id : NaN;
+}
+
+function showCreateMeetingSuccess() {
+    cmEl('cmDialog')?.classList.add('is-success');
+}
+
+function showOnlineLocalSuccess() {
+    showCreateMeetingSuccess();
+}
+
+function bindCreateMeetingEvents() {
+    const overlay = cmEl('createMeetingModal');
+    if (!overlay) return;
+
+    ['cmTitle', 'cmDescription', 'cmDate', 'cmStart', 'cmEnd', 'cmMeetingLink', 'cmRecurrenceUntil'].forEach(id => {
+        cmEl(id)?.addEventListener('input', updateCreateMeetingSummary);
+        cmEl(id)?.addEventListener('change', () => {
+            updateRecurrenceNote();
+            updateCreateMeetingSummary();
+        });
+    });
+
+    cmEl('cmRecurrence')?.addEventListener('change', () => setRecurrence());
+    cmEl('cmAttendeeSearch')?.addEventListener('input', onAttendeeSearchInput);
+    cmEl('cmAttendeeSearch')?.addEventListener('keydown', handleAttendeeKeydown);
+    cmEl('createMeetingForm')?.addEventListener('submit', handleCreateMeetingSubmit);
+
+    document.addEventListener('click', event => {
+        const wrap = document.querySelector('.cm-attendee-search');
+        if (wrap && !wrap.contains(event.target)) closeAttendeeSuggest();
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && overlay.classList.contains('is-open')) closeCreateMeeting();
+    });
+
+    if (CM_PREVIEW) openCreateMeeting();
+}
+
+document.addEventListener('DOMContentLoaded', bindCreateMeetingEvents);
+
+window.openCreateMeeting = openCreateMeeting;
+window.closeCreateMeeting = closeCreateMeeting;
+window.setCreateMeetingMode = setCreateMeetingMode;
+window.setRecurrence = setRecurrence;
+window.removeCreateMeetingAttendee = removeCreateMeetingAttendee;
+window.addAllTeamMembers = addAllTeamMembers;
+window.pickCreateMeetingAttendee = pickCreateMeetingAttendee;
+window.searchMatchingRooms = searchMatchingRooms;
+window.selectCreateMeetingRoomById = selectCreateMeetingRoomById;
+window.changeBorrowQty = changeBorrowQty;
+window.reduceEquipmentToAvailable = reduceEquipmentToAvailable;
+window.clearBorrowQty = clearBorrowQty;
+window.generateMeetingLink = generateMeetingLink;
+window.handleCreateMeetingSubmit = handleCreateMeetingSubmit;
+window.showCreateMeetingSuccess = showCreateMeetingSuccess;
+````
+
+## File: migrations/005_align_meetings_schema.sql
+````sql
+-- ============================================================
+-- Migration 005: Align meetings table với model thực tế
+-- Safe: chỉ modify room_id nullable + update default meeting_type
+-- Không DROP cột nào, không mất dữ liệu
+-- ============================================================
+USE meeting_db;
+
+-- 1. Chuẩn hóa meeting_type: đổi default về lowercase 'offline'
+--    Các row cũ đang có giá trị 'OFFLINE' — cập nhật về lowercase để nhất quán
+UPDATE meetings SET meeting_type = 'offline' WHERE meeting_type = 'OFFLINE';
+UPDATE meetings SET meeting_type = 'online'  WHERE meeting_type = 'ONLINE';
+
+ALTER TABLE meetings
+    MODIFY COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline';
+
+-- 2. Nullable room_id: drop FK cũ, alter column, re-add FK với SET NULL
+ALTER TABLE meetings DROP FOREIGN KEY meetings_ibfk_1;
+ALTER TABLE meetings MODIFY COLUMN room_id INT NULL;
+ALTER TABLE meetings
+    ADD CONSTRAINT fk_meetings_room
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Verify: DESCRIBE meetings;
+````
 
 ## File: alembic/env.py
 ````python
@@ -1883,9 +4113,12 @@ class TestResponseShape:
         assert resp.status_code == 200
         item = resp.json()[0]
         expected = {
-            "id", "title", "description", "room_id", "organizer_id",
-            "start_time", "end_time", "status", "is_recurring", "recurring_type",
-            "equipments",
+            "id", "title", "description",
+            "meeting_type", "online_link",
+            "room_id", "organizer_id",
+            "start_time", "end_time", "status",
+            "is_recurring", "recurring_type",
+            "equipments", "participant_ids",
         }
         assert set(item.keys()) == expected
 ````
@@ -2373,962 +4606,6 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User id={self.id} username={self.username!r} role={self.role!r}>"
-````
-
-## File: frontend/css/booking.css
-````css
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-
-:root {
-  font-family: "Inter", sans-serif;
-  color: #111827;
-  background: #f5f7fb;
-  font-synthesis: none;
-  --blue: #2563eb;
-  --blue-dark: #1d4ed8;
-  --blue-soft: #eff6ff;
-  --gray-950: #111827;
-  --gray-700: #374151;
-  --gray-600: #4b5563;
-  --gray-500: #6b7280;
-  --gray-400: #9ca3af;
-  --gray-300: #d1d5db;
-  --gray-200: #e5e7eb;
-  --gray-100: #f3f4f6;
-  --white: #ffffff;
-  --green: #059669;
-  --amber: #b45309;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-button,
-input,
-textarea {
-  font: inherit;
-}
-
-button {
-  cursor: pointer;
-}
-
-.page-shell {
-  /* Fix cố định phủ kín toàn bộ màn hình */
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  z-index: 9999;
-
-  /* Căn giữa Form đặt phòng */
-  display: none; /* Mặc định ẩn form; khi JS bật sẽ chuyển thành display: flex */
-  align-items: center;
-  justify-content: center;
-
-  /* Nền mờ phía sau giúp nổi bật Modal */
-  background: rgba(15, 23, 42, 0.45); /* Lớp phủ đen trong suốt */
-  backdrop-filter: blur(4px); /* Làm mờ nhẹ nền trang web đằng sau */
-
-  padding: 20px;
-  overflow-y: auto; /* Cho phép cuộn nếu màn hình thiết bị quá nhỏ */
-}
-
-.ambient {
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(2px);
-  opacity: 0.7;
-  pointer-events: none;
-}
-
-.ambient-left {
-  width: 240px;
-  height: 240px;
-  left: -100px;
-  top: 8%;
-  border: 1px solid rgba(37, 99, 235, 0.14);
-}
-
-.ambient-right {
-  width: 330px;
-  height: 330px;
-  right: -180px;
-  bottom: 2%;
-  border: 1px solid rgba(99, 102, 241, 0.13);
-}
-
-.modal-card {
-  width: 540px;
-  max-width: 100%;
-  max-height: min(92vh, 740px);
-  margin: auto;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  z-index: 1;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.06);
-  padding: 0;
-  overflow: hidden;
-}
-
-.modal-header {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--gray-200);
-  background: var(--white);
-}
-
-.eyebrow {
-  margin: 0 0 2px;
-  color: var(--blue);
-  font-size: 11px;
-  line-height: 14px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.modal-title,
-.empty-title {
-  margin: 0;
-  color: var(--gray-950);
-  font-size: 18px;
-  line-height: 24px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.icon-button {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-  padding: 0;
-  color: var(--gray-500);
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  transition: color 160ms ease, background 160ms ease;
-}
-
-.icon-button:hover {
-  color: var(--gray-950);
-  background: var(--gray-100);
-}
-
-.icon,
-.select-chevron {
-  width: 18px;
-  height: 18px;
-  flex: none;
-}
-
-.icon-small {
-  width: 15px;
-  height: 15px;
-  flex: none;
-}
-
-.booking-form {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-  gap: 0;
-}
-
-.booking-form-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 14px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.booking-form-body::-webkit-scrollbar {
-  width: 6px;
-}
-
-.booking-form-body::-webkit-scrollbar-track {
-  background: #f1f5f9;
-}
-
-.booking-form-body::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-
-.booking-form-body::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.field-label,
-.recurring-label {
-  color: var(--gray-700);
-  font-size: 12.5px;
-  line-height: 16px;
-  font-weight: 600;
-}
-
-.text-control,
-.textarea-control,
-.room-select,
-.input-with-icon {
-  width: 100%;
-  box-sizing: border-box;
-  color: var(--gray-950);
-  background: var(--white);
-  border: 1px solid var(--gray-300);
-  border-radius: 7px;
-  outline: none;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.text-control {
-  height: 38px;
-  padding: 0 11px;
-  font-size: 13px;
-}
-
-.textarea-control {
-  min-height: 52px;
-  height: 52px;
-  padding: 7px 11px;
-  line-height: 18px;
-  font-size: 12.5px;
-  resize: vertical;
-}
-
-.text-control::placeholder,
-.textarea-control::placeholder {
-  color: var(--gray-400);
-}
-
-.text-control:focus,
-.textarea-control:focus,
-.room-select:focus,
-.room-select.is-open,
-.input-with-icon:focus-within {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.room-field {
-  position: relative;
-}
-
-.room-select {
-  min-height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.room-select-main {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.room-name {
-  display: block;
-  color: var(--gray-950);
-  font-size: 13.5px;
-  line-height: 18px;
-  font-weight: 600;
-}
-
-.room-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 17px;
-  font-weight: 400;
-}
-
-.meta-divider {
-  width: 3px;
-  height: 3px;
-  margin: 0 2px;
-  background: var(--gray-300);
-  border-radius: 99px;
-}
-
-.status-available {
-  color: var(--green);
-  font-weight: 500;
-}
-
-.status-busy {
-  color: var(--amber);
-  font-weight: 500;
-}
-
-.select-chevron {
-  color: var(--gray-500);
-  transition: transform 160ms ease;
-}
-
-.room-select.is-open .select-chevron {
-  transform: rotate(180deg);
-}
-
-.room-menu {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 7px);
-  left: 0;
-  right: 0;
-  max-height: 280px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
-  border-radius: 10px;
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.13);
-}
-
-.room-option {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 42px;
-  padding: 9px 11px;
-  text-align: left;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-}
-
-.room-option:hover,
-.room-option.selected {
-  background: var(--blue-soft);
-  border-color: var(--blue);
-}
-
-.room-option > .icon-small {
-  color: var(--blue);
-}
-
-.time-fieldset {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.time-fieldset > .field-label {
-  margin-bottom: 8px;
-}
-
-.time-grid {
-  display: grid;
-  grid-template-columns: 1.18fr 1fr 1fr;
-  gap: 10px;
-}
-
-.date-column,
-.time-column {
-  min-width: 0;
-}
-
-.mini-label {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--gray-500);
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 500;
-}
-
-.input-with-icon {
-  height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  color: var(--gray-500);
-}
-
-.input-with-icon .icon {
-  width: 17px;
-  height: 17px;
-}
-
-.input-with-icon input {
-  min-width: 0;
-  width: 100%;
-  padding: 0;
-  color: var(--gray-700);
-  background: transparent;
-  border: 0;
-  outline: 0;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.input-with-icon input::-webkit-calendar-picker-indicator {
-  display: none;
-}
-
-.availability-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 10px;
-  padding: 0;
-  color: var(--blue);
-  background: transparent;
-  border: 0;
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 600;
-}
-
-.availability-button:hover {
-  color: var(--blue-dark);
-}
-
-.availability-button .icon {
-  width: 17px;
-  height: 17px;
-}
-
-.availability-button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.availability-message {
-  margin: 6px 0 0;
-  color: var(--green);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.availability-message.is-error {
-  color: #b91c1c;
-}
-
-.availability-results {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 7px;
-}
-
-.time-suggestion {
-  min-height: 32px;
-  padding: 5px 9px;
-  color: var(--blue-dark);
-  background: var(--blue-soft);
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.time-suggestion:hover,
-.time-suggestion.selected {
-  color: var(--white);
-  background: var(--blue);
-  border-color: var(--blue);
-}
-
-.recurring-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 13px 14px;
-  background: #f9fafb;
-  border: 1px solid var(--gray-200);
-  border-radius: 9px;
-}
-
-.recurring-label {
-  display: block;
-  color: var(--gray-950);
-  cursor: pointer;
-}
-
-.recurring-hint {
-  margin: 2px 0 0;
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 17px;
-}
-
-.recurrence-select {
-  width: min(220px, 52%);
-  height: 40px;
-  flex: none;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-.toggle {
-  width: 40px;
-  height: 24px;
-  position: relative;
-  flex: none;
-  padding: 2px;
-  background: var(--gray-300);
-  border: 0;
-  border-radius: 99px;
-  transition: background 180ms ease;
-}
-
-.toggle-thumb {
-  width: 20px;
-  height: 20px;
-  display: block;
-  background: var(--white);
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
-  transition: transform 180ms ease;
-}
-
-.toggle-on {
-  background: var(--blue);
-}
-
-.toggle-on .toggle-thumb {
-  transform: translateX(16px);
-}
-
-.label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.optional {
-  color: var(--gray-400);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding-top: 20px;
-  border-top: 1px solid var(--gray-100);
-}
-
-.button {
-  min-height: 42px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 0 17px;
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 600;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
-}
-
-.button:active {
-  transform: translateY(1px);
-}
-
-.button-primary {
-  color: var(--white);
-  background: var(--blue);
-  border: 1px solid var(--blue);
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.18);
-}
-
-.button-primary:hover {
-  background: var(--blue-dark);
-  border-color: var(--blue-dark);
-}
-
-.button-secondary {
-  color: var(--gray-700);
-  background: var(--white);
-  border: 1px solid var(--gray-300);
-}
-
-.button-secondary:hover {
-  background: var(--gray-100);
-  border-color: var(--gray-400);
-}
-
-.empty-state {
-  width: 420px;
-  max-width: 100%;
-  padding: 40px;
-  text-align: center;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
-  border-radius: 12px;
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.09);
-}
-
-.empty-icon {
-  width: 48px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 16px;
-  color: var(--blue);
-  background: var(--blue-soft);
-  border-radius: 12px;
-}
-
-.empty-icon .icon {
-  width: 24px;
-  height: 24px;
-}
-
-.empty-copy {
-  margin: 8px 0 22px;
-  color: var(--gray-500);
-  font-size: 14px;
-  line-height: 22px;
-}
-
-@media (max-width: 620px) {
-  .page-shell {
-    align-items: flex-start;
-    padding: 14px;
-  }
-
-  .modal-card {
-    padding: 20px;
-  }
-
-  .time-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .recurring-row {
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  .recurrence-select {
-    width: 48%;
-  }
-
-  .date-column {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 420px) {
-  .modal-card {
-    padding: 18px;
-  }
-
-  .modal-footer {
-    display: grid;
-    grid-template-columns: 1fr 1.45fr;
-  }
-
-  .button {
-    padding: 0 10px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .icon-button,
-  .text-control,
-  .textarea-control,
-  .room-select,
-  .select-chevron,
-  .toggle,
-  .toggle-thumb,
-  .button {
-    transition: none;
-  }
-}
-
-/* ============================================================
-   DATE PICKER WRAPPER – nút chọn ngày kiểu badge đẹp
-   ============================================================ */
-.date-picker-wrapper {
-  position: relative;
-  height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 11px;
-  background: var(--white);
-  border: 1px solid var(--gray-300);
-  border-radius: 7px;
-  cursor: pointer;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-  user-select: none;
-  box-sizing: border-box;
-  width: 100%;
-  color: var(--gray-500);
-}
-
-.date-picker-wrapper:hover {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
-}
-
-.date-display-text {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--gray-700);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ============================================================
-   TIME SELECT WRAPPER – dropdown giờ tiếng Việt
-   ============================================================ */
-.time-select-wrapper {
-  position: relative;
-  height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  background: var(--white);
-  border: 1px solid var(--gray-300);
-  border-radius: 7px;
-  box-sizing: border-box;
-  width: 100%;
-  color: var(--gray-500);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.time-select-wrapper:focus-within {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.vi-time-select {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--gray-700);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  padding: 0;
-}
-
-/* ============================================================
-   EQUIPMENT BORROW SECTION – danh sách thiết bị mượn thêm
-   ============================================================ */
-.equipment-borrow-section {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 10px 12px 12px;
-}
-
-.equipment-section-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  gap: 8px;
-}
-
-.equipment-section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #1e293b;
-}
-
-.equipment-icon {
-  font-size: 15px;
-}
-
-.equipment-badge {
-  display: inline-block;
-  background: #e0f2fe;
-  color: #0369a1;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 7px;
-  border-radius: 999px;
-  letter-spacing: 0.03em;
-}
-
-.equipment-hint {
-  font-size: 11px;
-  color: #64748b;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-.equipment-list-container {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  max-height: 180px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.equipment-list-container::-webkit-scrollbar {
-  width: 5px;
-}
-.equipment-list-container::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
-.equipment-list-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-
-.eq-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 9px 12px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.eq-card:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.08);
-}
-
-.eq-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  flex: 1;
-  min-width: 0;
-}
-
-.eq-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  accent-color: var(--blue);
-  cursor: pointer;
-}
-
-.eq-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.eq-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.eq-stock {
-  font-size: 11px;
-  color: #64748b;
-}
-
-.eq-qty-group {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-
-.eq-qty-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #64748b;
-}
-
-.eq-qty-input {
-  width: 52px;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 600;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 6px;
-  padding: 4px 0;
-  background: #f1f5f9;
-  color: #94a3b8;
-  font-family: inherit;
-  outline: none;
-  transition: border-color 150ms, background 150ms, color 150ms;
-}
-
-.eq-qty-input:enabled {
-  background: #ffffff;
-  color: #0f172a;
-  border-color: #93c5fd;
-}
-
-.eq-qty-input:enabled:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
-}
-
-.equipment-empty {
-  text-align: center;
-  color: #94a3b8;
-  font-size: 13px;
-  padding: 16px 0;
-}
-
-.equipment-loading {
-  text-align: center;
-  color: #94a3b8;
-  font-size: 13px;
-  padding: 14px 0;
-}
 ````
 
 ## File: frontend/index.html
@@ -3833,6 +5110,975 @@ class RoomResponse(RoomBase):
         from_attributes = True
 ````
 
+## File: frontend/css/booking.css
+````css
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  font-family: "Inter", sans-serif;
+  color: #111827;
+  background: #f5f7fb;
+  font-synthesis: none;
+  --blue: #2563eb;
+  --blue-dark: #1d4ed8;
+  --blue-soft: #eff6ff;
+  --gray-950: #111827;
+  --gray-700: #374151;
+  --gray-600: #4b5563;
+  --gray-500: #6b7280;
+  --gray-400: #9ca3af;
+  --gray-300: #d1d5db;
+  --gray-200: #e5e7eb;
+  --gray-100: #f3f4f6;
+  --white: #ffffff;
+  --green: #059669;
+  --amber: #b45309;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.page-shell {
+  /* Fix cố định phủ kín toàn bộ màn hình */
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+
+  /* Căn giữa Form đặt phòng */
+  display: none;
+  /* Mặc định ẩn form; khi JS bật sẽ chuyển thành display: flex */
+  align-items: center;
+  justify-content: center;
+
+  /* Nền mờ phía sau giúp nổi bật Modal */
+  background: rgba(15, 23, 42, 0.45);
+  /* Lớp phủ đen trong suốt */
+  backdrop-filter: blur(4px);
+  /* Làm mờ nhẹ nền trang web đằng sau */
+
+  padding: 20px;
+  overflow-y: auto;
+  /* Cho phép cuộn nếu màn hình thiết bị quá nhỏ */
+}
+
+.ambient {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(2px);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.ambient-left {
+  width: 240px;
+  height: 240px;
+  left: -100px;
+  top: 8%;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+}
+
+.ambient-right {
+  width: 330px;
+  height: 330px;
+  right: -180px;
+  bottom: 2%;
+  border: 1px solid rgba(99, 102, 241, 0.13);
+}
+
+.modal-card {
+  width: 540px;
+  max-width: 100%;
+  max-height: min(92vh, 740px);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.06);
+  padding: 0;
+  overflow: hidden;
+}
+
+.modal-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--gray-200);
+  background: var(--white);
+}
+
+.eyebrow {
+  margin: 0 0 2px;
+  color: var(--blue);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.modal-title,
+.empty-title {
+  margin: 0;
+  color: var(--gray-950);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  color: var(--gray-500);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.icon-button:hover {
+  color: var(--gray-950);
+  background: var(--gray-100);
+}
+
+.icon,
+.select-chevron {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.icon-small {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.booking-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+}
+
+.booking-form-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.booking-form-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.booking-form-body::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.booking-form-body::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.booking-form-body::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field-label,
+.recurring-label {
+  color: var(--gray-700);
+  font-size: 12.5px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.text-control,
+.textarea-control,
+.room-select,
+.input-with-icon {
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--gray-950);
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 7px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.text-control {
+  height: 38px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.textarea-control {
+  min-height: 52px;
+  height: 52px;
+  padding: 7px 11px;
+  line-height: 18px;
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.text-control::placeholder,
+.textarea-control::placeholder {
+  color: var(--gray-400);
+}
+
+.text-control:focus,
+.textarea-control:focus,
+.room-select:focus,
+.room-select.is-open,
+.input-with-icon:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.room-field {
+  position: relative;
+}
+
+.room-select {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-select-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.room-name {
+  display: block;
+  color: var(--gray-950);
+  font-size: 13.5px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.room-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--gray-500);
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 400;
+}
+
+.meta-divider {
+  width: 3px;
+  height: 3px;
+  margin: 0 2px;
+  background: var(--gray-300);
+  border-radius: 99px;
+}
+
+.status-available {
+  color: var(--green);
+  font-weight: 500;
+}
+
+.status-busy {
+  color: var(--amber);
+  font-weight: 500;
+}
+
+.select-chevron {
+  color: var(--gray-500);
+  transition: transform 160ms ease;
+}
+
+.room-select.is-open .select-chevron {
+  transform: rotate(180deg);
+}
+
+.room-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.13);
+}
+
+.room-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 9px 11px;
+  text-align: left;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+}
+
+.room-option:hover,
+.room-option.selected {
+  background: var(--blue-soft);
+  border-color: var(--blue);
+}
+
+.room-option>.icon-small {
+  color: var(--blue);
+}
+
+.time-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.time-fieldset>.field-label {
+  margin-bottom: 8px;
+}
+
+.time-grid {
+  display: grid;
+  grid-template-columns: 1.18fr 1fr 1fr;
+  gap: 10px;
+}
+
+.date-column,
+.time-column {
+  min-width: 0;
+}
+
+.mini-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--gray-500);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.input-with-icon {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--gray-500);
+}
+
+.input-with-icon .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.input-with-icon input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  color: var(--gray-700);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.input-with-icon input::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
+.availability-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 0;
+  color: var(--blue);
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.availability-button:hover {
+  color: var(--blue-dark);
+}
+
+.availability-button .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.availability-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.availability-message {
+  margin: 6px 0 0;
+  color: var(--green);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.availability-message.is-error {
+  color: #b91c1c;
+}
+
+.availability-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.time-suggestion {
+  min-height: 32px;
+  padding: 5px 9px;
+  color: var(--blue-dark);
+  background: var(--blue-soft);
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.time-suggestion:hover,
+.time-suggestion.selected {
+  color: var(--white);
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.recurring-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 14px;
+  background: #f9fafb;
+  border: 1px solid var(--gray-200);
+  border-radius: 9px;
+}
+
+.recurring-label {
+  display: block;
+  color: var(--gray-950);
+  cursor: pointer;
+}
+
+.recurring-hint {
+  margin: 2px 0 0;
+  color: var(--gray-500);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.recurrence-select {
+  width: min(220px, 52%);
+  height: 40px;
+  flex: none;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.toggle {
+  width: 40px;
+  height: 24px;
+  position: relative;
+  flex: none;
+  padding: 2px;
+  background: var(--gray-300);
+  border: 0;
+  border-radius: 99px;
+  transition: background 180ms ease;
+}
+
+.toggle-thumb {
+  width: 20px;
+  height: 20px;
+  display: block;
+  background: var(--white);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transition: transform 180ms ease;
+}
+
+.toggle-on {
+  background: var(--blue);
+}
+
+.toggle-on .toggle-thumb {
+  transform: translateX(16px);
+}
+
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.optional {
+  color: var(--gray-400);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid var(--gray-100);
+}
+
+.button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 17px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+}
+
+.button:active {
+  transform: translateY(1px);
+}
+
+.button-primary {
+  color: var(--white);
+  background: var(--blue);
+  border: 1px solid var(--blue);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.18);
+}
+
+.button-primary:hover {
+  background: var(--blue-dark);
+  border-color: var(--blue-dark);
+}
+
+.button-secondary {
+  color: var(--gray-700);
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+}
+
+.button-secondary:hover {
+  background: var(--gray-100);
+  border-color: var(--gray-400);
+}
+
+.empty-state {
+  width: 420px;
+  max-width: 100%;
+  padding: 40px;
+  text-align: center;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.09);
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+  color: var(--blue);
+  background: var(--blue-soft);
+  border-radius: 12px;
+}
+
+.empty-icon .icon {
+  width: 24px;
+  height: 24px;
+}
+
+.empty-copy {
+  margin: 8px 0 22px;
+  color: var(--gray-500);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+@media (max-width: 620px) {
+  .page-shell {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .modal-card {
+    padding: 20px;
+  }
+
+  .time-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .recurring-row {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .recurrence-select {
+    width: 48%;
+  }
+
+  .date-column {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 420px) {
+  .modal-card {
+    padding: 18px;
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: 1fr 1.45fr;
+  }
+
+  .button {
+    padding: 0 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .icon-button,
+  .text-control,
+  .textarea-control,
+  .room-select,
+  .select-chevron,
+  .toggle,
+  .toggle-thumb,
+  .button {
+    transition: none;
+  }
+}
+
+/* ============================================================
+   DATE PICKER WRAPPER – nút chọn ngày kiểu badge đẹp
+   ============================================================ */
+.date-picker-wrapper {
+  position: relative;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+  user-select: none;
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--gray-500);
+}
+
+.date-picker-wrapper:hover {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.date-display-text {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gray-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   TIME SELECT WRAPPER – dropdown giờ tiếng Việt
+   ============================================================ */
+.time-select-wrapper {
+  position: relative;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 7px;
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--gray-500);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.time-select-wrapper:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.vi-time-select {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--gray-700);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+}
+
+/* ============================================================
+   EQUIPMENT BORROW SECTION – danh sách thiết bị mượn thêm
+   ============================================================ */
+.equipment-borrow-section {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+}
+
+.equipment-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.equipment-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.equipment-icon {
+  font-size: 15px;
+}
+
+.equipment-badge {
+  display: inline-block;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.03em;
+}
+
+.equipment-hint {
+  font-size: 11px;
+  color: #64748b;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.equipment-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.equipment-list-container::-webkit-scrollbar {
+  width: 5px;
+}
+
+.equipment-list-container::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 3px;
+}
+
+.equipment-list-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.eq-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 9px 12px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.eq-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.08);
+}
+
+.eq-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.eq-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+.eq-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.eq-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eq-stock {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.eq-qty-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.eq-qty-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.eq-qty-input {
+  width: 52px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 0;
+  background: #f1f5f9;
+  color: #94a3b8;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms, background 150ms, color 150ms;
+}
+
+.eq-qty-input:enabled {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: #93c5fd;
+}
+
+.eq-qty-input:enabled:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.equipment-empty {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+.equipment-loading {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  padding: 14px 0;
+}
+````
+
 ## File: frontend/js/login.js
 ````javascript
 document.addEventListener('DOMContentLoaded', () => {
@@ -3901,6 +6147,141 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 ````
 
+## File: README.md
+````markdown
+# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
+
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
+
+Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
+
+---
+
+## 📌 1. Bảng Công nghệ (Tech Stack)
+
+* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
+* **Database:** MySQL
+* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
+* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
+* **Validation & Schemas:** Pydantic v2
+* **Server Runner:** Uvicorn ASGI Server
+
+---
+
+## 📁 2. Cấu trúc Dự án (Project Structure)
+
+```text
+MeetingManagement/
+├── app/
+│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
+│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
+│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
+│   ├── models/                # SQLAlchemy Models (ORM Mapping)
+│   │   ├── user.py            # Bảng người dùng
+│   │   ├── room.py            # Bảng phòng họp
+│   │   └── meeting.py         # Bảng lịch họp
+│   ├── routers/               # API Endpoints (Controllers)
+│   │   └── auth.py            # API Đăng nhập / Xác thực
+│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
+│       └── auth.py
+│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
+├── scripts/
+│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
+├── .env.example               # Mẫu cấu hình biến môi trường
+├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
+├── README.md                  # Tài liệu hướng dẫn sử dụng
+├── requirements.txt           # Thư viện phụ thuộc của dự án
+└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
+````
+
+## File: app/models/meeting.py
+````python
+# app/models/meeting.py
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import relationship
+
+from app.core.database import Base
+
+
+class Meeting(Base):
+    __tablename__ = "meetings"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    title = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    # meeting_type: 'online' | 'offline' — online meetings do not require a room
+    meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
+    # online_link: used when meeting_type == 'online'
+    online_link = Column(String(500), nullable=True)
+    is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
+    recurring_type = Column(String(20), nullable=True)
+    # room_id is nullable: online meetings have no room
+    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True, index=True)
+    organizer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    status = Column(String(20), nullable=False, default="scheduled")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+
+    # Relationships
+    equipments = relationship("MeetingEquipment", back_populates="meeting", cascade="all, delete-orphan")
+    room = relationship("Room", lazy="joined")
+    organizer = relationship("User", lazy="joined")
+    participants = relationship(
+        "MeetingParticipant",
+        back_populates="meeting",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Meeting id={self.id} title={self.title!r}>"
+
+
+class MeetingParticipant(Base):
+    __tablename__ = "meeting_participants"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    meeting_id = Column(
+        Integer,
+        ForeignKey("meetings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    # Relationships
+    meeting = relationship("Meeting", back_populates="participants")
+    user = relationship("User", lazy="joined")
+
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "user_id", name="uq_meeting_participant"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MeetingParticipant meeting_id={self.meeting_id} user_id={self.user_id}>"
+````
+
 ## File: scripts/seed.py
 ````python
 """Create repeatable demo data for local feature testing."""
@@ -3933,7 +6314,11 @@ DEMO_USERS = (
     ("demo.alex", "demo.alex@example.test", "Alex Nguyen", "employee", True),
     ("demo.linh", "demo.linh@example.test", "Linh Tran", "employee", True),
     ("demo.inactive", "demo.inactive@example.test", "Inactive User", "employee", False),
+    ("demo.manager", "demo.manager@example.test", "Quản lý Bùi Văn Nam", "manager", True),
+    ("demo.tester1", "demo.tester1@example.test", "Tester Nguyễn Thu Hoa", "employee", True),
+    ("demo.tester2", "demo.tester2@example.test", "Tester Trần Văn Bình", "employee", True),
 )
+
 
 DEMO_ROOMS = (
     {
@@ -4083,12 +6468,21 @@ def _add_equipment(db, meeting, equipment, quantity, note):
         )
 
 
-def _add_notification(db, user, title, content, is_read):
+def _add_notification(db, user, title, content, is_read=False):
     exists = (
-        db.query(Notification)
+        db.query(Notification.id)
         .filter_by(user_id=user.id, title=title, content=content)
         .first()
     )
+    if not exists:
+        db.add(
+            Notification(
+                user_id=user.id,
+                title=title,
+                content=content,
+                is_read=is_read,
+            )
+        )
     if not exists:
         db.add(
             Notification(
@@ -4294,136 +6688,6 @@ if __name__ == "__main__":
     seed()
 ````
 
-## File: README.md
-````markdown
-# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
-
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
-![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
-
-Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
-
----
-
-## 📌 1. Bảng Công nghệ (Tech Stack)
-
-* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
-* **Database:** MySQL
-* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
-* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
-* **Validation & Schemas:** Pydantic v2
-* **Server Runner:** Uvicorn ASGI Server
-
----
-
-## 📁 2. Cấu trúc Dự án (Project Structure)
-
-```text
-MeetingManagement/
-├── app/
-│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
-│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
-│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
-│   ├── models/                # SQLAlchemy Models (ORM Mapping)
-│   │   ├── user.py            # Bảng người dùng
-│   │   ├── room.py            # Bảng phòng họp
-│   │   └── meeting.py         # Bảng lịch họp
-│   ├── routers/               # API Endpoints (Controllers)
-│   │   └── auth.py            # API Đăng nhập / Xác thực
-│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
-│       └── auth.py
-│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
-├── scripts/
-│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
-├── .env.example               # Mẫu cấu hình biến môi trường
-├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
-├── README.md                  # Tài liệu hướng dẫn sử dụng
-├── requirements.txt           # Thư viện phụ thuộc của dự án
-└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
-````
-
-## File: app/models/meeting.py
-````python
-# app/models/meeting.py
-from sqlalchemy import (
-    Boolean,
-    Column,
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-)
-from sqlalchemy.orm import relationship
-
-from app.core.database import Base
-
-
-class Meeting(Base):
-    __tablename__ = "meetings"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    title = Column(String(200), nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
-    recurring_type = Column(String(20), nullable=True)
-    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True)
-    organizer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime, nullable=False)
-    status = Column(String(20), nullable=False, default="scheduled")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
-
-    # Relationships
-    equipments = relationship("MeetingEquipment", back_populates="meeting", cascade="all, delete-orphan")
-    room = relationship("Room", lazy="joined")
-    organizer = relationship("User", lazy="joined")
-    participants = relationship(
-        "MeetingParticipant",
-        back_populates="meeting",
-        lazy="selectin",
-        cascade="all, delete-orphan",
-    )
-
-    def __repr__(self) -> str:
-        return f"<Meeting id={self.id} title={self.title!r}>"
-
-
-class MeetingParticipant(Base):
-    __tablename__ = "meeting_participants"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    meeting_id = Column(
-        Integer,
-        ForeignKey("meetings.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id = Column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-
-    # Relationships
-    meeting = relationship("Meeting", back_populates="participants")
-    user = relationship("User", lazy="joined")
-
-    __table_args__ = (
-        UniqueConstraint("meeting_id", "user_id", name="uq_meeting_participant"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<MeetingParticipant meeting_id={self.meeting_id} user_id={self.user_id}>"
-````
-
 ## File: requirements.txt
 ````
 annotated-doc==0.0.5
@@ -4497,7 +6761,7 @@ websockets==16.1.1
 ````python
 from datetime import datetime
 from typing import Any, List, Optional
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentItemOutput
 
@@ -4506,7 +6770,12 @@ from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentIte
 class MeetingCreateRequest(BaseModel):
     title: str
     description: Optional[str] = None
-    room_id: int
+    # meeting_type: 'online' | 'offline'
+    meeting_type: str = 'offline'
+    # online_link: bắt buộc khi meeting_type='online'
+    online_link: Optional[str] = None
+    # room_id: bắt buộc khi meeting_type='offline', phải NULL khi 'online'
+    room_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
 
@@ -4519,13 +6788,36 @@ class MeetingCreateRequest(BaseModel):
     equipments: Optional[List[MeetingEquipmentItemInput]] = []
     participant_ids: Optional[List[int]] = []
 
+    @field_validator('meeting_type')
+    @classmethod
+    def validate_meeting_type(cls, v: str) -> str:
+        if v not in ('online', 'offline'):
+            raise ValueError("meeting_type phải là 'online' hoặc 'offline'")
+        return v
+
+    @model_validator(mode='after')
+    def validate_meeting_mode(self) -> 'MeetingCreateRequest':
+        if self.meeting_type == 'online':
+            if self.room_id is not None:
+                raise ValueError(
+                    "Cuộc họp online không được có room_id. Hãy gửi room_id = null."
+                )
+            if not self.online_link or not self.online_link.strip():
+                raise ValueError("Cuộc họp online cần có online_link.")
+        elif self.meeting_type == 'offline':
+            if not self.room_id:
+                raise ValueError("Cuộc họp offline cần có room_id hợp lệ.")
+        return self
+
 
 # 2. Schema phản hồi thông tin cuộc họp trả về cho Client (Response)
 class MeetingResponse(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
-    room_id: int
+    meeting_type: str = 'offline'
+    online_link: Optional[str] = None
+    room_id: Optional[int] = None
     organizer_id: Optional[int] = None
     start_time: datetime
     end_time: datetime
@@ -4767,11 +7059,12 @@ def read_available_rooms(
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.models.room import Room
-from app.models.meeting import Meeting
-from app.models.user import User  # Thêm import model User nếu chưa có
+from app.models.meeting import Meeting, MeetingParticipant
+from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
 class MeetingService:
@@ -4818,14 +7111,29 @@ class MeetingService:
                 detail="Không thể đặt lịch họp với thời gian bắt đầu nằm trong quá khứ!"
             )
 
-        # 1. Kiểm tra phòng họp có tồn tại và active không
-        room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
+        # 0b. Kiểm tra end_time phải sau start_time
+        if payload.end_time <= payload.start_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Thời gian kết thúc phải sau thời gian bắt đầu!"
+            )
 
-        if not room:
-         raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Phòng họp không tồn tại hoặc đã bị ngưng hoạt động!"
-    )
+        # 1. Xác định meeting_type và kiểm tra phòng (chỉ khi offline)
+        meeting_type = getattr(payload, 'meeting_type', 'offline') or 'offline'
+        online_link  = (getattr(payload, 'online_link', None) or '').strip() or None
+
+        if meeting_type == 'offline':
+            room = db.query(Room).filter(
+                Room.id == payload.room_id,
+                Room.is_active == True
+            ).first()
+            if not room:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phòng họp không tồn tại hoặc đã ngưng hoạt động!"
+                )
+        else:
+            room = None
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
@@ -4871,36 +7179,36 @@ class MeetingService:
                     check_equipment_availability(db, s_time, e_time, requested_equipments)
             
             for s_time, e_time in meeting_dates:
-                # Kiểm tra chồng lặp thời gian cho từng ngày trong chu kỳ đối với đúng phòng đó
-                overlapping_meeting = db.query(Meeting).filter(
-                    Meeting.room_id == payload.room_id,
-                    Meeting.status.notin_(["CANCELLED", "canceled"]),
-                    and_(
-                        Meeting.start_time < e_time,
-                        Meeting.end_time > s_time
-                    )
-                ).first()
+                # Kiểm tra conflict phòng — chỉ áp dụng cho OFFLINE meeting
+                if meeting_type == 'offline':
+                    overlapping_meeting = db.query(Meeting).filter(
+                        Meeting.room_id == payload.room_id,
+                        Meeting.status.notin_(["CANCELLED", "canceled"]),
+                        and_(
+                            Meeting.start_time < e_time,
+                            Meeting.end_time > s_time
+                        )
+                    ).first()
 
-                # Nếu tìm thấy lịch trùng -> Rollback yêu cầu hiện tại
-                if overlapping_meeting:
-                    db.rollback()
-                    date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
-                    
-                    if not recurrence_type or recurrence_type == "none":
-                        detail_msg = f"Phòng họp '{room.name}' đã bị trùng khung giờ vào ngày {date_str}! Vui lòng chọn thời gian khác."
-                    else:
-                        detail_msg = f"Phòng họp '{room.name}' đã bị trùng lịch vào ngày {date_str}. Yêu cầu đặt chuỗi định kỳ đã bị từ chối để tránh xung đột."
+                    if overlapping_meeting:
+                        db.rollback()
+                        date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
+                        if not recurrence_type or recurrence_type == "none":
+                            detail_msg = f"Phòng họp '{room.name}' đã có cuộc họp trong khung giờ này."
+                        else:
+                            detail_msg = f"Phòng họp '{room.name}' đã bị trùng lịch vào ngày {date_str}."
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=detail_msg
+                        )
 
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=detail_msg
-                    )
-
-                # Tạo bản ghi đặt phòng cho ngày hiện tại
+                # Tạo bản ghi cuộc họp
                 new_meeting = Meeting(
                     title=payload.title,
                     description=payload.description,
-                    room_id=payload.room_id,
+                    meeting_type=meeting_type,
+                    online_link=online_link,
+                    room_id=payload.room_id if meeting_type == 'offline' else None,
                     organizer_id=organizer_id,
                     start_time=s_time,
                     end_time=e_time,
@@ -4922,6 +7230,24 @@ class MeetingService:
                             note=getattr(item, 'note', None)
                         )
                         db.add(me)
+
+                # Lưu participants — D2: skip organizer, atomic flush
+                participant_ids_list = getattr(payload, 'participant_ids', []) or []
+                for pid in participant_ids_list:
+                    if pid == organizer_id:  # D2: organizer đã track qua organizer_id, skip
+                        continue
+                    mp = MeetingParticipant(meeting_id=new_meeting.id, user_id=pid)
+                    db.add(mp)
+
+                if participant_ids_list:
+                    try:
+                        db.flush()  # một flush duy nhất, atomic với transaction
+                    except IntegrityError:
+                        db.rollback()
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="participant_ids chứa user không tồn tại hoặc bị trùng lặp."
+                        )
 
                 created_meetings.append(new_meeting)
 
@@ -5013,6 +7339,16 @@ class MeetingService:
                 slot_start += timedelta(minutes=30)  # Bước nhảy gợi ý mỗi 30 phút
 
         return {"suggested_slots": suggested_slots}
+
+    @staticmethod
+    def suggest_time(db: Session, payload):
+        """Alias cho calculate_suggested_times — dùng bởi router /suggest-time."""
+        return MeetingService.calculate_suggested_times(
+            db=db,
+            participant_ids=payload.participant_ids,
+            date_str=payload.date,
+            duration_minutes=payload.duration_minutes
+        )
 ````
 
 ## File: frontend/css/style.css
@@ -5232,7 +7568,27 @@ body {
 
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 .notification-wrapper { position: relative; }
-.icon-btn { background: transparent; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; }
+.icon-btn { background: transparent; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; position: relative; }
+
+/* Chấm đỏ nhấp nháy trên nút chuông */
+.notification-dot {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 9px;
+    height: 9px;
+    background-color: #ef4444;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+    animation: notifPulse 1.5s ease-in-out infinite;
+    z-index: 10;
+}
+
+@keyframes notifPulse {
+    0%   { transform: scale(1);   opacity: 1; }
+    50%  { transform: scale(1.35); opacity: 0.7; }
+    100% { transform: scale(1);   opacity: 1; }
+}
 
 .notification-popup {
     position: absolute; right: 0; top: 36px; width: 280px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 10px 20px -5px rgba(0,0,0,0.1); padding: 14px; z-index: 20;
@@ -5510,6 +7866,129 @@ body {
     max-height: 130px; overflow-y: auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; background: #ffffff; display: flex; flex-direction: column; gap: 6px;
 }
 
+/* Ô nhập tên + gmail mời thủ công */
+.invite-manual-wrapper {
+    position: relative;
+    margin-bottom: 8px;
+}
+.invite-manual-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.invite-input {
+    flex: 1;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    color: #1e293b;
+    background: #f8fafc;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.invite-input:focus {
+    border-color: #3b82f6;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+.invite-add-btn {
+    white-space: nowrap;
+    height: 36px;
+    padding: 0 14px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.invite-add-btn:hover { background: #1d4ed8; }
+
+/* Dropdown gợi ý autocomplete */
+.invite-suggestions {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 999;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px -4px rgba(0,0,0,0.12);
+    list-style: none;
+    padding: 4px 0;
+    margin: 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.invite-suggestions li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.83rem;
+    color: #1e293b;
+    transition: background 0.1s;
+}
+.invite-suggestions li:hover,
+.invite-suggestions li.active {
+    background: #eff6ff;
+}
+.invite-suggestions li .sug-avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.75rem;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+.invite-suggestions li .sug-info strong { display: block; font-size: 0.83rem; }
+.invite-suggestions li .sug-info span  { font-size: 0.76rem; color: #64748b; }
+.invite-suggestions li mark {
+    background: #fef08a;
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* Danh sách người đã thêm thủ công */
+.manual-guest-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.manual-guest-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px 3px 10px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    color: #1d4ed8;
+    font-weight: 500;
+}
+.manual-guest-tag button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #64748b;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0;
+    margin-left: 2px;
+}
+.manual-guest-tag button:hover { color: #ef4444; }
+
 .modal-footer {
     padding: 16px 24px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; background: #ffffff;
 }
@@ -5611,6 +8090,64 @@ input:checked + .slider {
 input:checked + .slider:before {
     transform: translateX(20px);
 }
+/* ==========================================
+   SỬA GIAO DIỆN FORM MODAL (THÊM / SỬA PHÒNG & THIẾT BỊ)
+   ========================================== */
+#roomModal .modal-content,
+#equipmentModal .modal-content {
+    background: #ffffff;
+    padding: 28px;
+    border-radius: 16px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+#roomModal h3,
+#equipmentModal h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.form-control {
+    width: 100%;
+    height: 42px;
+    padding: 0 12px;
+    font-size: 13.5px;
+    color: #0f172a;
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.form-control::placeholder {
+    color: #94a3b8;
+}
 ````
 
 ## File: app/routers/meetings.py
@@ -5670,16 +8207,19 @@ def create_meeting(
     )
 
     # 2. Gửi thông báo ngầm cho những người được mời tham dự
+    # Filter organizer khỏi danh sách — organizer không nhận invitation notification
     if payload.participant_ids and created_meetings:
         first_meeting = created_meetings[0] if isinstance(created_meetings, list) else created_meetings
         start_str = first_meeting.start_time.strftime("%H:%M %d/%m/%Y")
-        background_tasks.add_task(
-            send_meeting_invitation_notifications,
-            db=db,
-            participant_ids=payload.participant_ids,
-            meeting_title=first_meeting.title,
-            start_time_str=start_str,
-        )
+        notify_ids = [pid for pid in payload.participant_ids if pid != current_user.id]
+        if notify_ids:
+            background_tasks.add_task(
+                send_meeting_invitation_notifications,
+                db=db,
+                participant_ids=notify_ids,
+                meeting_title=first_meeting.title,
+                start_time_str=start_str,
+            )
 
     return created_meetings
 
@@ -5796,8 +8336,9 @@ def cancel_meeting_legacy(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=13">
-    <link rel="stylesheet" href="css/booking.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=14">
+    <link rel="stylesheet" href="css/booking.css?v=3">
+    <link rel="stylesheet" href="css/create-meeting.css?v=1">
 </head>
 <body>
     <div class="app-layout" id="appLayout">
@@ -5856,9 +8397,11 @@ def cancel_meeting_legacy(
                 </div>
                 
                 <div class="topbar-right">
+                    <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                     <div class="notification-wrapper">
-                        <button class="icon-btn" onclick="toggleNotificationPopup()" title="Thông báo">
+                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()" title="Thông báo">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                            <span id="notificationDot" class="notification-dot" style="display: none;"></span>
                         </button>
                         <div id="notificationPopup" class="notification-popup" style="display: none;">
                             <h4>Thông báo mới</h4>
@@ -5885,7 +8428,7 @@ def cancel_meeting_legacy(
                             <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
                             <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
                             <div class="hero-actions">
-                                <button class="btn-hero-primary" onclick="openQuickBooking()">Đặt phòng ngay</button>
+                                <button class="btn-hero-primary" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                                 <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
                             </div>
                         </div>
@@ -6180,146 +8723,240 @@ def cancel_meeting_legacy(
         </div>
     </div>
 
-    <!-- MODAL ĐẶT PHÒNG HỌP (CHUẨN FIGMA UI) -->
-    <div id="bookingModal" class="modal" style="display: none;">
-        <div class="ambient ambient-left"></div>
-        <div class="ambient ambient-right"></div>
-
-        <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booking-title">
-            <header class="modal-header">
+    <!-- MODAL TẠO CUỘC HỌP -->
+    <div id="createMeetingModal" class="cm-overlay" aria-hidden="true">
+        <section id="cmDialog" class="cm-dialog" role="dialog" aria-modal="true" aria-labelledby="cmHeading">
+            <header class="cm-header">
                 <div>
-                    <p class="eyebrow">Lịch làm việc</p>
-                    <h1 id="booking-title" class="modal-title">Đặt lịch phòng họp</h1>
+                    <p class="cm-kicker">Cuộc họp</p>
+                    <h1 id="cmHeading">Tạo cuộc họp</h1>
                 </div>
-                <button class="icon-button" type="button" aria-label="Đóng" onclick="closeBookingModal()">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                </button>
+                <button class="cm-icon-btn" type="button" aria-label="Đóng" onclick="closeCreateMeeting()">×</button>
             </header>
 
-            <form class="booking-form" onsubmit="handleBookingSubmit(event)">
-                <div class="booking-form-body">
-                    <!-- Tên cuộc họp -->
-                    <div class="form-field">
-                        <label class="field-label" for="meeting-title">Tên cuộc họp</label>
-                        <input id="meeting-title" class="text-control" name="title" placeholder="Nhập tên cuộc họp" required />
-                    </div>
+            <form id="createMeetingForm" class="cm-layout">
+                <div class="cm-form-pane">
+                    <section class="cm-section">
+                        <label class="cm-label" for="cmTitle">Tên cuộc họp</label>
+                        <input id="cmTitle" class="cm-title-input" name="title" maxlength="120" placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
+                        <p id="cmTitleError" class="cm-field-error">Nhập tên cuộc họp trước khi tạo.</p>
+                    </section>
 
-                    <!-- Chọn phòng -->
-                    <div class="form-field room-field">
-                        <label class="field-label" for="room-select">Chọn phòng</label>
-                        <button id="room-select" class="room-select" type="button" aria-expanded="false" onclick="toggleRoomMenu()">
-                            <div class="room-select-main">
-                                <span class="room-name">Phòng họp</span>
-                                <span class="room-meta">Chọn phòng mong muốn</span>
-                            </div>
-                            <svg class="select-chevron icon" viewBox="0 0 24 24" fill="none"><path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        </button>
-                        <div id="roomMenu" class="room-menu" role="listbox" hidden></div>
-                    </div>
-
-                    <!-- Tiện ích phòng -->
-                    <div class="form-field">
-                        <div class="label-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                            <label class="field-label">🏢 Tiện ích sẵn có trong phòng:</label>
-                            <span class="optional" style="font-size: 0.72rem; color: #16a34a; font-weight: 500;">✓ Đã bao gồm sẵn trong phòng</span>
+                    <section class="cm-section">
+                        <p class="cm-section-title">Thời gian</p>
+                        <div class="cm-time-grid">
+                            <label>
+                                <span class="cm-mini-label">Ngày</span>
+                                <input id="cmDate" class="cm-input" type="date" />
+                            </label>
+                            <label>
+                                <span class="cm-mini-label">Giờ bắt đầu</span>
+                                <select id="cmStart" class="cm-select"></select>
+                            </label>
+                            <label>
+                                <span class="cm-mini-label">Giờ kết thúc</span>
+                                <select id="cmEnd" class="cm-select"></select>
+                            </label>
                         </div>
-                        <div id="roomAvailableAmenities" style="display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; min-height: 36px; align-items: center;">
-                            <span style="color: #64748b; font-size: 0.8rem;">Vui lòng chọn phòng để xem tiện ích...</span>
+                        <div class="cm-seg" role="group" aria-label="Lặp lại">
+                            <button type="button" id="cmRecNone" aria-pressed="true" onclick="setRecurrence('none')">Không lặp</button>
+                            <button type="button" id="cmRecWeekly" aria-pressed="false" onclick="setRecurrence('weekly')">Hàng tuần</button>
+                            <button type="button" id="cmRecMonthly" aria-pressed="false" onclick="setRecurrence('monthly')">Hàng tháng</button>
                         </div>
-                    </div>
-
-                    <!-- Chọn thời gian -->
-                    <fieldset class="time-fieldset">
-                        <legend class="field-label">Thời gian</legend>
-                        <div class="time-grid">
-                            <div class="date-column">
-                                <span class="mini-label">Ngày họp</span>
-                                <div class="date-picker-wrapper" id="datepickerWrapper" onclick="triggerDatePicker()">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12H4V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                    <span id="dateDisplayLabel" class="date-display-text">--/--/----</span>
-                                    <input name="meeting_date" id="meetingDateInput" type="date" required style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;" />
-                                </div>
-                            </div>
-                            <div class="time-column">
-                                <span class="mini-label">Bắt đầu</span>
-                                <div class="time-select-wrapper">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                    <select name="start_time" id="startTimeSelect" class="vi-time-select" onchange="syncHiddenStartTime(this)" required></select>
-                                    <input type="hidden" name="start_time_val" id="startTimeHidden" />
-                                </div>
-                            </div>
-                            <div class="time-column">
-                                <span class="mini-label">Kết thúc</span>
-                                <div class="time-select-wrapper">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                                    <select name="end_time" id="endTimeSelect" class="vi-time-select" required></select>
-                                </div>
-                            </div>
-                        </div>
-                        <button id="findAvailabilityBtn" class="availability-button" type="button" onclick="findAvailableTime()">
-                            <svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4M10.5 7.5v3.2l2 1.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-                            Tìm giờ trống
-                        </button>
-                        <p id="availabilityMessage" class="availability-message" role="status" hidden></p>
-                        <div id="availabilityResults" class="availability-results" aria-label="Các khung giờ trống"></div>
-                    </fieldset>
-
-                    <!-- Lặp lại -->
-                    <div class="recurring-row">
-                        <div>
-                            <label class="recurring-label" for="recurrence-select">Lặp lại cuộc họp</label>
-                            <p class="recurring-hint" id="recurrenceHint">Chọn chu kỳ cho cuộc họp</p>
-                        </div>
-                        <select id="recurrence-select" class="text-control recurrence-select" name="recurrence_type">
+                        <select id="cmRecurrence" class="cm-select" hidden>
                             <option value="none">Không lặp</option>
-                            <option value="monthly">Lặp 1 tháng</option>
-                            <option value="until_changed">Lặp đến khi thay đổi</option>
+                            <option value="weekly">Hàng tuần</option>
+                            <option value="monthly">Hàng tháng</option>
                         </select>
-                    </div>
+                        <div id="cmRecurringExtra" class="cm-recurring-extra">
+                            <p id="cmRecurrenceNote" class="cm-help">Lặp vào thứ Hai hàng tuần</p>
+                            <label>
+                                <span class="cm-mini-label">Kết thúc vào ngày</span>
+                                <input id="cmRecurrenceUntil" class="cm-input" type="date" />
+                            </label>
+                        </div>
+                    </section>
 
-                    <!-- Mượn thiết bị -->
-                    <div class="form-field equipment-borrow-section">
-                        <div class="equipment-section-header">
-                            <div class="equipment-section-title">
-                                <span class="equipment-icon">📦</span>
-                                <span>Mượn thêm thiết bị từ kho</span>
-                                <span class="equipment-badge">Tùy chọn</span>
+                    <section class="cm-section">
+                        <div class="cm-inline-actions">
+                            <label class="cm-label" for="cmAttendeeSearch">Người tham dự</label>
+                            <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
+                        </div>
+                        <div class="cm-attendee-search">
+                            <input id="cmAttendeeSearch" class="cm-search" type="search" placeholder="Tìm người tham dự..." autocomplete="off" />
+                            <ul id="cmAttendeeSuggest" class="cm-suggest"></ul>
+                        </div>
+                        <div id="cmAttendeeChips" class="cm-chips"></div>
+                        <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên nhóm</button>
+                    </section>
+
+                    <section class="cm-section">
+                        <p class="cm-section-title">Hình thức cuộc họp</p>
+                        <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp">
+                            <button type="button" id="cmModeOnline" aria-pressed="false" onclick="setCreateMeetingMode('online')">🌐 Online</button>
+                            <button type="button" id="cmModeOffline" aria-pressed="true" onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
+                        </div>
+                        <div id="cmOnlineBox" class="cm-online-box">
+                            <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
+                            <input id="cmMeetingLink" class="cm-input" type="url" placeholder="https://meet.roomsync.vn/..." />
+                            <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo link</button>
+                        </div>
+                    </section>
+
+                    <section id="cmResources" class="cm-resources is-open">
+                        <p class="cm-section-title">Tài nguyên cuộc họp</p>
+                        <p class="cm-help">Phòng họp và thiết bị chỉ được chọn sau khi đã có thông tin cuộc họp.</p>
+
+                        <div class="cm-section">
+                            <p class="cm-section-title">A. Yêu cầu phòng họp</p>
+                            <div class="cm-capacity">
+                                <div>
+                                    <span class="cm-help">Sức chứa cần thiết</span>
+                                    <strong id="cmCapacityValue">1 người</strong>
+                                    <span id="cmCapacityMin" class="cm-help">Phòng tối thiểu: 1 chỗ</span>
+                                </div>
+                                <button type="button" class="cm-btn cm-btn-ghost" onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
                             </div>
-                            <span class="equipment-hint">Tích chọn thiết bị & nhập số lượng</span>
+                            <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                            <div id="cmRoomResults" class="cm-room-list">
+                                <div class="cm-empty">Chưa tìm phòng. Hệ thống sẽ gợi ý phòng đủ chỗ theo số người tham dự.</div>
+                            </div>
                         </div>
-                        <div id="equipmentListContainer" class="equipment-list-container">
-                            <div class="equipment-loading">⏳ Đang tải danh sách thiết bị kho...</div>
-                        </div>
-                    </div>
 
-                    <!-- Mời người tham dự -->
-                    <div class="form-field">
-                        <label class="field-label">👥 Mời người tham dự cuộc họp:</label>
-                        <div id="participantListContainer" class="participant-picker-list"></div>
-                        <small class="equipment-hint">Tích chọn đồng nghiệp bạn muốn gửi thông báo mời tham dự.</small>
-                    </div>
-
-                    <!-- Mô tả -->
-                    <div class="form-field">
-                        <div class="label-row">
-                            <label class="field-label" for="description">Mô tả cuộc họp</label>
-                            <span class="optional">Không bắt buộc</span>
+                        <div class="cm-section">
+                            <p class="cm-section-title">B. Thiết bị</p>
+                            <p class="cm-help">Thiết bị cố định của phòng</p>
+                            <div id="cmFixedEquipment" class="cm-fixed-eq">
+                                <p class="cm-help">Chọn phòng để xem thiết bị cố định. Không tăng giảm số lượng.</p>
+                            </div>
+                            <p class="cm-help">Thiết bị cần mượn thêm</p>
+                            <div id="cmBorrowEquipment" class="cm-borrow-eq"></div>
+                            <div id="cmEquipConflict" class="cm-alert cm-alert-warn" role="status"></div>
                         </div>
-                        <textarea id="description" class="textarea-control" name="description" rows="2" placeholder="Nhập nội dung hoặc chương trình cuộc họp..."></textarea>
-                    </div>
+                    </section>
+
+                    <section class="cm-section">
+                        <label class="cm-label" for="cmDescription">Mô tả ngắn</label>
+                        <textarea id="cmDescription" class="cm-textarea" rows="3" placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
+                    </section>
+
+                    <div id="cmFormError" class="cm-alert cm-alert-error" role="alert"></div>
+                    <div id="cmApiError" class="cm-alert cm-alert-error" role="alert"></div>
                 </div>
 
-                <footer class="modal-footer">
-                    <button class="button button-secondary" type="button" onclick="closeBookingModal()">Hủy</button>
-                    <button class="button button-primary" type="submit">Xác nhận đặt lịch</button>
-                </footer>
+                <aside class="cm-summary-pane">
+                    <div class="cm-summary-card">
+                        <h2>Kiểm tra cuộc họp</h2>
+                        <ul id="cmSummaryList" class="cm-summary-list"></ul>
+                    </div>
+                    <div id="cmSummaryStatus" class="cm-status is-ok">✓ Không có xung đột</div>
+                    <div class="cm-summary-actions">
+                        <button id="cmSubmit" class="cm-btn cm-btn-primary" type="submit">TẠO CUỘC HỌP</button>
+                        <button class="cm-btn cm-btn-secondary" type="button" onclick="closeCreateMeeting()">Hủy</button>
+                    </div>
+                </aside>
             </form>
+
+            <div class="cm-success" role="status">
+                <div class="cm-success-icon" aria-hidden="true">✓</div>
+                <h2>Đã tạo cuộc họp</h2>
+                <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
+                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp khác</button>
+                <button type="button" class="cm-btn cm-btn-secondary" onclick="closeCreateMeeting()">Đóng</button>
+            </div>
         </section>
     </div>
 
-    <script src="js/app.js?v=8"></script>
+    <script src="js/app.js?v=9"></script>
+    <script src="js/create-meeting.js?v=1"></script>
 </body>
 </html>
+````
+
+## File: app/main.py
+````python
+from pathlib import Path
+from fastapi import FastAPI, Depends
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session, configure_mappers
+
+# 1. DB & Models
+from app.db.session import Base
+from app.core.database import engine, get_db
+from app.models.user import User
+from app.models.room import Room
+from app.models.meeting import Meeting
+from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
+
+# 2. Routers & Security
+from app.routers import auth, equipment, meetings, notifications, rooms, users
+from app.core.security import authenticate_user
+from app.routers.auth import issue_token
+from app.schemas.auth import LoginRequest
+
+# 3. Khởi tạo Mapper & Tạo bảng Database
+try:
+    configure_mappers()
+except Exception as e:
+    print(f"❌ Lỗi cấu hình ORM Models: {e}")
+
+Base.metadata.create_all(bind=engine)
+
+# 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
+app = FastAPI(title="Meeting Management System API", version="1.0.0")
+
+# 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 6. Cấu hình Static Files & Frontend
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+    assets_dir = FRONTEND_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+# 7. Đăng ký API Routers với Prefix chuẩn
+app.include_router(auth.router, prefix="/api", tags=["auth"])
+app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
+app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
+app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
+app.include_router(notifications.router, prefix="/api", tags=["notifications"])
+app.include_router(users.router, prefix="/api", tags=["users"])
+
+# 8. Endpoints Đăng nhập & Root
+@app.post("/api/login", tags=["auth"])
+def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):
+    user = authenticate_user(db, payload.username, payload.password)
+    token_response = issue_token(user)
+    return {
+        **token_response.model_dump(),
+        "user_name": token_response.full_name,
+    }
+
+@app.get("/", tags=["Root"])
+def read_root():
+    return {"status": "success", "message": "Meeting Management System API is running"}
+
+@app.get("/dashboard", tags=["Web UI"])
+def render_dashboard_page():
+    path = FRONTEND_DIR / "dashboard.html"
+    return FileResponse(path) if path.exists() else {"error": "Dashboard page not found"}
+
+@app.get("/app", tags=["Web UI"])
+def render_index_page():
+    path = FRONTEND_DIR / "index.html"
+    return FileResponse(path) if path.exists() else {"error": "Application page not found"}
 ````
 
 ## File: frontend/js/app.js
@@ -6355,7 +8992,8 @@ function escapeHtml(value) {
    ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
     const token = getAuthToken();
-    if (!token) {
+    const isMeetingPreview = new URLSearchParams(location.search).get('preview') === 'meeting';
+    if (!token && !isMeetingPreview) {
         window.location.href = 'index.html';
         return;
     }
@@ -6479,12 +9117,312 @@ function scrollToRooms() {
     if (elem) elem.scrollIntoView({ behavior: 'smooth' });
 }
 
-function toggleNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (popup) {
-        popup.style.display = (popup.style.display === 'none' || !popup.style.display) ? 'block' : 'none';
+/* ==========================================================================
+   NOTIFICATION MANAGEMENT
+   ========================================================================== */
+
+async function fetchNotifications() {
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/notifications/`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+            const notifications = await res.json();
+            renderNotifications(notifications);
+        }
+    } catch (err) {
+        console.error("Lỗi lấy danh sách thông báo:", err);
     }
 }
+
+function renderNotifications(notifications) {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    if (!notifications || notifications.length === 0) {
+        popup.innerHTML = '<div style="padding: 16px; color: #94a3b8; text-align: center; font-size: 0.85rem;">Không có thông báo nào.</div>';
+        updateNotificationDot(0);
+        return;
+    }
+
+    const unreadCount = notifications.filter(n => !n.is_read).length;
+
+    // Chỉ cập nhật chấm đỏ khi popup ĐANG ĐÓNG (fetch nền / trang tải)
+    // Khi popup đang mở thì không tự động ẩn chấm đỏ qua hàm này
+    const popupVisible = popup.style.display !== 'none';
+    if (!popupVisible) {
+        updateNotificationDot(unreadCount);
+    }
+
+    popup.innerHTML = `
+        <div style="padding: 12px 16px; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+            <span>Thông báo</span>
+            ${unreadCount > 0 ? `<span style="font-size: 0.75rem; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 9999px;">${unreadCount} chưa đọc</span>` : ''}
+        </div>
+        <div style="max-height: 320px; overflow-y: auto;">
+            ${notifications.map(n => `
+                <div style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9; background-color: ${n.is_read ? '#ffffff' : '#f0fdf4'}; cursor: pointer;">
+                    <div style="font-weight: 600; font-size: 0.85rem; color: #0f172a; margin-bottom: 4px;">${escapeHtml(n.title)}</div>
+                    <div style="font-size: 0.8rem; color: #475569; line-height: 1.4;">${escapeHtml(n.content)}</div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Hiển thị hoặc ẩn chấm đỏ nhấp nháy trên nút chuông
+function updateNotificationDot(unreadCount) {
+    const dot = document.getElementById('notificationDot');
+    if (!dot) return;
+    dot.style.display = unreadCount > 0 ? 'block' : 'none';
+}
+
+// Toggle popup thông báo: mở thì ẩn chấm đỏ ngay + load data; đóng thì ẩn popup
+function toggleNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    const isHidden = popup.style.display === 'none' || !popup.style.display;
+    popup.style.display = isHidden ? 'block' : 'none';
+
+    if (isHidden) {
+        // Ẩn chấm đỏ ngay khi người dùng mở popup (đã "xem" thông báo)
+        updateNotificationDot(0);
+        fetchNotifications();
+    }
+}
+
+// Đóng popup khi bấm ra ngoài vùng notification-wrapper
+document.addEventListener('click', function (e) {
+    const wrapper = document.querySelector('.notification-wrapper');
+    const popup = document.getElementById('notificationPopup');
+    if (!wrapper || !popup) return;
+    if (!wrapper.contains(e.target) && popup.style.display !== 'none') {
+        popup.style.display = 'none';
+    }
+});
+
+// Fetch khi trang tải để hiển thị chấm đỏ nếu có thông báo chưa đọc
+document.addEventListener('DOMContentLoaded', () => {
+    fetchNotifications();
+});
+
+window.fetchNotifications = fetchNotifications;
+window.updateNotificationDot = updateNotificationDot;
+
+/* ==========================================================================
+   MANUAL GUEST INVITE (nhập tên + gmail người ngoài hệ thống)
+   ========================================================================== */
+// Mảng lưu danh sách khách mời thủ công
+let _manualGuests = [];
+
+function addManualGuest() {
+    const nameInput  = document.getElementById('inviteGuestName');
+    const emailInput = document.getElementById('inviteGuestEmail');
+    if (!nameInput || !emailInput) return;
+
+    const name  = nameInput.value.trim();
+    const email = emailInput.value.trim();
+
+    if (!name && !email) {
+        nameInput.focus();
+        return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        emailInput.style.borderColor = '#ef4444';
+        emailInput.focus();
+        setTimeout(() => emailInput.style.borderColor = '', 1500);
+        return;
+    }
+
+    // Tránh trùng email
+    if (_manualGuests.find(g => g.email === email)) {
+        emailInput.style.borderColor = '#f59e0b';
+        setTimeout(() => emailInput.style.borderColor = '', 1500);
+        return;
+    }
+
+    _manualGuests.push({ name, email });
+    nameInput.value  = '';
+    emailInput.value = '';
+    nameInput.focus();
+    renderManualGuestList();
+}
+
+function removeManualGuest(email) {
+    _manualGuests = _manualGuests.filter(g => g.email !== email);
+    renderManualGuestList();
+}
+
+function renderManualGuestList() {
+    const container = document.getElementById('manualGuestList');
+    if (!container) return;
+    if (_manualGuests.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = _manualGuests.map(g => `
+        <span class="manual-guest-tag" title="${g.email}">
+            ${g.name ? `<strong>${escapeHtml(g.name)}</strong>&nbsp;` : ''}
+            <span style="opacity:0.75">${escapeHtml(g.email)}</span>
+            <button type="button" onclick="removeManualGuest('${g.email}')" title="Xóa">✕</button>
+        </span>
+    `).join('');
+}
+
+// Cho phép nhấn Enter trên ô email để thêm nhanh + keyboard navigation cho suggestions
+document.addEventListener('DOMContentLoaded', () => {
+    const emailInput = document.getElementById('inviteGuestEmail');
+    const nameInput  = document.getElementById('inviteGuestName');
+
+    if (emailInput) {
+        emailInput.addEventListener('keydown', e => {
+            if (handleSuggestionKeydown(e)) return;
+            if (e.key === 'Enter') { e.preventDefault(); addManualGuest(); }
+        });
+    }
+    if (nameInput) {
+        nameInput.addEventListener('keydown', e => {
+            if (handleSuggestionKeydown(e)) return;
+            if (e.key === 'Enter') { e.preventDefault(); emailInput?.focus(); }
+        });
+    }
+
+    // Bấm ngoài vùng invite → ẩn suggestions
+    document.addEventListener('click', e => {
+        const wrapper = document.querySelector('.invite-manual-wrapper');
+        if (wrapper && !wrapper.contains(e.target)) hideSuggestions();
+    });
+});
+
+/* ---------- AUTOCOMPLETE LOGIC ---------- */
+let _activeSugIndex = -1;
+
+function onInviteInput() {
+    const nameVal  = (document.getElementById('inviteGuestName')?.value  || '').trim().toLowerCase();
+    const emailVal = (document.getElementById('inviteGuestEmail')?.value || '').trim().toLowerCase();
+    const query    = nameVal || emailVal;
+
+    if (!query || query.length < 1 || _allUsers.length === 0) {
+        hideSuggestions();
+        return;
+    }
+
+    // Lọc users khớp tên hoặc email, loại trừ người đã thêm
+    const addedEmails = new Set(_manualGuests.map(g => g.email.toLowerCase()));
+    const matches = _allUsers.filter(u => {
+        if (addedEmails.has((u.email || '').toLowerCase())) return false;
+        const fullName = (u.full_name || '').toLowerCase();
+        const email    = (u.email || '').toLowerCase();
+        return fullName.includes(query) || email.includes(query);
+    }).slice(0, 8); // tối đa 8 gợi ý
+
+    if (matches.length === 0) { hideSuggestions(); return; }
+
+    renderSuggestions(matches, query);
+}
+
+function highlightMatch(text, query) {
+    if (!query) return escapeHtml(text);
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escapeHtml(text);
+    return escapeHtml(text.slice(0, idx))
+        + `<mark>${escapeHtml(text.slice(idx, idx + query.length))}</mark>`
+        + escapeHtml(text.slice(idx + query.length));
+}
+
+function renderSuggestions(users, query) {
+    const list = document.getElementById('inviteSuggestions');
+    if (!list) return;
+    _activeSugIndex = -1;
+
+    list.innerHTML = users.map((u, i) => {
+        const initials = (u.full_name || u.email || '?')[0].toUpperCase();
+        return `
+        <li data-index="${i}" data-name="${escapeHtml(u.full_name || '')}" data-email="${escapeHtml(u.email || '')}"
+            onmousedown="selectSuggestion('${escapeHtml(u.full_name || '')}', '${escapeHtml(u.email || '')}')">
+            <div class="sug-avatar">${initials}</div>
+            <div class="sug-info">
+                <strong>${highlightMatch(u.full_name || 'Người dùng', query)}</strong>
+                <span>${highlightMatch(u.email || '', query)}</span>
+            </div>
+        </li>`;
+    }).join('');
+
+    list.style.display = 'block';
+}
+
+function selectSuggestion(name, email) {
+    const nameInput  = document.getElementById('inviteGuestName');
+    const emailInput = document.getElementById('inviteGuestEmail');
+    if (nameInput)  nameInput.value  = name;
+    if (emailInput) emailInput.value = email;
+    hideSuggestions();
+    // Tự động thêm ngay khi chọn
+    addManualGuest();
+}
+
+function hideSuggestions() {
+    const list = document.getElementById('inviteSuggestions');
+    if (list) { list.style.display = 'none'; list.innerHTML = ''; }
+    _activeSugIndex = -1;
+}
+
+function handleSuggestionKeydown(e) {
+    const list = document.getElementById('inviteSuggestions');
+    if (!list || list.style.display === 'none') return false;
+    const items = list.querySelectorAll('li');
+    if (!items.length) return false;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _activeSugIndex = Math.min(_activeSugIndex + 1, items.length - 1);
+        items.forEach((li, i) => li.classList.toggle('active', i === _activeSugIndex));
+        return true;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _activeSugIndex = Math.max(_activeSugIndex - 1, 0);
+        items.forEach((li, i) => li.classList.toggle('active', i === _activeSugIndex));
+        return true;
+    }
+    if (e.key === 'Enter' && _activeSugIndex >= 0) {
+        e.preventDefault();
+        const active = items[_activeSugIndex];
+        if (active) selectSuggestion(active.dataset.name, active.dataset.email);
+        return true;
+    }
+    if (e.key === 'Escape') {
+        hideSuggestions();
+        return true;
+    }
+    return false;
+}
+
+// Lấy danh sách guest thủ công để gửi cùng form (nếu cần)
+function getManualGuests() { return [..._manualGuests]; }
+
+// Reset khi đóng modal
+function resetManualGuests() {
+    _manualGuests = [];
+    renderManualGuestList();
+    hideSuggestions();
+    const nameInput  = document.getElementById('inviteGuestName');
+    const emailInput = document.getElementById('inviteGuestEmail');
+    if (nameInput)  nameInput.value  = '';
+    if (emailInput) emailInput.value = '';
+}
+
+window.addManualGuest    = addManualGuest;
+window.removeManualGuest = removeManualGuest;
+window.getManualGuests   = getManualGuests;
+window.resetManualGuests = resetManualGuests;
+window.onInviteInput     = onInviteInput;
+window.selectSuggestion  = selectSuggestion;
 
 /* ==========================================================================
    DATE & TIME FORMATTING UTILITIES (ĐÃ CẢI TIẾN TIẾNG VIỆT FIGMA UI)
@@ -6669,8 +9607,8 @@ function renderRooms(rooms, isAdmin) {
                     <div class="amenities-tags">${amenitiesHTML}</div>
                     <div class="card-actions">
                         <button class="btn-schedule" onclick="openScheduleModal(${room.id})">Xem lịch</button>
-                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openBookingModal(${room.id})"` : 'disabled'}>
-                            ${isAvailable ? 'Đặt ngay' : 'Hết chỗ'}
+                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openCreateMeeting({ roomId: ${room.id} })"` : 'disabled'}>
+                            ${isAvailable ? 'Tạo cuộc họp' : 'Hết chỗ'}
                         </button>
                         ${adminButtons}
                     </div>
@@ -6749,6 +9687,8 @@ function renderRoomAmenities(room) {
 /* ==========================================================================
    PARTICIPANT MANAGEMENT
    ========================================================================== */
+let _allUsers = []; // Cache danh sách người dùng để dùng cho autocomplete
+
 async function fetchAndRenderParticipants() {
     const container = document.getElementById('participantListContainer');
     if (!container) return;
@@ -6762,6 +9702,7 @@ async function fetchAndRenderParticipants() {
         if (!res.ok) throw new Error("Không thể lấy danh sách người dùng");
 
         const users = await res.json();
+        _allUsers = users || []; // Lưu cache
 
         if (!users || users.length === 0) {
             container.innerHTML = '<div style="color: #94a3b8; font-size: 0.82rem;">Chưa có người dùng khác trong hệ thống.</div>';
@@ -6816,34 +9757,21 @@ function closeScheduleModal() {
 }
 
 function openBookingModal(roomId) {
-    const room = allRooms.find(r => r.id === roomId && r.is_active !== false);
-    if (!room) return;
-
-    setDefaultBookingTimes();
-    selectBookingRoom(room);
-    renderRoomOptions();
-
-    const modal = document.getElementById('bookingModal');
-    if (modal) modal.style.display = 'flex';
-    fetchAndRenderEquipments();
-    fetchAndRenderParticipants();
+    if (typeof openCreateMeeting === 'function') {
+        openCreateMeeting(roomId ? { roomId } : {});
+        return;
+    }
 }
 
 function closeBookingModal() {
-    const modal = document.getElementById('bookingModal');
-    if (modal) modal.style.display = 'none';
+    if (typeof closeCreateMeeting === 'function') closeCreateMeeting();
 }
 
 async function openQuickBooking() {
-    const role = localStorage.getItem('role') || 'user';
-    if (!allRooms.length) await fetchRooms(role === 'admin');
-
-    const room = allRooms.find(item => item.is_active !== false);
-    if (!room) {
-        alert('Hiện chưa có phòng họp đang hoạt động.');
+    if (typeof openCreateMeeting === 'function') {
+        openCreateMeeting();
         return;
     }
-    openBookingModal(room.id);
 }
 
 function selectBookingRoom(room) {
@@ -7735,90 +10663,4 @@ window.openEditEquipmentModal = openEditEquipmentModal;
 window.closeEquipmentModal = closeEquipmentModal;
 window.handleEquipmentFormSubmit = handleEquipmentFormSubmit;
 window.deleteEquipment = deleteEquipment;
-````
-
-## File: app/main.py
-````python
-from pathlib import Path
-from fastapi import FastAPI, Depends
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session, configure_mappers
-
-# 1. DB & Models
-from app.db.session import Base
-from app.core.database import engine, get_db
-from app.models.user import User
-from app.models.room import Room
-from app.models.meeting import Meeting
-from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
-
-# 2. Routers & Security
-from app.routers import auth, equipment, meetings, notifications, rooms, users
-from app.core.security import authenticate_user
-from app.routers.auth import issue_token
-from app.schemas.auth import LoginRequest
-
-# 3. Khởi tạo Mapper & Tạo bảng Database
-try:
-    configure_mappers()
-except Exception as e:
-    print(f"❌ Lỗi cấu hình ORM Models: {e}")
-
-Base.metadata.create_all(bind=engine)
-
-# 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
-app = FastAPI(title="Meeting Management System API", version="1.0.0")
-
-# 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 6. Cấu hình Static Files & Frontend
-BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "frontend"
-
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
-    assets_dir = FRONTEND_DIR / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
-
-# 7. Đăng ký API Routers với Prefix chuẩn
-app.include_router(auth.router, prefix="/api", tags=["auth"])
-app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
-app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
-app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
-app.include_router(notifications.router, prefix="/api", tags=["notifications"])
-app.include_router(users.router, prefix="/api", tags=["users"])
-
-# 8. Endpoints Đăng nhập & Root
-@app.post("/api/login", tags=["auth"])
-def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = authenticate_user(db, payload.username, payload.password)
-    token_response = issue_token(user)
-    return {
-        **token_response.model_dump(),
-        "user_name": token_response.full_name,
-    }
-
-@app.get("/", tags=["Root"])
-def read_root():
-    return {"status": "success", "message": "Meeting Management System API is running"}
-
-@app.get("/dashboard", tags=["Web UI"])
-def render_dashboard_page():
-    path = FRONTEND_DIR / "dashboard.html"
-    return FileResponse(path) if path.exists() else {"error": "Dashboard page not found"}
-
-@app.get("/app", tags=["Web UI"])
-def render_index_page():
-    path = FRONTEND_DIR / "index.html"
-    return FileResponse(path) if path.exists() else {"error": "Application page not found"}
 ````

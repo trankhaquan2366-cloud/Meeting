@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.models.room import Room
-from app.models.meeting import Meeting
-from app.models.user import User  # Thêm import model User nếu chưa có
+from app.models.meeting import Meeting, MeetingParticipant
+from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
 class MeetingService:
@@ -52,14 +53,29 @@ class MeetingService:
                 detail="Không thể đặt lịch họp với thời gian bắt đầu nằm trong quá khứ!"
             )
 
-        # 1. Kiểm tra phòng họp có tồn tại và active không
-        room = db.query(Room).filter(Room.id == payload.room_id, Room.is_active == True).first()
+        # 0b. Kiểm tra end_time phải sau start_time
+        if payload.end_time <= payload.start_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Thời gian kết thúc phải sau thời gian bắt đầu!"
+            )
 
-        if not room:
-         raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Phòng họp không tồn tại hoặc đã bị ngưng hoạt động!"
-    )
+        # 1. Xác định meeting_type và kiểm tra phòng (chỉ khi offline)
+        meeting_type = getattr(payload, 'meeting_type', 'offline') or 'offline'
+        online_link  = (getattr(payload, 'online_link', None) or '').strip() or None
+
+        if meeting_type == 'offline':
+            room = db.query(Room).filter(
+                Room.id == payload.room_id,
+                Room.is_active == True
+            ).first()
+            if not room:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phòng họp không tồn tại hoặc đã ngưng hoạt động!"
+                )
+        else:
+            room = None
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
@@ -105,36 +121,36 @@ class MeetingService:
                     check_equipment_availability(db, s_time, e_time, requested_equipments)
             
             for s_time, e_time in meeting_dates:
-                # Kiểm tra chồng lặp thời gian cho từng ngày trong chu kỳ đối với đúng phòng đó
-                overlapping_meeting = db.query(Meeting).filter(
-                    Meeting.room_id == payload.room_id,
-                    Meeting.status.notin_(["CANCELLED", "canceled"]),
-                    and_(
-                        Meeting.start_time < e_time,
-                        Meeting.end_time > s_time
-                    )
-                ).first()
+                # Kiểm tra conflict phòng — chỉ áp dụng cho OFFLINE meeting
+                if meeting_type == 'offline':
+                    overlapping_meeting = db.query(Meeting).filter(
+                        Meeting.room_id == payload.room_id,
+                        Meeting.status.notin_(["CANCELLED", "canceled"]),
+                        and_(
+                            Meeting.start_time < e_time,
+                            Meeting.end_time > s_time
+                        )
+                    ).first()
 
-                # Nếu tìm thấy lịch trùng -> Rollback yêu cầu hiện tại
-                if overlapping_meeting:
-                    db.rollback()
-                    date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
-                    
-                    if not recurrence_type or recurrence_type == "none":
-                        detail_msg = f"Phòng họp '{room.name}' đã bị trùng khung giờ vào ngày {date_str}! Vui lòng chọn thời gian khác."
-                    else:
-                        detail_msg = f"Phòng họp '{room.name}' đã bị trùng lịch vào ngày {date_str}. Yêu cầu đặt chuỗi định kỳ đã bị từ chối để tránh xung đột."
+                    if overlapping_meeting:
+                        db.rollback()
+                        date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
+                        if not recurrence_type or recurrence_type == "none":
+                            detail_msg = f"Phòng họp '{room.name}' đã có cuộc họp trong khung giờ này."
+                        else:
+                            detail_msg = f"Phòng họp '{room.name}' đã bị trùng lịch vào ngày {date_str}."
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=detail_msg
+                        )
 
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=detail_msg
-                    )
-
-                # Tạo bản ghi đặt phòng cho ngày hiện tại
+                # Tạo bản ghi cuộc họp
                 new_meeting = Meeting(
                     title=payload.title,
                     description=payload.description,
-                    room_id=payload.room_id,
+                    meeting_type=meeting_type,
+                    online_link=online_link,
+                    room_id=payload.room_id if meeting_type == 'offline' else None,
                     organizer_id=organizer_id,
                     start_time=s_time,
                     end_time=e_time,
@@ -156,6 +172,24 @@ class MeetingService:
                             note=getattr(item, 'note', None)
                         )
                         db.add(me)
+
+                # Lưu participants — D2: skip organizer, atomic flush
+                participant_ids_list = getattr(payload, 'participant_ids', []) or []
+                for pid in participant_ids_list:
+                    if pid == organizer_id:  # D2: organizer đã track qua organizer_id, skip
+                        continue
+                    mp = MeetingParticipant(meeting_id=new_meeting.id, user_id=pid)
+                    db.add(mp)
+
+                if participant_ids_list:
+                    try:
+                        db.flush()  # một flush duy nhất, atomic với transaction
+                    except IntegrityError:
+                        db.rollback()
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="participant_ids chứa user không tồn tại hoặc bị trùng lặp."
+                        )
 
                 created_meetings.append(new_meeting)
 
@@ -247,3 +281,13 @@ class MeetingService:
                 slot_start += timedelta(minutes=30)  # Bước nhảy gợi ý mỗi 30 phút
 
         return {"suggested_slots": suggested_slots}
+
+    @staticmethod
+    def suggest_time(db: Session, payload):
+        """Alias cho calculate_suggested_times — dùng bởi router /suggest-time."""
+        return MeetingService.calculate_suggested_times(
+            db=db,
+            participant_ids=payload.participant_ids,
+            date_str=payload.date,
+            duration_minutes=payload.duration_minutes
+        )

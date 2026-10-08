@@ -53,16 +53,19 @@ def create_meeting(
     )
 
     # 2. Gửi thông báo ngầm cho những người được mời tham dự
+    # Filter organizer khỏi danh sách — organizer không nhận invitation notification
     if payload.participant_ids and created_meetings:
         first_meeting = created_meetings[0] if isinstance(created_meetings, list) else created_meetings
         start_str = first_meeting.start_time.strftime("%H:%M %d/%m/%Y")
-        background_tasks.add_task(
-            send_meeting_invitation_notifications,
-            db=db,
-            participant_ids=payload.participant_ids,
-            meeting_title=first_meeting.title,
-            start_time_str=start_str,
-        )
+        notify_ids = [pid for pid in payload.participant_ids if pid != current_user.id]
+        if notify_ids:
+            background_tasks.add_task(
+                send_meeting_invitation_notifications,
+                db=db,
+                participant_ids=notify_ids,
+                meeting_title=first_meeting.title,
+                start_time_str=start_str,
+            )
 
     return created_meetings
 
