@@ -392,6 +392,10 @@ body {
 .booking-room-name, .booking-meeting-title { display: block; }
 .booking-room-name { color: #0f172a; font-size: 14px; font-weight: 700; }
 .booking-meeting-title { margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.45; }
+.booking-meeting-link { display: inline-block; margin-top: 6px; color: #1d4ed8; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.booking-meeting-link:hover { color: #1e40af; }
+.booking-calendar-link { display: inline-block; margin: 6px 0 0 10px; color: #475569; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.booking-calendar-link:hover { color: #1d4ed8; }
 .booking-equipment-summary { margin-top: 7px; color: #64748b; font-size: 11px; line-height: 1.5; }
 .booking-datetime { display: flex; flex-direction: column; gap: 4px; }
 .booking-date { color: #64748b; font-size: 12px; }

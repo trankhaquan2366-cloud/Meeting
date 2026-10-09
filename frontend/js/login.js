@@ -39,6 +39,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Lưu Token vào LocalStorage
                 const token = result.access_token || result.token;
                 localStorage.setItem('token', token);
+
+                const email = result.email || result.user?.email;
+                if (email) localStorage.setItem('user_email', email);
                 
                 if (result.user_name) localStorage.setItem('user_name', result.user_name);
                 if (result.role) localStorage.setItem('role', result.role);

@@ -141,7 +141,7 @@ class TestResponseShape:
         item = resp.json()[0]
         expected = {
             "id", "title", "description",
-            "meeting_type", "online_link",
+            "meeting_type", "meeting_link", "online_link",
             "room_id", "organizer_id",
             "start_time", "end_time", "status",
             "is_recurring", "recurring_type",
