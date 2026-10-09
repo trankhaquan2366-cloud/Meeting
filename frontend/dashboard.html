@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,6 +10,7 @@
     <link rel="stylesheet" href="css/booking.css?v=3">
     <link rel="stylesheet" href="css/create-meeting.css?v=1">
 </head>
+
 <body>
     <div class="app-layout" id="appLayout">
         <!-- SIDEBAR -->
@@ -17,26 +19,53 @@
                 <span class="logo-icon">RS</span>
                 <span class="brand-name">RoomSync</span>
             </div>
-            
+
             <nav class="nav-menu">
                 <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
                     <span class="nav-text">Tổng quan</span>
                 </a>
                 <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path>
+                    </svg>
                     <span class="nav-text">Phòng họp</span>
                 </a>
                 <a href="#" class="nav-item" id="navEquipments" onclick="switchMainTab('equipments', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M9 9h6v6H9zM9 2v2m6-2v2M9 20v2m6-2v2M2 9h2m-2 6h2m16-6h2m-2 6h2"></path></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                        <path d="M9 9h6v6H9zM9 2v2m6-2v2M9 20v2m6-2v2M2 9h2m-2 6h2m16-6h2m-2 6h2"></path>
+                    </svg>
                     <span class="nav-text">Thiết bị</span>
                 </a>
                 <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
                     <span class="nav-text">Đặt lịch của tôi</span>
                 </a>
+                <!-- TAB BÁO CÁO TRÊN NAVBAR -->
+                <a href="#" class="nav-item" id="navReport" onclick="switchMainTab('report', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 20V10M12 20V4M6 20v-6"></path>
+                    </svg>
+                    <span class="nav-text">Báo cáo sử dụng</span>
+                </a>
                 <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
                     <span class="nav-text">Cài đặt</span>
                 </a>
             </nav>
@@ -56,20 +85,34 @@
             <header class="topbar">
                 <div class="topbar-left">
                     <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
                     </button>
-                    
+
                     <div class="search-box" id="topbarSearchContainer">
-                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..." oninput="handleSearch()">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..."
+                            oninput="handleSearch()">
                     </div>
                 </div>
-                
+
                 <div class="topbar-right">
                     <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                     <div class="notification-wrapper">
-                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()" title="Thông báo">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()"
+                            title="Thông báo">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
                             <span id="notificationDot" class="notification-dot" style="display: none;"></span>
                         </button>
                         <div id="notificationPopup" class="notification-popup" style="display: none;">
@@ -95,10 +138,12 @@
                         <div class="hero-content">
                             <span class="hero-badge">Hệ thống Quản lý Doanh nghiệp</span>
                             <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
-                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
+                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án
+                                kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
                             <div class="hero-actions">
                                 <button class="btn-hero-primary" onclick="openCreateMeeting()">Tạo cuộc họp</button>
-                                <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
+                                <button class="btn-hero-secondary"
+                                    onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
                             </div>
                         </div>
                     </div>
@@ -108,7 +153,8 @@
                             <h2>Phòng họp hiện có</h2>
                             <p class="subtitle" id="currentDateText">Đang tải...</p>
                         </div>
-                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
                             + Thêm phòng họp
                         </button>
                     </div>
@@ -138,7 +184,8 @@
 
                     <div class="filter-wrapper">
                         <div class="filter-left">
-                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span id="filterDateLabel">26/09/2026</span></button>
+                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span
+                                    id="filterDateLabel">26/09/2026</span></button>
                             <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
                                 <option value="all">Sức chứa ˅</option>
                                 <option value="small">Nhỏ (1 - 5 người)</option>
@@ -175,7 +222,8 @@
 
                     <div class="page-header">
                         <h2>Tất cả phòng họp</h2>
-                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
                             + Thêm phòng họp
                         </button>
                     </div>
@@ -190,14 +238,16 @@
                             <h2>Trạng thái và khả dụng thiết bị</h2>
                             <p class="subtitle">Số lượng khả dụng được tính theo khung thời gian đã chọn.</p>
                         </div>
-                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()" style="display: none;">
+                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()"
+                            style="display: none;">
                             + Thêm thiết bị mới
                         </button>
                     </div>
                     <div class="equipment-availability-filters">
                         <label class="equipment-filter-field">
                             <span>Bắt đầu</span>
-                            <input id="equipmentStartTime" type="datetime-local" onchange="fetchEquipmentAvailability()">
+                            <input id="equipmentStartTime" type="datetime-local"
+                                onchange="fetchEquipmentAvailability()">
                         </label>
                         <label class="equipment-filter-field">
                             <span>Kết thúc</span>
@@ -205,11 +255,13 @@
                         </label>
                         <label class="equipment-filter-field">
                             <span>Phân loại</span>
-                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại" oninput="scheduleEquipmentAvailabilityFetch()">
+                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
                         </label>
                         <label class="equipment-filter-field">
                             <span>Tìm thiết bị</span>
-                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị" oninput="scheduleEquipmentAvailabilityFetch()">
+                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
                         </label>
                     </div>
                     <div class="table-card equipment-availability-table-wrap">
@@ -226,7 +278,9 @@
                                 </tr>
                             </thead>
                             <tbody id="equipmentAvailabilityTableBody">
-                                <tr><td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td></tr>
+                                <tr>
+                                    <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -235,8 +289,10 @@
                     <div id="adminEquipmentSection" style="display: none; margin-top: 28px;">
                         <div class="page-header" style="margin-bottom: 14px;">
                             <div>
-                                <h3 style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">Bảng Quản Lý Thiết Bị (Admin Table)</h3>
-                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle Bật/Tắt và Chỉnh sửa / Xóa.</p>
+                                <h3 style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">Bảng Quản Lý Thiết Bị
+                                    (Admin Table)</h3>
+                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle
+                                    Bật/Tắt và Chỉnh sửa / Xóa.</p>
                             </div>
                         </div>
                         <div class="table-card equipment-availability-table-wrap">
@@ -252,7 +308,9 @@
                                     </tr>
                                 </thead>
                                 <tbody id="adminEquipmentTableBody">
-                                    <tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>
+                                    <tr>
+                                        <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -266,53 +324,179 @@
                     </div>
                     <div class="table-card">
                         <div class="table-scroll my-bookings-scroll">
-                        <table class="data-table my-bookings-table">
-                            <thead>
-                                <tr>
-                                    <th>Phòng họp</th>
-                                    <th>Thời gian</th>
-                                    <th>Trạng thái</th>
-                                    <th>Hành động</th>
-                                </tr>
-                            </thead>
-                            <tbody id="myBookingsTableBody"></tbody>
-                        </table>
+                            <table class="data-table my-bookings-table">
+                                <thead>
+                                    <tr>
+                                        <th>Phòng họp</th>
+                                        <th>Thời gian</th>
+                                        <th>Trạng thái</th>
+                                        <th>Hành động</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="myBookingsTableBody"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
 
-                <!-- VIEW 5: CÀI ĐẶT -->
-                <div id="viewSettings" class="tab-view" style="display: none;">
+                <!-- VIEW 5: BÁO CÁO SỬ DỤNG PHÒNG HỌP (TAB BÁO CÁO CHÍNH THỨC) -->
+                <div id="viewReport" class="tab-view" style="display: none;">
                     <div class="page-header">
-                        <h2>Cài đặt tài khoản</h2>
+                        <h2>
+                            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                                <line x1="3" y1="20" x2="21" y2="20"></line>
+                            </svg>
+                            Báo cáo & Thống kê Sử dụng Phòng họp
+                        </h2>
+                        <p class="subtitle">Cung cấp dữ liệu phân tích tỷ lệ lấp đầy và tổng số giờ họp của từng phòng.
+                        </p>
                     </div>
-                    <div class="settings-card">
-                        <div class="settings-profile-header">
-                            <div class="user-avatar-large" id="settingsAvatar">N</div>
-                            <div>
-                                <h3 id="settingsName">Nguyễn Minh Tuấn</h3>
-                                <p id="settingsRole" class="subtitle">Quản trị viên</p>
+
+                    <!-- Bộ lọc báo cáo -->
+                    <div class="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap gap-4 items-end"
+                        style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; display: flex; gap: 16px; align-items: flex-end;">
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Từ
+                                ngày:</label>
+                            <input type="datetime-local" id="reportStartDate"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Đến
+                                ngày:</label>
+                            <input type="datetime-local" id="reportEndDate"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Phòng
+                                họp:</label>
+                            <select id="reportRoomIdSelect"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem; background: #fff;">
+                                <option value="">Tất cả các phòng</option>
+                            </select>
+                        </div>
+                        <button onclick="fetchRoomUsageReport()"
+                            style="background: #2563eb; color: #fff; border: none; padding: 9px 16px; border-radius: 6px; font-weight: 600; cursor: pointer;">
+                            Xem Báo Cáo
+                        </button>
+                    </div>
+
+                    <!-- Khối Tổng quan (Summary Cards) -->
+                    <div class="stats-grid" style="margin-bottom: 24px;">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số phòng</span>
+                            <div class="stat-value" id="sumTotalRooms">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số cuộc họp</span>
+                            <div class="stat-value text-green" id="sumTotalMeetings">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số giờ họp</span>
+                            <div class="stat-value text-orange" id="sumTotalHours">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ lấp đầy TB</span>
+                            <div class="stat-value text-purple" id="sumAvgOccupancy">-</div>
+                        </div>
+                    </div>
+
+                    <!-- Bảng chi tiết -->
+                    <div class="table-card">
+                        <div style="padding: 16px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #1e293b;">
+                            Chi tiết theo từng phòng họp</div>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Tên phòng</th>
+                                        <th>Số cuộc họp</th>
+                                        <th>Tổng số giờ</th>
+                                        <th>Tỷ lệ lấp đầy (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="roomDetailsTableBody">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">Chưa
+                                            có dữ liệu. Bấm "Xem Báo Cáo" để tải.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 6: CÀI ĐẶT -->
+                <div id="viewSettings" class="tab-view max-w-4xl mx-auto py-6 px-4" style="display: none;">
+                    <!-- Tiêu đề trang -->
+                    <div class="mb-6">
+                        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Cài đặt tài khoản</h1>
+                        <p class="text-sm text-gray-500 mt-1">Quản lý thông tin cá nhân và bảo mật tài khoản của bạn.
+                        </p>
+                    </div>
+
+                    <div class="space-y-6">
+                        <!-- Thẻ 1: Thông tin hồ sơ -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <div class="flex items-center gap-4 pb-6 border-b border-gray-100">
+                                <div id="settingsAvatar"
+                                    class="w-16 h-16 rounded-full bg-[#004CFF] text-white flex items-center justify-center text-2xl font-bold shadow-inner">
+                                    Q
+                                </div>
+                                <div>
+                                    <h3 id="settingsName" class="text-lg font-semibold text-gray-900">Quản trị viên</h3>
+                                    <p id="settingsRole" class="text-sm text-gray-500">Quản trị viên</p>
+                                </div>
+                            </div>
+
+                            <!-- Form cập nhật thông tin -->
+                            <div class="mt-6 space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Họ và tên</label>
+                                    <input type="text" id="settingsInputName"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Email liên hệ</label>
+                                    <input type="email" id="settingsInputEmail"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div class="pt-2">
+                                    <button type="button" onclick="updateUserSettings()"
+                                        class="px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-all shadow-sm focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                                        Lưu thay đổi
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="settings-form">
-                            <div class="form-group">
-                                <label>Họ và tên</label>
-                                <input type="text" class="form-control" id="settingsInputName" value="Nguyễn Minh Tuấn">
-                            </div>
-                            <div class="form-group">
-                                <label>Email liên hệ</label>
-                                <input type="email" class="form-control" id="settingsInputEmail" value="admin@congty.com" readonly>
-                            </div>
-                            <button class="btn-save" onclick="alert('Đã cập nhật thông tin!')">Lưu thay đổi</button>
-                        </div>
+                        <!-- Thẻ 2: Phiên đăng nhập & Bảo mật -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Phiên đăng nhập</h3>
+                            <p class="text-sm text-gray-500 mb-4">Quản lý trạng thái kết nối của bạn trên hệ thống
+                                RoomSync.</p>
 
-                        <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
-
-                        <div class="logout-section">
-                            <h4>Phiên đăng nhập</h4>
-                            <p class="subtitle" style="margin-bottom: 12px;">Bấm nút bên dưới để thoát khỏi hệ thống RoomSync.</p>
-                            <button onclick="logout()" class="btn-logout-danger">🚪 Đăng xuất khỏi hệ thống</button>
+                            <div class="pt-4 border-t border-gray-100 flex items-center justify-between">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900 block">Đăng xuất tài khoản</span>
+                                    <span class="text-xs text-gray-500">Kết thúc phiên làm việc hiện tại trên thiết bị
+                                        này.</span>
+                                </div>
+                                <button type="button" onclick="logout()"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors">
+                                    Đăng xuất
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -340,7 +524,8 @@
                 <input type="hidden" id="editRoomId">
                 <div class="form-group">
                     <label>Tên phòng họp</label>
-                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B" required>
+                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
+                        required>
                 </div>
                 <div class="form-group">
                     <label>Vị trí (Tầng)</label>
@@ -352,7 +537,8 @@
                 </div>
                 <div class="form-group">
                     <label>Tiện ích (phân cách bằng dấu phẩy)</label>
-                    <input type="text" id="roomAmenities" class="form-control" placeholder="Màn hình, Wifi, Video, Đồ uống">
+                    <input type="text" id="roomAmenities" class="form-control"
+                        placeholder="Màn hình, Wifi, Video, Đồ uống">
                 </div>
                 <div class="modal-actions">
                     <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
@@ -370,7 +556,8 @@
                 <input type="hidden" id="editEquipmentId">
                 <div class="form-group">
                     <label>Tên thiết bị <span style="color:red;">*</span></label>
-                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony" required>
+                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony"
+                        required>
                 </div>
                 <div class="form-group">
                     <label>Mã thiết bị</label>
@@ -378,7 +565,8 @@
                 </div>
                 <div class="form-group">
                     <label>Phân loại</label>
-                    <input type="text" id="equipmentCategory" class="form-control" placeholder="Ví dụ: Audio, Visual, Cable">
+                    <input type="text" id="equipmentCategory" class="form-control"
+                        placeholder="Ví dụ: Audio, Visual, Cable">
                 </div>
                 <div class="form-group">
                     <label>Số lượng tổng (total_qty) <span style="color:red;">*</span></label>
@@ -411,13 +599,15 @@
                             <p class="cm-help">Xác định cuộc họp và nội dung trước khi lựa chọn vị trí hoặc phòng.</p>
                         </div>
                         <label class="cm-label" for="cmTitle">Tên cuộc họp</label>
-                        <input id="cmTitle" class="cm-title-input" name="title" maxlength="120" placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
+                        <input id="cmTitle" class="cm-title-input" name="title" maxlength="120"
+                            placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
                         <p id="cmTitleError" class="cm-field-error">Nhập tên cuộc họp trước khi tạo.</p>
                     </section>
 
                     <section class="cm-section">
                         <label class="cm-label" for="cmDescription">Mô tả ngắn</label>
-                        <textarea id="cmDescription" class="cm-textarea" rows="3" placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
+                        <textarea id="cmDescription" class="cm-textarea" rows="3"
+                            placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
                     </section>
 
                     <section class="cm-section">
@@ -440,9 +630,12 @@
                             </label>
                         </div>
                         <div class="cm-seg" role="group" aria-label="Lặp lại">
-                            <button type="button" id="cmRecNone" aria-pressed="true" onclick="setRecurrence('none')">Không lặp</button>
-                            <button type="button" id="cmRecWeekly" aria-pressed="false" onclick="setRecurrence('weekly')">Hàng tuần</button>
-                            <button type="button" id="cmRecMonthly" aria-pressed="false" onclick="setRecurrence('monthly')">Hàng tháng</button>
+                            <button type="button" id="cmRecNone" aria-pressed="true"
+                                onclick="setRecurrence('none')">Không lặp</button>
+                            <button type="button" id="cmRecWeekly" aria-pressed="false"
+                                onclick="setRecurrence('weekly')">Hàng tuần</button>
+                            <button type="button" id="cmRecMonthly" aria-pressed="false"
+                                onclick="setRecurrence('monthly')">Hàng tháng</button>
                         </div>
                         <select id="cmRecurrence" class="cm-select" hidden>
                             <option value="none">Không lặp</option>
@@ -464,23 +657,29 @@
                             <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
                         </div>
                         <div class="cm-attendee-search">
-                            <input id="cmAttendeeSearch" class="cm-search" type="search" placeholder="Tìm người tham dự..." autocomplete="off" />
+                            <input id="cmAttendeeSearch" class="cm-search" type="search"
+                                placeholder="Tìm người tham dự..." autocomplete="off" />
                             <ul id="cmAttendeeSuggest" class="cm-suggest"></ul>
                         </div>
                         <div id="cmAttendeeChips" class="cm-chips"></div>
-                        <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên nhóm</button>
+                        <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên
+                            nhóm</button>
                     </section>
 
                     <section class="cm-section">
                         <p class="cm-section-title">Vị trí</p>
                         <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp">
-                            <button type="button" id="cmModeOnline" aria-pressed="false" onclick="setCreateMeetingMode('online')">🌐 Online</button>
-                            <button type="button" id="cmModeOffline" aria-pressed="true" onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
+                            <button type="button" id="cmModeOnline" aria-pressed="false"
+                                onclick="setCreateMeetingMode('online')">🌐 Online</button>
+                            <button type="button" id="cmModeOffline" aria-pressed="true"
+                                onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
                         </div>
                         <div id="cmOnlineBox" class="cm-online-box">
                             <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
-                            <input id="cmMeetingLink" class="cm-input" type="url" placeholder="https://meet.roomsync.vn/..." />
-                            <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo link</button>
+                            <input id="cmMeetingLink" class="cm-input" type="url"
+                                placeholder="https://meet.roomsync.vn/..." />
+                            <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo
+                                link</button>
                         </div>
 
                         <div id="cmResources" class="cm-resources is-open">
@@ -499,7 +698,8 @@
                                     <strong id="cmCapacityValue">1 người</strong>
                                     <span id="cmCapacityMin" class="cm-help">Phòng tối thiểu: 1 chỗ</span>
                                 </div>
-                                <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost" onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
+                                <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost"
+                                    onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
                             </div>
                             <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
                             <div id="cmRoomResults" class="cm-room-list">
@@ -527,7 +727,8 @@
                     <div id="cmSummaryStatus" class="cm-status is-ok">✓ Không có xung đột</div>
                     <div class="cm-summary-actions">
                         <button id="cmSubmit" class="cm-btn cm-btn-primary" type="submit">TẠO CUỘC HỌP</button>
-                        <button class="cm-btn cm-btn-secondary" type="button" onclick="closeCreateMeeting()">Hủy</button>
+                        <button class="cm-btn cm-btn-secondary" type="button"
+                            onclick="closeCreateMeeting()">Hủy</button>
                     </div>
                 </aside>
             </form>
@@ -536,7 +737,8 @@
                 <div class="cm-success-icon" aria-hidden="true">✓</div>
                 <h2>Đã tạo cuộc họp</h2>
                 <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
-                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp khác</button>
+                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp
+                    khác</button>
                 <button type="button" class="cm-btn cm-btn-secondary" onclick="closeCreateMeeting()">Đóng</button>
             </div>
         </section>
@@ -545,4 +747,5 @@
     <script src="js/app.js?v=9"></script>
     <script src="js/create-meeting.js?v=2"></script>
 </body>
+
 </html>

@@ -37,9 +37,11 @@ CREATE TABLE IF NOT EXISTS meetings (
     id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
     title          VARCHAR(200) NOT NULL,
     description    TEXT DEFAULT NULL,
+    meeting_type   VARCHAR(20) NOT NULL DEFAULT 'offline',
+    online_link    VARCHAR(500) DEFAULT NULL,
     is_recurring   TINYINT(1) NOT NULL DEFAULT 0,
     recurring_type VARCHAR(20) DEFAULT NULL,
-    room_id        INT UNSIGNED NOT NULL,
+    room_id        INT UNSIGNED DEFAULT NULL,
     organizer_id   INT UNSIGNED DEFAULT NULL,
     start_time     DATETIME NOT NULL,
     end_time       DATETIME NOT NULL,
@@ -50,7 +52,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     KEY idx_meetings_room_id (room_id),
     KEY idx_meetings_organizer_id (organizer_id),
     KEY idx_meetings_start_time (start_time),
-    CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT fk_meetings_organizer FOREIGN KEY (organizer_id) REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE IF NOT EXISTS meeting_participants (

@@ -20,6 +20,26 @@ with engine.connect() as conn:
     else:
         print("Column 'amenities' already exists in rooms table.")
 
+    # 1.1 Kiểm tra và thêm cột meeting_type, online_link vào bảng meetings nếu chưa có
+    cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
+    if 'meeting_type' not in cols_meetings:
+        print("Adding meeting_type column to meetings table...")
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
+        conn.commit()
+        print("Column 'meeting_type' added to meetings table.")
+    if 'online_link' not in cols_meetings:
+        print("Adding online_link column to meetings table...")
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
+        conn.commit()
+        print("Column 'online_link' added to meetings table.")
+    
+    room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
+    if room_id_col and room_id_col[2] == 'NO':
+        col_type = room_id_col[1]
+        conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
+        conn.commit()
+        print("Column 'room_id' modified to allow NULL.")
+
     # 2. Cập nhật dữ liệu tiện ích cho các phòng hiện tại
     # Đặc biệt phòng vip viyyyy (id 10) từ ảnh của người dùng
     conn.execute(text("""

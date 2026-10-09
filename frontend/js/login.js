@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!loginForm) return;
 
-    loginForm.addEventListener('submit', async function(e) {
+    loginForm.addEventListener('submit', async function (e) {
         e.preventDefault();
 
         if (errorAlert) errorAlert.classList.add('hidden');
@@ -21,11 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const password = passwordInput.value;
 
         try {
-            // Gửi dữ liệu JSON tới API /api/login
-            const res = await fetch('http://localhost:8000/api/login', {
+            // Thay vì dùng URLSearchParams, hãy gửi dạng JSON chuẩn
+            const res = await fetch('http://localhost:8000/api/auth/login', {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json' 
+                headers: {
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     username: username,
@@ -36,21 +36,36 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await res.json();
 
             if (res.ok) {
-                // Lưu Token vào LocalStorage
+                // Lưu Token vào LocalStorage[cite: 5]
                 const token = result.access_token || result.token;
                 localStorage.setItem('token', token);
-                
-                if (result.user_name) localStorage.setItem('user_name', result.user_name);
+
+                if (result.full_name) localStorage.setItem('user_name', result.full_name);
                 if (result.role) localStorage.setItem('role', result.role);
 
-                // Chuyển hướng sang trang Dashboard
+                // 👉 LƯU THÊM EMAIL THẬT TỪ DATABASE VÀO LOCALSTORAGE
+                localStorage.setItem('user_email', result.email || username);
+
+                // Chuyển hướng sang trang Dashboard[cite: 5]
                 window.location.href = 'dashboard.html';
             } else {
                 if (errorAlert) {
-                    errorAlert.textContent = result.detail || 'Tài khoản hoặc mật khẩu không chính xác!';
+                    // Xử lý an toàn để tránh hiện chữ [object Object] khi FastAPI trả về lỗi cấu trúc
+                    let errorMessage = 'Tài khoản hoặc mật khẩu không chính xác!';
+                    if (result.detail) {
+                        if (typeof result.detail === 'string') {
+                            errorMessage = result.detail;
+                        } else if (Array.isArray(result.detail)) {
+                            errorMessage = result.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
+                        } else if (typeof result.detail === 'object') {
+                            errorMessage = result.detail.msg || JSON.stringify(result.detail);
+                        }
+                    }
+
+                    errorAlert.textContent = errorMessage;
                     errorAlert.classList.remove('hidden');
                 } else {
-                    alert(result.detail || 'Tài khoản hoặc mật khẩu không chính xác!');
+                    alert('Tài khoản hoặc mật khẩu không chính xác!');
                 }
             }
         } catch (err) {
