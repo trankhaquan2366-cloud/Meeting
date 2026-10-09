@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import require_role
+from app.core.time import normalize_to_utc_naive
 from app.models.room import Room
 from app.models.meeting import Meeting
 from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse
@@ -29,6 +30,9 @@ def get_available_rooms(
     end_time: datetime,
     db: Session = Depends(get_db)
 ):
+    start_time = normalize_to_utc_naive(start_time)
+    end_time = normalize_to_utc_naive(end_time)
+
     # 1. Kiểm tra thời gian đầu vào hợp lệ
     if start_time >= end_time:
         raise HTTPException(
@@ -38,7 +42,7 @@ def get_available_rooms(
 
     # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
     busy_rooms_query = db.query(Meeting.room_id).filter(
-        Meeting.status.notin_(["CANCELLED", "canceled"]),
+        Meeting.status != "CANCELLED",
         and_(
             Meeting.start_time < end_time,
             Meeting.end_time > start_time
@@ -147,6 +151,9 @@ def read_available_rooms(
     min_capacity: Optional[int] = Query(0, description="Sức chứa tối thiểu"),
     db: Session = Depends(get_db),
 ):
+    start_time = normalize_to_utc_naive(start_time)
+    end_time = normalize_to_utc_naive(end_time)
+
     if start_time >= end_time:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

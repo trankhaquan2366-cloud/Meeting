@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Depends
 from fastapi.responses import FileResponse
@@ -12,12 +14,15 @@ from app.models.user import User
 from app.models.room import Room
 from app.models.meeting import Meeting
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
+from app.models.calendar import UserCalendarEvent, UserCalendarToken
+from app.models.email_delivery import EmailDelivery
 
 # 2. Routers & Security
-from app.routers import auth, equipment, meetings, notifications, rooms, users
+from app.routers import auth, calendar_auth, equipment, meetings, notifications, rooms, users
 from app.core.security import authenticate_user
 from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
+from app.services.reminder_service import run_meeting_reminder_scheduler
 
 # 3. Khởi tạo Mapper & Tạo bảng Database
 try:
@@ -27,8 +32,29 @@ except Exception as e:
 
 Base.metadata.create_all(bind=engine)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    reminder_task = asyncio.create_task(
+        run_meeting_reminder_scheduler(),
+        name="meeting-reminder-scheduler",
+    )
+    app.state.reminder_task = reminder_task
+    try:
+        yield
+    finally:
+        reminder_task.cancel()
+        try:
+            await reminder_task
+        except asyncio.CancelledError:
+            pass
+
+
 # 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
-app = FastAPI(title="Meeting Management System API", version="1.0.0")
+app = FastAPI(
+    title="Meeting Management System API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 # 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
 app.add_middleware(
@@ -56,6 +82,11 @@ app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
 app.include_router(notifications.router, prefix="/api", tags=["notifications"])
 app.include_router(users.router, prefix="/api", tags=["users"])
+app.include_router(
+    calendar_auth.router,
+    prefix="/api/calendar",
+    tags=["calendar"],
+)
 
 # 8. Endpoints Đăng nhập & Root
 @app.post("/api/login", tags=["auth"])

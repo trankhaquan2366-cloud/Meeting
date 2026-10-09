@@ -12,6 +12,7 @@ from tests.helpers import (
     _make_token,
 )
 from app.models.meeting import MeetingParticipant
+from app.models.notification import Notification
 
 
 def _future_window():
@@ -40,6 +41,17 @@ def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: 
     saved = db_session.get(type(meeting), meeting.id)
     assert saved.status == "CANCELLED"
     assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
+    cancellation_notices = (
+        db_session.query(Notification)
+        .filter(Notification.title == "Cuộc họp đã bị hủy")
+        .all()
+    )
+    assert len(cancellation_notices) == 2
+    assert all(
+        "Không cung cấp lý do." in notice.content
+        and "xin lỗi" in notice.content
+        for notice in cancellation_notices
+    )
 
 
 def test_admin_can_cancel(client: TestClient, db_session: Session):
@@ -70,7 +82,7 @@ def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
     )
     assert response.status_code == 403
     db_session.expire_all()
-    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+    assert db_session.get(type(meeting), meeting.id).status == "CONFIRMED"
 
 
 def test_cancel_requires_authentication(client: TestClient, db_session: Session):

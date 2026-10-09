@@ -1033,11 +1033,13 @@ async function handleCreateMeetingSubmit(event) {
         room_id: cmState.mode === 'offline'
             ? (cmState.selectedRoom ? parseInt(cmState.selectedRoom.id, 10) : null)
             : null,
-        start_time: `${date}T${start}:00`,
-        end_time:   `${date}T${end}:00`,
+        start_time: new Date(`${date}T${start}:00`).toISOString(),
+        end_time: new Date(`${date}T${end}:00`).toISOString(),
         is_recurring: recurrenceType !== 'none',
         recurrence_type: recurrenceType,
-        recurrence_end_date: recurrenceEndDate,
+        recurrence_end_date: recurrenceEndDate
+            ? new Date(recurrenceEndDate).toISOString()
+            : null,
         equipments: cmState.mode === 'offline'
             ? Object.entries(cmState.borrowQty)
                 .filter(([, qty]) => qty > 0)

@@ -43,8 +43,8 @@ def test_availability_tracks_overlapping_bookings_and_inactive_status(
         db_session,
         room,
         organizer,
-        datetime(2026, 10, 5, 9, 0),
-        datetime(2026, 10, 5, 10, 0),
+        datetime(2026, 10, 5, 2, 0),
+        datetime(2026, 10, 5, 3, 0),
     )
     _attach_equipment(db_session, first_meeting.id, equipment.id, 2)
 
@@ -63,8 +63,8 @@ def test_availability_tracks_overlapping_bookings_and_inactive_status(
         db_session,
         room,
         organizer,
-        datetime(2026, 10, 5, 9, 45),
-        datetime(2026, 10, 5, 10, 15),
+        datetime(2026, 10, 5, 2, 45),
+        datetime(2026, 10, 5, 3, 15),
     )
     _attach_equipment(db_session, second_meeting.id, equipment.id, 3)
 
@@ -93,8 +93,8 @@ def test_availability_ignores_canceled_meetings_and_supports_filters(
         db_session,
         room,
         organizer,
-        datetime(2026, 10, 5, 9, 0),
-        datetime(2026, 10, 5, 10, 0),
+        datetime(2026, 10, 5, 2, 0),
+        datetime(2026, 10, 5, 3, 0),
         status="CANCELLED",
     )
     _attach_equipment(db_session, canceled_meeting.id, equipment.id, 5)

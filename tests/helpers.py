@@ -38,7 +38,7 @@ def _create_meeting(
     organizer: User,
     start: datetime,
     end: datetime,
-    status: str = "scheduled",
+    status: str = "CONFIRMED",
 ) -> Meeting:
     m = Meeting(
         title="Test meeting",

@@ -309,7 +309,32 @@
 
                         <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
 
-                        <div class="logout-section">
+                            <section aria-labelledby="calendarSettingsTitle" class="settings-form">
+                                <h4 id="calendarSettingsTitle">Tích hợp lịch cá nhân</h4>
+                                <p class="subtitle" style="margin: 8px 0 16px;">
+                                    Đồng bộ cuộc họp RoomSync sang lịch cá nhân của bạn.
+                                </p>
+                                <div class="form-group">
+                                    <strong>Google Calendar</strong>
+                                    <p id="googleCalendarStatus" class="subtitle">Chưa kiểm tra trạng thái</p>
+                                    <button id="googleCalendarConnect" class="btn-save" type="button"
+                                        onclick="connectCalendar('google')">Kết nối Google Calendar</button>
+                                    <button id="googleCalendarDisconnect" class="btn-cancel" type="button"
+                                        style="display: none;" onclick="disconnectCalendar('google')">Ngắt kết nối</button>
+                                </div>
+                                <div class="form-group">
+                                    <strong>Microsoft Outlook</strong>
+                                    <p id="outlookCalendarStatus" class="subtitle">Chưa kiểm tra trạng thái</p>
+                                    <button id="outlookCalendarConnect" class="btn-save" type="button"
+                                        onclick="connectCalendar('outlook')">Kết nối Outlook Calendar</button>
+                                    <button id="outlookCalendarDisconnect" class="btn-cancel" type="button"
+                                        style="display: none;" onclick="disconnectCalendar('outlook')">Ngắt kết nối</button>
+                                </div>
+                            </section>
+
+                            <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
+
+                            <div class="logout-section">
                             <h4>Phiên đăng nhập</h4>
                             <p class="subtitle" style="margin-bottom: 12px;">Bấm nút bên dưới để thoát khỏi hệ thống RoomSync.</p>
                             <button onclick="logout()" class="btn-logout-danger">🚪 Đăng xuất khỏi hệ thống</button>

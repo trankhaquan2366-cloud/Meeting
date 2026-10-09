@@ -27,12 +27,22 @@ class Meeting(Base):
     online_link = Column(String(500), nullable=True)
     is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
     recurring_type = Column(String(20), nullable=True)
+    recurring_series_id = Column(String(36), nullable=True, index=True)
+    recurrence_original_start = Column(DateTime, nullable=True)
+    recurrence_is_detached = Column(Boolean, nullable=False, default=False, server_default="0")
     # room_id is nullable: online meetings have no room
     room_id = Column(Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True, index=True)
     organizer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
-    status = Column(String(20), nullable=False, default="scheduled")
+    status = Column(
+        String(20),
+        nullable=False,
+        default="CONFIRMED",
+        server_default="CONFIRMED",
+    )
+    is_reminded_24h = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_reminded_15m = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 

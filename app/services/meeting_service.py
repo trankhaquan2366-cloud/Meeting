@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta
+import calendar
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +12,15 @@ from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
 class MeetingService:
+    @staticmethod
+    def _add_months(value: datetime, months: int) -> datetime:
+        month_index = value.month - 1 + months
+        while True:
+            year = value.year + month_index // 12
+            month = month_index % 12 + 1
+            if value.day <= calendar.monthrange(year, month)[1]:
+                return value.replace(year=year, month=month)
+            month_index += 1
 
     @staticmethod
     def cancel_meeting(db: Session, meeting_id: int, current_user: User):
@@ -46,7 +57,7 @@ class MeetingService:
         """VIỆC 2 & 3: Đặt phòng đơn hoặc định kỳ + Chặn quá khứ + Kiểm tra chống trùng lịch toàn diện"""
 
         # 0. Kiểm tra thời gian bắt đầu không được ở trong quá khứ
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if payload.start_time < now:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -85,6 +96,8 @@ class MeetingService:
         # Lấy thông tin lặp lịch từ payload
         recurrence_type = getattr(payload, "recurrence_type", "none")
         recurrence_end_date = getattr(payload, "recurrence_end_date", None)
+        is_recurring = recurrence_type not in (None, "none")
+        recurring_series_id = str(uuid4()) if is_recurring else None
 
         if recurrence_type == "until_changed" and not recurrence_end_date:
             recurrence_end_date = start_date + timedelta(days=365)
@@ -95,14 +108,14 @@ class MeetingService:
             # Vòng lặp sinh ra các khoảng thời gian lặp định kỳ
             current_start = start_date
             current_end = end_date
-            while current_start <= recurrence_end_date:
+            while current_start.date() <= recurrence_end_date.date():
                 meeting_dates.append((current_start, current_end))
                 if recurrence_type == "weekly":
                     current_start += timedelta(weeks=1)
                     current_end += timedelta(weeks=1)
                 elif recurrence_type == "monthly":
-                    current_start += timedelta(days=30)
-                    current_end += timedelta(days=30)
+                    current_start = MeetingService._add_months(current_start, 1)
+                    current_end = MeetingService._add_months(current_end, 1)
                 elif recurrence_type == "until_changed":
                     current_start += timedelta(days=30)
                     current_end += timedelta(days=30)
@@ -125,7 +138,7 @@ class MeetingService:
                 if meeting_type == 'offline':
                     overlapping_meeting = db.query(Meeting).filter(
                         Meeting.room_id == payload.room_id,
-                        Meeting.status.notin_(["CANCELLED", "canceled"]),
+                        Meeting.status != "CANCELLED",
                         and_(
                             Meeting.start_time < e_time,
                             Meeting.end_time > s_time
@@ -154,9 +167,11 @@ class MeetingService:
                     organizer_id=organizer_id,
                     start_time=s_time,
                     end_time=e_time,
-                    is_recurring=recurrence_type not in (None, "none"),
+                    is_recurring=is_recurring,
                     recurring_type=recurrence_type if recurrence_type != "none" else None,
-                    status="scheduled"
+                    recurring_series_id=recurring_series_id,
+                    recurrence_original_start=s_time if is_recurring else None,
+                    status="CONFIRMED"
                 )
                 db.add(new_meeting)
                 db.flush()
@@ -229,12 +244,12 @@ class MeetingService:
         
         working_intervals = [(work_start1, work_end1), (work_start2, work_end2)]
 
-        # Lấy toàn bộ cuộc họp trong ngày, loại trừ trạng thái 'canceled'
+        # Lấy toàn bộ cuộc họp trong ngày, loại trừ cuộc họp đã hủy.
         day_start = datetime.combine(target_date, datetime.min.time())
         day_end = datetime.combine(target_date, datetime.max.time())
         
         meetings = db.query(Meeting).filter(
-            Meeting.status.notin_(["CANCELLED", "canceled"]),
+            Meeting.status != "CANCELLED",
             Meeting.start_time <= day_end,
             Meeting.end_time >= day_start,
             Meeting.organizer_id.in_(participant_ids)

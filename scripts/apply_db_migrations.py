@@ -1,0 +1,86 @@
+"""Apply the email retry queue migration and verify the MySQL scheduler lock."""
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, inspect, text
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def main() -> int:
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        print("ERROR: DATABASE_URL is missing from .env")
+        return 1
+
+    engine = create_engine(database_url, pool_pre_ping=True)
+    try:
+        if engine.dialect.name != "mysql":
+            print(
+                "ERROR: Migration 013 and the named-lock check require MySQL; "
+                f"detected dialect {engine.dialect.name!r}"
+            )
+            return 1
+
+        migration_path = (
+            PROJECT_ROOT
+            / "migrations"
+            / "013_create_email_delivery_retry_queue.sql"
+        )
+        if not migration_path.is_file():
+            print(f"ERROR: Migration file not found: {migration_path}")
+            return 1
+
+        with engine.begin() as connection:
+            if inspect(connection).has_table("email_deliveries"):
+                print("Migration 013: email_deliveries already exists; skipped")
+            else:
+                statements = [
+                    statement.strip()
+                    for statement in migration_path.read_text(encoding="utf-8")
+                    .split(";")
+                    if statement.strip()
+                    and not statement.strip().upper().startswith("USE ")
+                ]
+                for statement in statements:
+                    connection.exec_driver_sql(statement)
+                print("Migration 013: email_deliveries created")
+
+        with engine.connect() as connection:
+            lock_name = "meeting_reminder_scheduler"
+            acquired = connection.execute(
+                text("SELECT GET_LOCK(:lock_name, 2)"),
+                {"lock_name": lock_name},
+            ).scalar()
+            if acquired != 1:
+                print(
+                    "MySQL named lock: FAIL "
+                    f"(GET_LOCK returned {acquired!r})"
+                )
+                return 1
+            released = connection.execute(
+                text("SELECT RELEASE_LOCK(:lock_name)"),
+                {"lock_name": lock_name},
+            ).scalar()
+            if released != 1:
+                print(
+                    "MySQL named lock: FAIL "
+                    f"(RELEASE_LOCK returned {released!r})"
+                )
+                return 1
+
+        print("MySQL named lock: PASS (GET_LOCK and RELEASE_LOCK succeeded)")
+        return 0
+    except Exception as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

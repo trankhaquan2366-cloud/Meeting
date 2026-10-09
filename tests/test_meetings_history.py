@@ -85,7 +85,7 @@ class TestCanceledMeetingExcluded:
         room = _create_room(db_session, "Room E")
         past = datetime.utcnow() - timedelta(days=10)
         end = datetime.utcnow() - timedelta(days=9)
-        m = _create_meeting(db_session, room, org, past, end, status="canceled")
+        m = _create_meeting(db_session, room, org, past, end, status="CANCELLED")
 
         resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
         assert resp.status_code == 200

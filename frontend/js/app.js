@@ -92,6 +92,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (isAdmin) {
         fetchAdminEquipments();
     }
+
+    const connectedCalendar = new URLSearchParams(location.search).get('calendar_connected');
+    if (connectedCalendar === 'google' || connectedCalendar === 'outlook') {
+        switchMainTab('settings', document.getElementById('navSettings'));
+        window.history.replaceState(null, '', `${location.pathname}#settings`);
+    }
 });
 
 /* ==========================================================================
@@ -141,6 +147,7 @@ function switchMainTab(tabName, el) {
         const view = document.getElementById('viewSettings');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
+        loadCalendarStatus();
     }
 }
 
@@ -250,6 +257,89 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.fetchNotifications = fetchNotifications;
 window.updateNotificationDot = updateNotificationDot;
+
+async function loadCalendarStatus() {
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/calendar/status`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) {
+            throw new Error(`Không thể tải trạng thái lịch (${response.status})`);
+        }
+        const calendarStatus = await response.json();
+        for (const [provider, label] of [['google', 'Google Calendar'], ['outlook', 'Outlook']]) {
+            const isConnected = Boolean(calendarStatus[provider]?.connected);
+            const prefix = provider === 'google' ? 'google' : 'outlook';
+            const statusElement = document.getElementById(`${prefix}CalendarStatus`);
+            const connectButton = document.getElementById(`${prefix}CalendarConnect`);
+            const disconnectButton = document.getElementById(`${prefix}CalendarDisconnect`);
+            if (statusElement) {
+                statusElement.textContent = isConnected
+                    ? `Đã kết nối ${label}`
+                    : `Chưa kết nối ${label}`;
+            }
+            if (connectButton) connectButton.style.display = isConnected ? 'none' : '';
+            if (disconnectButton) disconnectButton.style.display = isConnected ? '' : 'none';
+        }
+    } catch (error) {
+        console.error('Không thể tải trạng thái đồng bộ lịch:', error);
+        for (const id of ['googleCalendarStatus', 'outlookCalendarStatus']) {
+            const statusElement = document.getElementById(id);
+            if (statusElement) statusElement.textContent = 'Không thể tải trạng thái lịch';
+        }
+    }
+}
+
+async function connectCalendar(provider) {
+    const token = getAuthToken();
+    if (!token) {
+        window.location.href = 'login.html';
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/calendar/auth-url?provider=${encodeURIComponent(provider)}`,
+            { headers: { 'Authorization': `Bearer ${token}` } },
+        );
+        const result = await response.json();
+        if (!response.ok || !result.authorization_url) {
+            throw new Error(result.detail || 'Không thể bắt đầu kết nối lịch');
+        }
+        window.location.assign(result.authorization_url);
+    } catch (error) {
+        console.error('Không thể bắt đầu kết nối lịch:', error);
+        alert(error.message || 'Không thể bắt đầu kết nối lịch');
+    }
+}
+
+async function disconnectCalendar(provider) {
+    if (!confirm(`Bạn có chắc muốn ngắt kết nối ${provider === 'google' ? 'Google Calendar' : 'Outlook'}?`)) {
+        return;
+    }
+    const token = getAuthToken();
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/calendar/disconnect?provider=${encodeURIComponent(provider)}`,
+            {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            },
+        );
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.detail || 'Không thể ngắt kết nối lịch');
+        }
+        await loadCalendarStatus();
+    } catch (error) {
+        console.error('Không thể ngắt kết nối lịch:', error);
+        alert(error.message || 'Không thể ngắt kết nối lịch');
+    }
+}
 
 /* ==========================================================================
    MANUAL GUEST INVITE (nhập tên + gmail người ngoài hệ thống)
@@ -974,11 +1064,11 @@ async function handleBookingSubmit(e) {
         title: title,
         description: description || "Đặt từ giao diện web",
         room_id: parseInt(selectedRoomId),
-        start_time: `${formatDateInput(start)}T${formatTimeInput(start)}:00`,
-        end_time: `${formatDateInput(end)}T${formatTimeInput(end)}:00`,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
         is_recurring: isRecurring,
         recurrence_type: recurrenceType,
-        recurrence_end_date: recurrenceEndDate ? `${formatDateInput(recurrenceEndDate)}T${formatTimeInput(recurrenceEndDate)}:00` : null,
+        recurrence_end_date: recurrenceEndDate ? recurrenceEndDate.toISOString() : null,
         equipments: getSelectedEquipmentsData(),
         participant_ids: getSelectedParticipantIds()
     };
@@ -1042,12 +1132,9 @@ function renderMyBookings() {
     }
 
     const statusLabels = {
-        scheduled: { label: 'Đã lên lịch', className: 'booking-status-scheduled' },
-        confirmed: { label: 'Đã xác nhận', className: 'booking-status-scheduled' },
-        in_progress: { label: 'Đang diễn ra', className: 'booking-status-progress' },
-        completed: { label: 'Đã hoàn thành', className: 'booking-status-completed' },
-        canceled: { label: 'Đã hủy', className: 'booking-status-canceled' },
-        cancelled: { label: 'Đã hủy', className: 'booking-status-canceled' },
+        CONFIRMED: { label: 'Đã xác nhận', className: 'booking-status-scheduled' },
+        COMPLETED: { label: 'Đã hoàn thành', className: 'booking-status-completed' },
+        CANCELLED: { label: 'Đã hủy', className: 'booking-status-canceled' },
     };
     const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
 
@@ -1103,25 +1190,30 @@ function renderMyBookings() {
 }
 
 async function cancelBooking(meetingId) {
-    if (!confirm("Bạn có chắc chắn muốn hủy lịch họp này?")) return;
+    const reason = window.prompt("L? do h?y cu?c h?p (kh?ng b?t bu?c):", "");
+    if (reason === null) return;
 
     const token = getAuthToken();
     try {
-        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const query = new URLSearchParams({ reason });
+        const res = await fetch(
+            API_BASE + '/meetings/' + meetingId + '/cancel?' + query.toString(),
+            {
+                method: 'PATCH',
+                headers: { 'Authorization': 'Bearer ' + token },
+            }
+        );
 
         if (res.ok) {
-            alert("Đã hủy lịch họp!");
+            alert("?? h?y l?ch h?p!");
             fetchMyBookings();
             fetchRooms(localStorage.getItem('role') === 'admin');
         } else {
             const err = await res.json();
-            alert(`Lỗi hủy phòng: ${err.detail || 'Không thể hủy!'}`);
+            alert('L?i h?y ph?ng: ' + (err.detail || 'Kh?ng th? h?y!'));
         }
     } catch (err) {
-        alert("Lỗi kết nối máy chủ!");
+        alert("L?i k?t n?i m?y ch?!");
     }
 }
 

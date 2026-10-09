@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,6 +7,7 @@ from app.models.equipment import Equipment
 from app.schemas.equipment import EquipmentCreate, EquipmentUpdate, EquipmentResponse, EquipmentStatusResponse
 from app.services.equipment_service import get_equipment_availability
 from app.core.security import require_role
+from app.core.time import normalize_to_utc_naive
 
 router = APIRouter()
 
@@ -33,12 +34,14 @@ def get_equipment_availability_list(
     db: Session = Depends(get_db),
 ):
     if start_time is None and end_time is None:
-        start_time = end_time = datetime.now()
+        start_time = end_time = datetime.now(timezone.utc)
     elif start_time is None:
         start_time = end_time
     elif end_time is None:
         end_time = start_time
 
+    start_time = normalize_to_utc_naive(start_time)
+    end_time = normalize_to_utc_naive(end_time)
     if start_time > end_time:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
