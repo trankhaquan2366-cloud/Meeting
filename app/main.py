@@ -12,6 +12,7 @@ from app.models.user import User
 from app.models.room import Room
 from app.models.meeting import Meeting
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
+from app.models.google_calendar_event import GoogleCalendarEvent
 
 # 2. Routers & Security
 from app.routers import auth, equipment, meetings, notifications, rooms, users

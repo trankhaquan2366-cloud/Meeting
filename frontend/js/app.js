@@ -48,6 +48,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const settingsInputName = document.getElementById('settingsInputName');
     if (settingsInputName) settingsInputName.value = userName;
+
+    loadCurrentUserProfile();
     
     const initial = userName.charAt(0).toUpperCase();
     ['avatarText', 'headerAvatarText', 'settingsAvatar'].forEach(id => {
@@ -141,6 +143,68 @@ function switchMainTab(tabName, el) {
         const view = document.getElementById('viewSettings');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
+        loadCurrentUserProfile();
+    }
+}
+
+async function loadCurrentUserProfile() {
+    const emailInput = document.getElementById('settingsEmail');
+    if (!emailInput) return;
+    emailInput.disabled = false;
+    emailInput.readOnly = false;
+
+    let storedUser = {};
+    try {
+        const parsedUser = JSON.parse(localStorage.getItem('user') || '{}');
+        if (parsedUser && typeof parsedUser === 'object') storedUser = parsedUser;
+    } catch (error) {
+        storedUser = {};
+    }
+
+    const getFallbackEmail = user => {
+        const cachedEmail = localStorage.getItem('user_email') || storedUser.email || '';
+        if (cachedEmail.trim()) return cachedEmail.trim();
+
+        const username = String(
+            user?.username || storedUser.username || localStorage.getItem('username') || '',
+        ).trim();
+        return username ? `${username.toLowerCase()}@congty.com` : '';
+    };
+
+    const setEmailValue = email => {
+        emailInput.value = email;
+        emailInput.defaultValue = email;
+    };
+
+    setEmailValue(getFallbackEmail());
+
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+
+        const user = await response.json();
+        const actualEmail = typeof user.email === 'string' ? user.email.trim() : '';
+        const email = actualEmail || getFallbackEmail(user);
+        setEmailValue(email);
+        if (actualEmail) localStorage.setItem('user_email', actualEmail);
+
+        const fullName = user.full_name || user.username;
+        if (fullName) {
+            localStorage.setItem('user_name', fullName);
+            const nameDisplay = document.getElementById('userNameDisplay');
+            const settingsName = document.getElementById('settingsName');
+            const settingsInputName = document.getElementById('settingsInputName');
+            if (nameDisplay) nameDisplay.innerText = fullName;
+            if (settingsName) settingsName.innerText = fullName;
+            if (settingsInputName) settingsInputName.value = fullName;
+        }
+    } catch (error) {
+        console.warn('Could not load the current user profile:', error);
     }
 }
 
@@ -1052,10 +1116,26 @@ function renderMyBookings() {
     const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
 
     tbody.innerHTML = myBookings.map(b => {
-        const roomName = allRooms.find(room => room.id === b.room_id)?.name
-            || b.room?.name
-            || b.room_name
-            || (b.room_id ? `Phòng ${b.room_id}` : 'Phòng chưa xác định');
+        const meetingType = String(b.meeting_type || 'offline').toLowerCase();
+        const isOnline = meetingType === 'online';
+        const roomName = isOnline
+            ? 'Cuộc họp online'
+            : allRooms.find(room => room.id === b.room_id)?.name
+                || b.room?.name
+                || b.room_name
+                || (b.room_id ? `Phòng ${b.room_id}` : 'Phòng chưa xác định');
+        const meetingLink = String(b.meeting_link || b.online_link || '').trim();
+        let meetingLinkHTML = '';
+        if (meetingLink) {
+            try {
+                const linkUrl = new URL(meetingLink);
+                if (linkUrl.protocol === 'http:' || linkUrl.protocol === 'https:') {
+                    meetingLinkHTML = `<a class="booking-meeting-link" href="${escapeHtml(linkUrl.href)}" target="_blank" rel="noopener noreferrer">Tham gia cuộc họp</a>`;
+                }
+            } catch (error) {
+                meetingLinkHTML = '';
+            }
+        }
         const start = new Date(b.start_time);
         const end = new Date(b.end_time);
         const hasValidDate = !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime());
@@ -1065,6 +1145,21 @@ function renderMyBookings() {
         const timeRange = hasValidDate
             ? `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`
             : 'Chưa có thời gian';
+        let calendarLinkHTML = '';
+        if (hasValidDate) {
+            const toCalendarDate = date => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}00`;
+            const calendarUrl = new URL('https://calendar.google.com/calendar/render');
+            calendarUrl.searchParams.set('action', 'TEMPLATE');
+            calendarUrl.searchParams.set('text', b.title || 'Cuộc họp');
+            calendarUrl.searchParams.set('dates', `${toCalendarDate(start)}/${toCalendarDate(end)}`);
+            calendarUrl.searchParams.set('ctz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Ho_Chi_Minh');
+            calendarUrl.searchParams.set('location', isOnline ? meetingLink : roomName);
+            calendarUrl.searchParams.set(
+                'details',
+                [b.description, meetingLink ? `Link cuộc họp: ${meetingLink}` : ''].filter(Boolean).join('\n'),
+            );
+            calendarLinkHTML = `<a class="booking-calendar-link" href="${escapeHtml(calendarUrl.href)}" target="_blank" rel="noopener noreferrer">Thêm vào Google Calendar</a>`;
+        }
         const statusKey = String(b.status || '').toLowerCase();
         const status = statusLabels[statusKey] || { label: 'Không xác định', className: 'booking-status-unknown' };
 
@@ -1087,6 +1182,8 @@ function renderMyBookings() {
                 <td class="booking-room-cell">
                     <strong class="booking-room-name">${escapeHtml(roomName)}</strong>
                     <span class="booking-meeting-title">${escapeHtml(b.title || 'Cuộc họp')}</span>
+                    ${meetingLinkHTML}
+                    ${calendarLinkHTML}
                     ${equipmentsHTML}
                 </td>
                 <td>
@@ -1238,7 +1335,7 @@ async function handleFormSubmit(e) {
         location: document.getElementById('roomLocation').value,
         capacity: parseInt(document.getElementById('roomCapacity').value) || 0,
         amenities: document.getElementById('roomAmenities').value.split(',').map(s => s.trim()).filter(Boolean),
-        is_available: true
+        is_active: true
     };
 
     const method = editId ? 'PUT' : 'POST';

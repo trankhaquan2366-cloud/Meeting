@@ -18,6 +18,12 @@ Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho 
 * **Validation & Schemas:** Pydantic v2
 * **Server Runner:** Uvicorn ASGI Server
 
+## 🔐 Google OAuth 2.0
+
+The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).
+
+Invitees receive a Calendar consent email after they are invited. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` before deploying. For production, use HTTPS and the exact public callback/frontend URLs.
+
 ---
 
 ## 📁 2. Cấu trúc Dự án (Project Structure)

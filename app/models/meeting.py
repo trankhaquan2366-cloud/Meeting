@@ -10,7 +10,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 
 from app.core.database import Base
 
@@ -23,8 +23,8 @@ class Meeting(Base):
     description = Column(Text, nullable=True)
     # meeting_type: 'online' | 'offline' — online meetings do not require a room
     meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
-    # online_link: used when meeting_type == 'online'
-    online_link = Column(String(500), nullable=True)
+    meeting_link = Column(String, nullable=True)
+    online_link = synonym("meeting_link")
     is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
     recurring_type = Column(String(20), nullable=True)
     # room_id is nullable: online meetings have no room

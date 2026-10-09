@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=14">
+    <link rel="stylesheet" href="css/style.css?v=15">
     <link rel="stylesheet" href="css/booking.css?v=3">
     <link rel="stylesheet" href="css/create-meeting.css?v=1">
 </head>
@@ -269,7 +269,7 @@
                         <table class="data-table my-bookings-table">
                             <thead>
                                 <tr>
-                                    <th>Phòng họp</th>
+                                    <th>Địa điểm / cuộc họp</th>
                                     <th>Thời gian</th>
                                     <th>Trạng thái</th>
                                     <th>Hành động</th>
@@ -302,7 +302,7 @@
                             </div>
                             <div class="form-group">
                                 <label>Email liên hệ</label>
-                                <input type="email" class="form-control" id="settingsInputEmail" value="admin@congty.com" readonly>
+                                <input type="email" class="form-control" id="settingsEmail" value="" autocomplete="email">
                             </div>
                             <button class="btn-save" onclick="alert('Đã cập nhật thông tin!')">Lưu thay đổi</button>
                         </div>
@@ -473,17 +473,17 @@
 
                     <section class="cm-section">
                         <p class="cm-section-title">Vị trí</p>
-                        <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp">
+                        <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp" aria-controls="cmOnlineBox cmResources">
                             <button type="button" id="cmModeOnline" aria-pressed="false" onclick="setCreateMeetingMode('online')">🌐 Online</button>
                             <button type="button" id="cmModeOffline" aria-pressed="true" onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
                         </div>
-                        <div id="cmOnlineBox" class="cm-online-box">
+                        <div id="cmOnlineBox" class="cm-online-box" aria-hidden="true">
                             <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
-                            <input id="cmMeetingLink" class="cm-input" type="url" placeholder="https://meet.roomsync.vn/..." />
+                            <input id="cmMeetingLink" class="cm-input" name="meeting_link" type="url" placeholder="https://meet.google.com/..." autocomplete="url" />
                             <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo link</button>
                         </div>
 
-                        <div id="cmResources" class="cm-resources is-open">
+                        <div id="cmResources" class="cm-resources is-open" aria-hidden="false">
                             <p class="cm-section-title">Yêu cầu phòng</p>
                             <div class="cm-fixed-requirements">
                                 <span class="cm-label">Thiết bị cố định bắt buộc</span>
@@ -542,7 +542,7 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=9"></script>
-    <script src="js/create-meeting.js?v=2"></script>
+    <script src="js/app.js?v=12"></script>
+    <script src="js/create-meeting.js?v=3"></script>
 </body>
 </html>
