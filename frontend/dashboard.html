@@ -59,6 +59,14 @@
                     </svg>
                     <span class="nav-text">Báo cáo sử dụng</span>
                 </a>
+                <a href="#" class="nav-item" id="navCancellationAnalytics"
+                    onclick="switchMainTab('cancellations', this)" style="display: none;">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19h16M7 16V9m5 7V5m5 11v-4"></path>
+                        <path d="M3 4l17 17"></path>
+                    </svg>
+                    <span class="nav-text">Thống kê Hủy phòng</span>
+                </a>
                 <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3"></circle>
@@ -467,7 +475,100 @@
                     </div>
                 </div>
 
-                <!-- VIEW 6: CÀI ĐẶT -->
+                <!-- ADMIN VIEW: CANCELLATION ANALYTICS -->
+                <div id="viewCancellationAnalytics" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <div>
+                            <h2>Thống kê Hủy phòng</h2>
+                            <p class="subtitle">Tổng hợp lịch hủy thủ công và cuộc họp không check-in.</p>
+                        </div>
+                    </div>
+                    <div class="cancellation-analytics-filters">
+                        <label>Từ ngày <input type="date" id="cancellationStartDate"></label>
+                        <label>Đến ngày <input type="date" id="cancellationEndDate"></label>
+                        <label>Phòng họp
+                            <select id="cancellationRoomId">
+                                <option value="">Tất cả phòng</option>
+                            </select>
+                        </label>
+                        <button type="button" id="btnFilterCancellation"
+                            onclick="fetchCancellationAnalytics(event)">Xem thống kê</button>
+                        <button type="button" onclick="exportCancellationAnalytics('excel')"
+                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất Excel</button>
+                        <button type="button" onclick="exportCancellationAnalytics('pdf')"
+                            class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất PDF</button>
+                    </div>
+                    <div id="cancellationAnalyticsMessage"
+                        class="hidden mb-4 p-3 rounded-lg bg-red-50 text-red-600 text-sm font-medium"
+                        role="alert" aria-live="assertive"></div>
+                    <section class="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div class="mb-4">
+                            <h3 class="text-lg font-bold text-slate-800">Báo cáo Quản trị Lãnh đạo (Executive Report)</h3>
+                            <p class="text-sm text-slate-500">Tổng hợp hiệu quả sử dụng phòng họp, khung giờ cao điểm và lãng phí tài nguyên.</p>
+                        </div>
+                        <div class="flex flex-wrap items-end gap-3">
+                            <label class="text-sm font-medium text-slate-600">Từ ngày
+                                <input type="date" id="executiveStartDate" class="ml-1 rounded border border-slate-300 px-2 py-2">
+                            </label>
+                            <label class="text-sm font-medium text-slate-600">Đến ngày
+                                <input type="date" id="executiveEndDate" class="ml-1 rounded border border-slate-300 px-2 py-2">
+                            </label>
+                            <label class="text-sm font-medium text-slate-600">Phòng ban (ID, tùy chọn)
+                                <input type="number" min="1" id="executiveDepartmentId" placeholder="Tất cả"
+                                    class="ml-1 w-28 rounded border border-slate-300 px-2 py-2">
+                            </label>
+                            <button type="button" onclick="exportExecutiveReport('excel')"
+                                class="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">📊 Báo cáo Executive (Excel)</button>
+                            <button type="button" onclick="exportExecutiveReport('pdf')"
+                                class="rounded-lg bg-rose-600 px-4 py-2 font-medium text-white hover:bg-rose-700">📄 Báo cáo Executive (PDF)</button>
+                        </div>
+                    </section>
+                    <div class="stats-grid cancellation-analytics-stats">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng cuộc họp bị hủy</span>
+                            <div class="stat-value text-orange" id="cancelledTotal">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Số giờ lãng phí</span>
+                            <div class="stat-value text-purple" id="cancelledWastedHours">0 giờ</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ không check-in</span>
+                            <div class="stat-value text-orange" id="cancelledNoShowRate">0%</div>
+                        </div>
+                    </div>
+                    <div class="cancellation-analytics-columns">
+                        <div class="table-card">
+                            <h3>Phòng có nhiều lịch hủy</h3>
+                            <div class="table-scroll">
+                                <table class="data-table">
+                                    <thead><tr><th>Phòng</th><th>Số lần hủy</th></tr></thead>
+                                    <tbody id="cancellationRoomsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="table-card">
+                            <h3>Lý do hủy phổ biến</h3>
+                            <div class="table-scroll">
+                                <table class="data-table">
+                                    <thead><tr><th>Lý do</th><th>Số lượng</th></tr></thead>
+                                    <tbody id="cancellationReasonsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-card cancellation-offenders-card">
+                        <h3>Người đặt có lịch hủy nhiều</h3>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Người đặt</th><th>Số lần hủy / no-show</th></tr></thead>
+                                <tbody id="cancellationOffendersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 7: CÀI ĐẶT -->
                 <div id="viewSettings" class="tab-view max-w-4xl mx-auto py-6 px-4" style="display: none;">
                     <!-- Tiêu đề trang -->
                     <div class="mb-6">
@@ -561,6 +662,92 @@
             <div id="timelineContainer" class="timeline-list"></div>
             <div class="modal-actions" style="margin-top: 20px;">
                 <button type="button" onclick="closeScheduleModal()" class="btn-cancel">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="cancelMeetingModal" class="modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="cancelMeetingTitle">
+        <div class="modal-content cancellation-modal-content">
+            <h3 id="cancelMeetingTitle">Hủy cuộc họp</h3>
+            <p class="subtitle">Bạn có thể ghi lại lý do để quản trị viên tổng hợp thống kê.</p>
+            <label for="cancellationReasonInput">Lý do hủy (không bắt buộc)</label>
+            <textarea id="cancellationReasonInput" rows="4" maxlength="1000"
+                placeholder="Nhập lý do hủy cuộc họp..."></textarea>
+            <div class="modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeCancelMeetingModal()">Quay lại</button>
+                <button type="button" class="btn-save cancellation-confirm-button"
+                    onclick="submitCancelBooking()">Xác nhận hủy</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="qrCheckModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="qrCheckTitle">
+        <div class="modal-content">
+            <h3 id="qrCheckTitle">Quét mã QR phòng họp</h3>
+            <p id="qrCheckDescription" class="subtitle">Đưa mã QR phòng họp vào khung quét.</p>
+            <div id="qrReader" class="qr-reader"></div>
+            <label class="qr-manual-label" for="qrTokenInput">Hoặc nhập mã QR</label>
+            <input id="qrTokenInput" class="form-control" type="text" autocomplete="off"
+                placeholder="Mã QR phòng họp">
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQrCheckModal()">Đóng</button>
+                <button type="button" class="btn-primary" onclick="submitQrCheck()">Xác nhận</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrToast" class="qr-toast" role="status" aria-live="polite"></div>
+
+    <div id="roomQrModal" class="modal qr-display-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="roomQrName">
+        <div class="modal-content qr-display-card">
+            <div class="qr-display-heading">
+                <div>
+                    <p class="qr-display-eyebrow">MÃ QR PHÒNG HỌP</p>
+                    <h3 id="roomQrName">Phòng họp</h3>
+                    <p id="roomQrLocation" class="qr-display-subtitle"></p>
+                </div>
+                <div class="qr-header-actions">
+                    <button class="qr-icon-button" type="button" onclick="copyRoomQrToken()" title="Sao chép Token"
+                        aria-label="Sao chép Token">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="8" y="8" width="12" height="12" rx="2"></rect>
+                            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-icon-button" type="button" onclick="downloadRoomQrImage()" title="Tải ảnh QR"
+                        aria-label="Tải ảnh QR">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M12 3v12m0 0 4-4m-4 4-4-4"></path>
+                            <path d="M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-close-button" type="button" onclick="closeRoomQrModal()" title="Đóng"
+                        aria-label="Đóng">×</button>
+                </div>
+            </div>
+            <div id="roomQrImage" class="qr-image-frame qr-image-room"></div>
+        </div>
+    </div>
+
+    <div id="presenterQRModal" class="modal qr-presenter-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="presenterQRTitle">
+        <div class="qr-presenter-card">
+            <button class="qr-close-button qr-presenter-close" type="button" onclick="closePresenterQrModal()"
+                aria-label="Đóng">×</button>
+            <div class="qr-presenter-info">
+                <p class="qr-display-eyebrow">CHECK-IN CUỘC HỌP</p>
+                <h2 id="presenterQRTitle">Cuộc họp</h2>
+                <p id="presenterQRRoom" class="qr-presenter-room"></p>
+                <p id="presenterQRTime" class="qr-presenter-time"></p>
+            </div>
+            <div id="presenterQRImage" class="qr-image-frame qr-image-presenter"></div>
+            <p class="qr-presenter-hint">Mở camera điện thoại và quét mã để check-in</p>
+            <div class="qr-display-actions qr-presenter-actions">
+                <button id="presenterQRFullscreenButton" type="button" class="qr-secondary-button"
+                    onclick="togglePresenterQrFullscreen()">Phóng to / Fullscreen</button>
+                <button type="button" class="qr-primary-button" onclick="copyPresenterQrToken()">Sao chép Token</button>
             </div>
         </div>
     </div>
@@ -794,7 +981,9 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=13"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="js/app.js?v=18"></script>
     <script src="js/create-meeting.js?v=3"></script>
 </body>
 

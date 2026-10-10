@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -7,15 +7,114 @@ from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting, MeetingParticipant
+from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
 logger = logging.getLogger(__name__)
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class MeetingService:
 
     @staticmethod
-    def cancel_meeting(db: Session, meeting_id: int, current_user: User):
+    def check_in_meeting(
+        db: Session,
+        meeting_id: int,
+        qr_token: str,
+        current_user: User,
+        now: datetime | None = None,
+    ) -> Meeting:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+        if (meeting.status or "").casefold() != "scheduled":
+            raise HTTPException(status_code=400, detail="Cuộc họp không ở trạng thái có thể check-in.")
+
+        accepted_participant = any(
+            participant.user_id == current_user.id
+            and (participant.response_status or "").casefold() == "accepted"
+            for participant in meeting.participants
+        )
+        if meeting.organizer_id != current_user.id and not accepted_participant:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền check-in cuộc họp này.")
+
+        if meeting.room is None or not meeting.room.qr_token or meeting.room.qr_token != qr_token:
+            raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+
+        current_time = now or _utc_now()
+        if current_time < meeting.start_time - timedelta(minutes=15):
+            raise HTTPException(
+                status_code=400,
+                detail="Chưa đến thời gian check-in (cho phép trước 15 phút)",
+            )
+        if current_time > meeting.start_time + timedelta(minutes=15):
+            raise HTTPException(status_code=400, detail="Đã quá thời gian check-in")
+
+        meeting.status = "IN_PROGRESS"
+        meeting.check_in_time = current_time
+        if meeting.organizer_id is not None:
+            db.add(
+                Notification(
+                    user_id=meeting.organizer_id,
+                    title="Check-in cuộc họp thành công",
+                    content=(
+                        f"Cuộc họp '{meeting.title}' đã check-in thành công và bắt đầu."
+                    ),
+                )
+            )
+        try:
+            db.commit()
+            db.refresh(meeting)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception("Failed to check in meeting_id=%s", meeting_id)
+            raise HTTPException(status_code=503, detail="Không thể lưu check-in cuộc họp.") from exc
+        return meeting
+
+    @staticmethod
+    def check_out_meeting(
+        db: Session,
+        meeting_id: int,
+        qr_token: str,
+        current_user: User,
+        now: datetime | None = None,
+    ) -> Meeting:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+        if (meeting.status or "").casefold() != "in_progress":
+            raise HTTPException(status_code=400, detail="Cuộc họp không ở trạng thái có thể check-out.")
+
+        is_participant = any(
+            participant.user_id == current_user.id for participant in meeting.participants
+        )
+        if meeting.organizer_id != current_user.id and not is_participant:
+            raise HTTPException(status_code=403, detail="Bạn không thuộc cuộc họp này.")
+        if meeting.room is None or not meeting.room.qr_token or meeting.room.qr_token != qr_token:
+            raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+
+        meeting.status = "COMPLETED"
+        meeting.check_out_time = now or _utc_now()
+        try:
+            db.commit()
+            db.refresh(meeting)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception("Failed to check out meeting_id=%s", meeting_id)
+            raise HTTPException(status_code=503, detail="Không thể lưu check-out cuộc họp.") from exc
+        return meeting
+
+    @staticmethod
+    def cancel_meeting(
+        db: Session,
+        meeting_id: int,
+        current_user: User,
+        cancellation_reason: str | None = None,
+    ):
         """Cancel a meeting without deleting it or its participants."""
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
         if not meeting:
@@ -32,8 +131,10 @@ class MeetingService:
             )
 
         # Idempotent: repeating the operation is a successful no-op.
-        if meeting.status != "CANCELLED":
+        if (meeting.status or "").upper() not in {"CANCELLED", "CANCELLED_NO_SHOW"}:
             meeting.status = "CANCELLED"
+            meeting.cancellation_reason = (cancellation_reason or "").strip() or None
+            meeting.cancelled_at = _utc_now()
             try:
                 db.commit()
                 db.refresh(meeting)
@@ -162,7 +263,7 @@ class MeetingService:
                 if meeting_type == 'offline':
                     overlapping_meeting = db.query(Meeting).filter(
                         Meeting.room_id == room_id,
-                        Meeting.status.notin_(["CANCELLED", "canceled"]),
+                        Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
                         and_(
                             Meeting.start_time < e_time,
                             Meeting.end_time > s_time
@@ -271,7 +372,7 @@ class MeetingService:
         day_end = datetime.combine(target_date, datetime.max.time())
         
         meetings = db.query(Meeting).filter(
-            Meeting.status.notin_(["CANCELLED", "canceled"]),
+            Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
             Meeting.start_time <= day_end,
             Meeting.end_time >= day_start,
             Meeting.organizer_id.in_(participant_ids)

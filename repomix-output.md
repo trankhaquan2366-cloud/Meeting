@@ -41,6 +41,7 @@ The content is organized as follows:
 alembic/
   versions/
     33c26788d6a2_fix_missing_meeting_link_column.py
+    6b1d9f4a2c70_add_room_qr_and_meeting_checkin.py
     cf70acc36382_add_google_refresh_token_to_users.py
   env.py
   README
@@ -84,6 +85,7 @@ app/
     notification_service.py
     reports.py
     room_service.py
+    scheduler.py
   main.py
 frontend/
   assets/
@@ -126,10 +128,12 @@ tests/
   test_google_auth.py
   test_google_calendar_delete.py
   test_google_calendar_service.py
+  test_live_checkin_checkout.py
   test_meeting_cancel.py
   test_meeting_create.py
   test_meetings_history.py
   test_meetings_mine.py
+  test_meetings.py
   test_room_create.py
 .dockerignore
 .env.example
@@ -147,175 +151,494 @@ schema.sql
 
 # Files
 
-## File: alembic/versions/33c26788d6a2_fix_missing_meeting_link_column.py
+## File: alembic/versions/6b1d9f4a2c70_add_room_qr_and_meeting_checkin.py
 ````python
-"""Add the missing meeting_link column to meetings.
+"""Add room QR tokens and meeting check-in lifecycle fields.
 
-Revision ID: 33c26788d6a2
-Revises: cf70acc36382
-Create Date: 2026-10-09 19:15:47.700439
+Revision ID: 6b1d9f4a2c70
+Revises: 33c26788d6a2
+Create Date: 2026-10-10
 """
 from typing import Sequence, Union
+from uuid import uuid4
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "33c26788d6a2"
-down_revision: Union[str, Sequence[str], None] = "cf70acc36382"
+revision: str = "6b1d9f4a2c70"
+down_revision: Union[str, Sequence[str], None] = "33c26788d6a2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add meeting_link if the existing database does not already have it."""
-    inspector = sa.inspect(op.get_bind())
-    if "meetings" not in inspector.get_table_names():
-        raise RuntimeError("The meetings table must exist before applying this migration.")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    tables = set(inspector.get_table_names())
+    if "rooms" not in tables or "meetings" not in tables:
+        raise RuntimeError("The rooms and meetings tables must exist before this migration.")
 
-    columns = {column["name"] for column in inspector.get_columns("meetings")}
-    if "meeting_link" not in columns:
-        op.add_column("meetings", sa.Column("meeting_link", sa.String(length=255), nullable=True))
+    room_columns = {column["name"] for column in inspector.get_columns("rooms")}
+    if "qr_token" not in room_columns:
+        op.add_column("rooms", sa.Column("qr_token", sa.String(length=64), nullable=True))
 
+    meeting_columns = {column["name"] for column in inspector.get_columns("meetings")}
+    if "check_in_time" not in meeting_columns:
+        op.add_column("meetings", sa.Column("check_in_time", sa.DateTime(), nullable=True))
+    if "check_out_time" not in meeting_columns:
+        op.add_column("meetings", sa.Column("check_out_time", sa.DateTime(), nullable=True))
+    if "reminder_sent" not in meeting_columns:
+        op.add_column(
+            "meetings",
+            sa.Column(
+                "reminder_sent",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.false(),
+            ),
+        )
 
-def downgrade() -> None:
-    """Remove meeting_link if present."""
-    inspector = sa.inspect(op.get_bind())
-    if "meetings" not in inspector.get_table_names():
-        return
+    room_table = sa.table(
+        "rooms",
+        sa.column("id", sa.Integer()),
+        sa.column("qr_token", sa.String(length=64)),
+    )
+    for room_id, in bind.execute(
+        sa.select(room_table.c.id).where(room_table.c.qr_token.is_(None))
+    ):
+        bind.execute(
+            room_table.update()
+            .where(room_table.c.id == room_id)
+            .values(qr_token=str(uuid4()))
+        )
 
-    columns = {column["name"] for column in inspector.get_columns("meetings")}
-    if "meeting_link" in columns:
-        op.drop_column("meetings", "meeting_link")
-````
-
-## File: alembic/versions/cf70acc36382_add_google_refresh_token_to_users.py
-````python
-"""Add google_refresh_token to users
-
-Revision ID: cf70acc36382
-Revises: 
-Create Date: 2026-10-09 17:49:57.088496
-
-"""
-from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
-
-
-# revision identifiers, used by Alembic.
-revision: str = 'cf70acc36382'
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
-
-
-def upgrade() -> None:
-    """Add Google Calendar OAuth columns to users when they are missing."""
-    inspector = sa.inspect(op.get_bind())
-    if "users" not in inspector.get_table_names():
-        raise RuntimeError("The users table must exist before applying this migration.")
-
-    existing_columns = {column["name"] for column in inspector.get_columns("users")}
-    if "google_refresh_token" not in existing_columns:
-        op.add_column("users", sa.Column("google_refresh_token", sa.Text(), nullable=True))
-    if "google_calendar_connected_at" not in existing_columns:
-        op.add_column("users", sa.Column("google_calendar_connected_at", sa.DateTime(), nullable=True))
+    inspector = sa.inspect(bind)
+    indexes = {index["name"] for index in inspector.get_indexes("rooms")}
+    unique_constraints = {
+        constraint["name"] for constraint in inspector.get_unique_constraints("rooms")
+    }
+    if "ix_rooms_qr_token" not in indexes and "uq_rooms_qr_token" not in unique_constraints:
+        op.create_index("ix_rooms_qr_token", "rooms", ["qr_token"], unique=True)
 
 
 def downgrade() -> None:
-    """Remove the Google Calendar OAuth columns when present."""
-    inspector = sa.inspect(op.get_bind())
-    if "users" not in inspector.get_table_names():
-        return
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "rooms" in inspector.get_table_names():
+        indexes = {index["name"] for index in inspector.get_indexes("rooms")}
+        if "ix_rooms_qr_token" in indexes:
+            op.drop_index("ix_rooms_qr_token", table_name="rooms")
+        columns = {column["name"] for column in inspector.get_columns("rooms")}
+        if "qr_token" in columns:
+            op.drop_column("rooms", "qr_token")
 
-    existing_columns = {column["name"] for column in inspector.get_columns("users")}
-    if "google_calendar_connected_at" in existing_columns:
-        op.drop_column("users", "google_calendar_connected_at")
-    if "google_refresh_token" in existing_columns:
-        op.drop_column("users", "google_refresh_token")
+    if "meetings" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("meetings")}
+        for column_name in ("reminder_sent", "check_out_time", "check_in_time"):
+            if column_name in columns:
+                op.drop_column("meetings", column_name)
 ````
 
-## File: app/core/config.py
+## File: app/services/scheduler.py
 ````python
+"""Periodic meeting lifecycle jobs."""
+
 import logging
 import os
-from pathlib import Path
+import smtplib
+import ssl
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 
-from dotenv import load_dotenv
-
-logger = logging.getLogger(__name__)
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
-
-
-def load_environment() -> None:
-    """Load project environment variables without overriding process settings."""
-    load_dotenv(dotenv_path=ENV_FILE, override=False)
-
-
-def get_google_oauth_credentials() -> tuple[str, str] | None:
-    load_environment()
-    credentials = {
-        "GOOGLE_CLIENT_ID": os.getenv("GOOGLE_CLIENT_ID"),
-        "GOOGLE_CLIENT_SECRET": os.getenv("GOOGLE_CLIENT_SECRET"),
-    }
-    invalid_variables = [
-        name
-        for name, value in credentials.items()
-        if (
-            not value
-            or not value.strip()
-            or value.strip().lower().startswith(("your_", "your-", "replace_", "replace-"))
-            or "placeholder" in value.strip().lower()
-        )
-    ]
-    if invalid_variables:
-        logger.error(
-            "Google OAuth is not configured; missing or placeholder environment variable(s): %s",
-            ", ".join(invalid_variables),
-        )
-        return None
-
-    client_id = credentials["GOOGLE_CLIENT_ID"]
-    client_secret = credentials["GOOGLE_CLIENT_SECRET"]
-    assert client_id is not None and client_secret is not None
-    return client_id, client_secret
-
-
-load_environment()
-````
-
-## File: migrations/008_add_meeting_participant_response_status.sql
-````sql
--- Track invitee RSVP state for the dashboard and meeting organizers.
-SET @has_response_status = (
-    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'meeting_participants'
-      AND COLUMN_NAME = 'response_status'
-);
-SET @add_response_status = IF(
-    @has_response_status = 0,
-    'ALTER TABLE meeting_participants ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT ''pending''',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_response_status;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-````
-
-## File: tests/test_meetings_mine.py
-````python
-"""Tests for the personal meeting list and invite responses."""
-
-from datetime import datetime, timedelta
-
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import main
+from app.models.meeting import Meeting, MeetingParticipant
+from app.models.notification import Notification
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _meeting_recipients(db: Session, meeting: Meeting, accepted_only: bool) -> list[User]:
+    users: dict[int, User] = {}
+    if meeting.organizer is not None:
+        users[meeting.organizer.id] = meeting.organizer
+    participants = db.query(MeetingParticipant).filter(
+        MeetingParticipant.meeting_id == meeting.id
+    ).all()
+    for participant in participants:
+        if accepted_only and (participant.response_status or "").casefold() != "accepted":
+            continue
+        if participant.user is not None:
+            users[participant.user.id] = participant.user
+    return list(users.values())
+
+
+def _send_meeting_email(recipients: list[User], subject: str, body: str) -> None:
+    host = os.getenv("SMTP_HOST")
+    username = os.getenv("SMTP_USERNAME")
+    password = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("SMTP_FROM_EMAIL") or username
+    if not all((host, username, password, from_email)):
+        logger.warning("Meeting lifecycle email skipped: SMTP settings are incomplete")
+        return
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().casefold() in {
+        "1", "true", "yes",
+    }
+    for user in recipients:
+        if not user.email:
+            logger.warning("Meeting lifecycle email skipped: user_id=%s has no email", user.id)
+            continue
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = from_email
+        message["To"] = user.email
+        message.set_content(f"Chào {user.full_name or user.username},\n\n{body}")
+        try:
+            with smtplib.SMTP(host, port, timeout=20) as smtp:
+                smtp.ehlo()
+                if use_starttls:
+                    smtp.starttls(context=ssl.create_default_context())
+                    smtp.ehlo()
+                smtp.login(username, password)
+                smtp.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            logger.exception("Meeting lifecycle email failed for user_id=%s", user.id)
+
+
+def process_meeting_reminders(db: Session, now: datetime | None = None) -> int:
+    """Notify organizers and confirmed attendees during the check-in window."""
+    current_time = now or _utc_now()
+    meetings = (
+        db.query(Meeting)
+        .filter(
+            func.upper(Meeting.status) == "SCHEDULED",
+            Meeting.reminder_sent.is_(False),
+            Meeting.start_time <= current_time,
+            Meeting.start_time > current_time - timedelta(minutes=15),
+        )
+        .all()
+    )
+    for meeting in meetings:
+        recipients = _meeting_recipients(db, meeting, accepted_only=True)
+        for user in recipients:
+            db.add(
+                Notification(
+                    user_id=user.id,
+                    title="Nhắc check-in cuộc họp",
+                    content=(
+                        f"Cuộc họp '{meeting.title}' đã bắt đầu. "
+                        "Vui lòng quét mã QR của phòng để check-in."
+                    ),
+                )
+            )
+        meeting.reminder_sent = True
+
+    if meetings:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to process meeting reminders")
+            raise
+    return len(meetings)
+
+
+def process_no_show_meetings(db: Session, now: datetime | None = None) -> int:
+    """Cancel meetings that have not been checked in within the grace period."""
+    current_time = now or _utc_now()
+    meetings = (
+        db.query(Meeting)
+        .filter(
+            func.upper(Meeting.status) == "SCHEDULED",
+            Meeting.check_in_time.is_(None),
+            Meeting.start_time <= current_time - timedelta(minutes=15),
+        )
+        .all()
+    )
+    recipients_by_meeting: list[tuple[Meeting, list[User]]] = []
+    for meeting in meetings:
+        recipients_by_meeting.append(
+            (meeting, _meeting_recipients(db, meeting, accepted_only=False))
+        )
+        meeting.status = "CANCELLED_NO_SHOW"
+
+    if meetings:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to cancel no-show meetings")
+            raise
+
+    for meeting, recipients in recipients_by_meeting:
+        _send_meeting_email(
+            recipients,
+            "Cuộc họp đã bị hủy do không check-in",
+            (
+                f"Cuộc họp '{meeting.title}' đã bị hủy vì không có check-in "
+                "trong vòng 15 phút kể từ giờ bắt đầu."
+            ),
+        )
+    return len(meetings)
+
+
+def process_auto_checkouts(db: Session, now: datetime | None = None) -> int:
+    """Complete in-progress meetings after their scheduled end time."""
+    current_time = now or _utc_now()
+    meetings = (
+        db.query(Meeting)
+        .filter(
+            func.upper(Meeting.status) == "IN_PROGRESS",
+            Meeting.end_time <= current_time,
+        )
+        .all()
+    )
+    for meeting in meetings:
+        meeting.status = "COMPLETED"
+        meeting.check_out_time = meeting.end_time
+
+    if meetings:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to process automatic meeting check-outs")
+            raise
+    return len(meetings)
+````
+
+## File: tests/test_live_checkin_checkout.py
+````python
+"""Real-time API smoke test for the QR check-in/check-out flow."""
+
+from datetime import datetime, timedelta, timezone
+import sys
+from uuid import uuid4
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.equipment import Equipment, MeetingEquipment
+from app.models.meeting import Meeting
+from app.models.notification import Notification
+from tests.helpers import _auth_header, _create_room, _create_user, _make_token
+
+
+def test_live_checkin_notification_and_checkout(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Run both authenticated endpoints using the current UTC time."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+    suffix = uuid4().hex
+    organizer_user = _create_user(db_session, f"live-checkin-{suffix}")
+    room = _create_room(db_session, f"Phòng Test 22h {suffix}")
+    assert room.qr_token, "Test room did not receive a QR token"
+
+    equipment = Equipment(
+        name=f"Live check-in equipment {suffix}",
+        code=f"LIVE-{suffix[:12]}",
+        total_qty=1,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.flush()
+
+    start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    end_time = start_time + timedelta(hours=1)
+    meeting = Meeting(
+        title=f"Live QR check-in test {suffix}",
+        room_id=room.id,
+        organizer_id=organizer_user.id,
+        start_time=start_time,
+        end_time=end_time,
+        status="SCHEDULED",
+    )
+    db_session.add(meeting)
+    db_session.flush()
+    db_session.add(
+        MeetingEquipment(
+            meeting_id=meeting.id,
+            equipment_id=equipment.id,
+            quantity=1,
+        )
+    )
+    db_session.commit()
+    db_session.refresh(meeting)
+
+    auth_headers = _auth_header(_make_token(organizer_user))
+    failures: list[str] = []
+
+    print(f"[STEP] Tạo cuộc họp '{meeting.title}' trong phòng '{room.name}'")
+    print(
+        f"[INFO] Bắt đầu UTC: {start_time.isoformat()} | "
+        f"Kết thúc UTC: {end_time.isoformat()}"
+    )
+
+    check_in_response = client.post(
+        f"/api/v1/meetings/{meeting.id}/check-in",
+        json={"qr_token": room.qr_token},
+        headers=auth_headers,
+    )
+    check_in_data = (
+        check_in_response.json() if check_in_response.status_code == 200 else {}
+    )
+    check_in_time = check_in_data.get("check_in_time")
+    if (
+        check_in_response.status_code == 200
+        and check_in_data.get("status", "").upper() == "IN_PROGRESS"
+        and check_in_time
+    ):
+        print(f"[SUCCESS] Check-in thành công lúc: {check_in_time}")
+    else:
+        print(
+            "[FAIL] Check-in không thành công: "
+            f"HTTP {check_in_response.status_code} {check_in_response.text}"
+        )
+        failures.append("Check-in response/status/timestamp invalid")
+
+    db_session.expire_all()
+    organizer_notifications = (
+        db_session.query(Notification)
+        .filter(Notification.user_id == organizer_user.id)
+        .all()
+    )
+    check_in_notification = next(
+        (
+            notification
+            for notification in organizer_notifications
+            if any(
+                term in f"{notification.title} {notification.content}".casefold()
+                for term in ("check-in", "check in", "đã bắt đầu")
+            )
+        ),
+        None,
+    )
+    if check_in_notification is not None:
+        print(
+            "[NOTIFICATION] Đã gửi phản hồi tới Chủ trì: "
+            f"{organizer_user.full_name} — {check_in_notification.title}"
+        )
+    else:
+        print(
+            "[FAIL] Chưa tìm thấy notification check-in/đã bắt đầu "
+            f"cho Chủ trì: {organizer_user.full_name}"
+        )
+        failures.append("No check-in notification was created for the organizer")
+
+    check_out_response = client.post(
+        f"/api/v1/meetings/{meeting.id}/check-out",
+        json={"qr_token": room.qr_token},
+        headers=auth_headers,
+    )
+    check_out_data = (
+        check_out_response.json() if check_out_response.status_code == 200 else {}
+    )
+    check_out_time = check_out_data.get("check_out_time")
+    if (
+        check_out_response.status_code == 200
+        and check_out_data.get("status", "").upper() == "COMPLETED"
+        and check_out_time
+    ):
+        print(f"[SUCCESS] Check-out thành công lúc: {check_out_time}")
+    else:
+        print(
+            "[FAIL] Check-out không thành công: "
+            f"HTTP {check_out_response.status_code} {check_out_response.text}"
+        )
+        failures.append("Check-out response/status/timestamp invalid")
+
+    availability_start = datetime.now(timezone.utc).replace(tzinfo=None)
+    availability_end = availability_start + timedelta(minutes=1)
+    params = {
+        "start_time": availability_start.isoformat(),
+        "end_time": availability_end.isoformat(),
+    }
+    room_availability_response = client.get(
+        "/api/rooms/available",
+        params=params,
+    )
+    if room_availability_response.status_code == 200:
+        room_is_available = any(
+            available_room["id"] == room.id
+            for available_room in room_availability_response.json()
+        )
+    else:
+        room_is_available = False
+        failures.append(
+            "Could not verify room availability: "
+            f"HTTP {room_availability_response.status_code}"
+        )
+
+    equipment_availability_response = client.get(
+        "/api/equipments/availability",
+        params={**params, "search": equipment.code},
+    )
+    if equipment_availability_response.status_code == 200:
+        equipment_status = next(
+            (
+                item
+                for item in equipment_availability_response.json()
+                if item["id"] == equipment.id
+            ),
+            None,
+        )
+        equipment_is_available = (
+            equipment_status is not None
+            and equipment_status["available_qty"] == equipment.total_qty
+        )
+    else:
+        equipment_is_available = False
+        failures.append(
+            "Could not verify equipment availability: "
+            f"HTTP {equipment_availability_response.status_code}"
+        )
+
+    if not room_is_available:
+        failures.append("Room is still reported unavailable after check-out")
+    if not equipment_is_available:
+        failures.append("Equipment is still reported unavailable after check-out")
+    if room_is_available and equipment_is_available:
+        print("[SUCCESS] Check-out thành công, đã giải phóng phòng và thiết bị!")
+    else:
+        print(
+            "[FAIL] Tài nguyên sau check-out: "
+            f"phòng khả dụng={room_is_available}, "
+            f"thiết bị khả dụng={equipment_is_available}"
+        )
+
+    assert not failures, "Live QR flow failures:\n- " + "\n- ".join(failures)
+````
+
+## File: tests/test_meetings.py
+````python
+from datetime import datetime, timedelta, timezone, timezone
+from uuid import uuid4
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.equipment import Equipment, MeetingEquipment
+from app.models.notification import Notification
+from app.services.meeting_service import MeetingService
+from app.services.scheduler import (
+    process_auto_checkouts,
+    process_meeting_reminders,
+    process_no_show_meetings,
+)
 from tests.helpers import (
     _add_participant,
     _auth_header,
@@ -326,182 +649,316 @@ from tests.helpers import (
 )
 
 
-def test_mine_separates_organizer_and_invitee_and_includes_rsvp(
-    client: TestClient, db_session: Session
+def _meeting_at(
+    db_session: Session,
+    start_time: datetime,
+    status: str = "scheduled",
 ):
-    organizer = _create_user(db_session, "mine_organizer")
-    invitee = _create_user(db_session, "mine_invitee")
-    outsider = _create_user(db_session, "mine_outsider")
-    room = _create_room(db_session, "Mine Room")
+    identifier = uuid4().hex
+    organizer = _create_user(db_session, f"qr-organizer-{identifier}")
+    room = _create_room(db_session, f"QR Room {identifier}")
     meeting = _create_meeting(
         db_session,
         room,
         organizer,
-        datetime.utcnow() + timedelta(days=1),
-        datetime.utcnow() + timedelta(days=1, hours=1),
+        start_time,
+        start_time + timedelta(hours=1),
+        status=status,
     )
-    canceled_meeting = _create_meeting(
+    return meeting, room, organizer
+
+
+def test_check_in_succeeds_within_fifteen_minute_window(db_session: Session):
+    now = datetime(2026, 10, 10, 10, 0)
+    meeting, room, organizer = _meeting_at(db_session, now + timedelta(minutes=15))
+
+    checked_in = MeetingService.check_in_meeting(
+        db_session, meeting.id, room.qr_token, organizer, now=now
+    )
+
+    assert checked_in.status == "IN_PROGRESS"
+    assert checked_in.check_in_time == now
+    notification = (
+        db_session.query(Notification)
+        .filter(Notification.user_id == organizer.id)
+        .one()
+    )
+    assert "Test meeting" in notification.content
+    assert "check-in thành công và bắt đầu" in notification.content
+
+
+@pytest.mark.parametrize("failure", ["wrong_qr", "not_accepted"])
+def test_check_in_rejects_wrong_qr_or_unaccepted_participant(
+    db_session: Session,
+    failure: str,
+):
+    now = datetime(2026, 10, 10, 10, 0)
+    meeting, room, organizer = _meeting_at(db_session, now)
+    participant = _create_user(db_session, f"qr-participant-{failure}")
+    participant_row = _add_participant(db_session, meeting, participant)
+
+    qr_token = room.qr_token
+    if failure == "wrong_qr":
+        participant_row.response_status = "accepted"
+        db_session.commit()
+        qr_token = "invalid-token"
+
+    with pytest.raises(HTTPException) as error:
+        MeetingService.check_in_meeting(
+            db_session, meeting.id, qr_token, participant, now=now
+        )
+
+    assert error.value.status_code == (400 if failure == "wrong_qr" else 403)
+
+
+@pytest.mark.parametrize(
+    ("offset_minutes", "message"),
+    [
+        (-16, "Chưa đến thời gian check-in (cho phép trước 15 phút)"),
+        (16, "Đã quá thời gian check-in"),
+    ],
+)
+def test_check_in_rejects_outside_allowed_time_window(
+    db_session: Session,
+    offset_minutes: int,
+    message: str,
+):
+    start_time = datetime(2026, 10, 10, 10, 0)
+    now = start_time + timedelta(minutes=offset_minutes)
+    meeting, room, organizer = _meeting_at(db_session, start_time)
+
+    with pytest.raises(HTTPException) as error:
+        MeetingService.check_in_meeting(
+            db_session, meeting.id, room.qr_token, organizer, now=now
+        )
+
+    assert error.value.status_code == 400
+    assert error.value.detail == message
+
+
+@pytest.mark.parametrize("offset_minutes", [-15, 15])
+def test_check_in_accepts_exact_window_boundaries(
+    db_session: Session,
+    offset_minutes: int,
+):
+    start_time = datetime(2026, 10, 10, 10, 0)
+    meeting, room, organizer = _meeting_at(db_session, start_time)
+
+    checked_in = MeetingService.check_in_meeting(
         db_session,
-        room,
+        meeting.id,
+        room.qr_token,
         organizer,
-        datetime.utcnow() + timedelta(days=3),
-        datetime.utcnow() + timedelta(days=3, hours=1),
-        status="canceled",
+        now=start_time + timedelta(minutes=offset_minutes),
     )
-    participation = _add_participant(db_session, meeting, invitee)
-    participation.response_status = "accepted"
+    assert checked_in.status == "IN_PROGRESS"
+
+
+def test_check_out_completes_meeting_with_room_qr(db_session: Session):
+    now = datetime(2026, 10, 10, 10, 0)
+    meeting, room, organizer = _meeting_at(db_session, now, status="IN_PROGRESS")
+    equipment = Equipment(
+        name=f"Early checkout equipment {uuid4().hex}",
+        total_qty=1,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.flush()
+    db_session.add(
+        MeetingEquipment(meeting_id=meeting.id, equipment_id=equipment.id, quantity=1)
+    )
     db_session.commit()
 
-    organizer_response = client.get(
-        "/api/meetings/mine", headers=_auth_header(_make_token(organizer))
+    checked_out = MeetingService.check_out_meeting(
+        db_session,
+        meeting.id,
+        room.qr_token,
+        organizer,
+        now=now + timedelta(minutes=20),
     )
-    assert organizer_response.status_code == 200
-    organizer_item = organizer_response.json()[0]
-    assert organizer_item["id"] == meeting.id
-    assert organizer_item["is_organizer"] is True
-    assert organizer_item["participants"][0]["response_status"] == "accepted"
-    assert all(item["id"] != canceled_meeting.id for item in organizer_response.json())
 
-    invitee_response = client.get(
-        "/api/meetings/mine", headers=_auth_header(_make_token(invitee))
+    assert checked_out.status == "COMPLETED"
+    assert checked_out.check_out_time == now + timedelta(minutes=20)
+    from app.services.equipment_service import get_equipment_availability
+    from app.services.room_service import get_available_rooms
+
+    available_rooms = get_available_rooms(
+        db_session,
+        start_time=now + timedelta(minutes=21),
+        end_time=now + timedelta(minutes=30),
     )
-    assert invitee_response.status_code == 200
-    invitee_item = invitee_response.json()[0]
-    assert invitee_item["is_organizer"] is False
-    assert invitee_item["my_response_status"] == "accepted"
+    assert room.id in {available_room.id for available_room in available_rooms}
 
-    outsider_response = client.get(
-        "/api/meetings/mine", headers=_auth_header(_make_token(outsider))
+    equipment_availability = get_equipment_availability(
+        db_session,
+        start_time=now + timedelta(minutes=21),
+        end_time=now + timedelta(minutes=30),
     )
-    assert outsider_response.status_code == 200
-    assert outsider_response.json() == []
+    equipment_status = next(item for item in equipment_availability if item.id == equipment.id)
+    assert equipment_status.booked_qty == 0
+    assert equipment_status.available_qty == equipment.total_qty
 
 
-def test_invitee_can_update_own_response_but_nonparticipant_cannot(
-    client: TestClient, db_session: Session
-):
-    organizer = _create_user(db_session, "rsvp_organizer")
-    invitee = _create_user(db_session, "rsvp_invitee")
-    outsider = _create_user(db_session, "rsvp_outsider")
-    room = _create_room(db_session, "RSVP Room")
+def test_versioned_check_in_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, f"api-organizer-{uuid4().hex}")
+    room = _create_room(db_session, f"API QR Room {uuid4().hex}")
+    start_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
     meeting = _create_meeting(
         db_session,
         room,
         organizer,
-        datetime.utcnow() + timedelta(days=2),
-        datetime.utcnow() + timedelta(days=2, hours=1),
+        start_time,
+        start_time + timedelta(hours=1),
     )
-    _add_participant(db_session, meeting, invitee)
 
-    response = client.patch(
-        f"/api/meetings/{meeting.id}/response",
-        headers=_auth_header(_make_token(invitee)),
-        json={"response_status": "declined"},
+    response = client.post(
+        f"/api/v1/meetings/{meeting.id}/check-in",
+        json={"qr_token": room.qr_token},
+        headers=_auth_header(_make_token(organizer)),
     )
+
     assert response.status_code == 200
-    assert response.json()["response_status"] == "declined"
-
-    outsider_response = client.patch(
-        f"/api/meetings/{meeting.id}/response",
-        headers=_auth_header(_make_token(outsider)),
-        json={"response_status": "accepted"},
-    )
-    assert outsider_response.status_code == 404
-
-    invalid_response = client.patch(
-        f"/api/meetings/{meeting.id}/response",
-        headers=_auth_header(_make_token(invitee)),
-        json={"response_status": "maybe"},
-    )
-    assert invalid_response.status_code == 422
+    assert response.json()["status"] == "IN_PROGRESS"
+    assert response.json()["check_in_time"] is not None
 
 
-def test_mine_handles_missing_organizer_and_room_relationships(
-    client: TestClient, db_session: Session
-):
-    organizer = _create_user(db_session, "orphan_organizer")
-    invitee = _create_user(db_session, "orphan_invitee")
-    room = _create_room(db_session, "Orphan Room")
-    meeting = _create_meeting(
-        db_session,
-        room,
-        organizer,
-        datetime.utcnow() + timedelta(days=2),
-        datetime.utcnow() + timedelta(days=2, hours=1),
-    )
-    _add_participant(db_session, meeting, invitee)
-    meeting.organizer_id = None
-    meeting.room_id = None
-    db_session.commit()
+def test_manager_can_retrieve_room_qr_code(client: TestClient, db_session: Session):
+    manager = _create_user(db_session, f"qr-manager-{uuid4().hex}", role="manager")
+    room = _create_room(db_session, f"Manager QR Room {uuid4().hex}")
 
     response = client.get(
-        "/api/meetings/mine", headers=_auth_header(_make_token(invitee))
+        f"/api/v1/rooms/{room.id}/qr-code",
+        headers=_auth_header(_make_token(manager)),
     )
 
     assert response.status_code == 200
-    item = response.json()[0]
-    assert item["organizer_name"] == "Người tổ chức"
-    assert item["room_name"] is None
-    assert item["is_organizer"] is False
+    assert response.json() == {
+        "room_id": room.id,
+        "room_name": room.name,
+        "qr_token": room.qr_token,
+    }
 
 
-def test_missing_rsvp_column_returns_actionable_service_error(
-    client: TestClient, db_session: Session
+def test_meeting_organizer_can_retrieve_qr_for_their_scheduled_meeting(
+    client: TestClient,
+    db_session: Session,
 ):
-    organizer = _create_user(db_session, "schema_organizer")
-    invitee = _create_user(db_session, "schema_invitee")
-    room = _create_room(db_session, "Schema Room")
+    organizer = _create_user(db_session, f"qr-owner-{uuid4().hex}")
+    outsider = _create_user(db_session, f"qr-outsider-{uuid4().hex}")
+    room = _create_room(db_session, f"Organizer QR Room {uuid4().hex}")
+    start_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
     meeting = _create_meeting(
-        db_session,
-        room,
-        organizer,
-        datetime.utcnow() - timedelta(days=4, hours=1),
-        datetime.utcnow() - timedelta(days=4),
+        db_session, room, organizer, start_time, start_time + timedelta(hours=1)
     )
-    _add_participant(db_session, meeting, invitee)
-    meeting_id = meeting.id
-    db_session.execute(text("ALTER TABLE meeting_participants DROP COLUMN response_status"))
+
+    owner_response = client.get(
+        f"/api/v1/rooms/{room.id}/qr-code",
+        params={"meeting_id": meeting.id},
+        headers=_auth_header(_make_token(organizer)),
+    )
+    outsider_response = client.get(
+        f"/api/v1/rooms/{room.id}/qr-code",
+        params={"meeting_id": meeting.id},
+        headers=_auth_header(_make_token(outsider)),
+    )
+
+    assert owner_response.status_code == 200
+    assert owner_response.json()["qr_token"] == room.qr_token
+    assert outsider_response.status_code == 403
+
+
+def test_no_show_scheduler_cancels_meeting_after_grace_period(db_session: Session):
+    now = datetime(2026, 10, 10, 10, 16)
+    meeting, _, _ = _meeting_at(
+        db_session,
+        now - timedelta(minutes=16),
+    )
+
+    processed = process_no_show_meetings(db_session, now=now)
+
+    db_session.refresh(meeting)
+    assert processed == 1
+    assert meeting.status == "CANCELLED_NO_SHOW"
+
+
+def test_no_show_meeting_releases_equipment_inventory(db_session: Session):
+    now = datetime(2026, 10, 10, 10, 16)
+    meeting, _, _ = _meeting_at(db_session, now - timedelta(minutes=16))
+    equipment = Equipment(
+        name=f"QR scheduler equipment {uuid4().hex}",
+        total_qty=1,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.flush()
+    db_session.add(
+        MeetingEquipment(meeting_id=meeting.id, equipment_id=equipment.id, quantity=1)
+    )
     db_session.commit()
 
-    headers = _auth_header(_make_token(invitee))
-    mine_response = client.get("/api/meetings/mine", headers=headers)
-    assert mine_response.status_code == 503
-    assert "schema/migration" in mine_response.json()["detail"]
+    process_no_show_meetings(db_session, now=now)
 
-    list_response = client.get("/api/meetings/")
-    assert list_response.status_code == 503
-    history_response = client.get("/api/meetings/history", headers=headers)
-    assert history_response.status_code == 503
+    from app.services.equipment_service import get_equipment_availability
 
-    rsvp_response = client.patch(
-        f"/api/meetings/{meeting_id}/response",
-        headers=headers,
-        json={"response_status": "accepted"},
+    availability = get_equipment_availability(
+        db_session,
+        now - timedelta(minutes=1),
+        now + timedelta(minutes=1),
     )
-    assert rsvp_response.status_code == 503
-    assert "schema/migration" in rsvp_response.json()["detail"]
+    equipment_status = next(item for item in availability if item.id == equipment.id)
+    assert equipment_status.booked_qty == 0
+    assert equipment_status.available_qty == 1
 
 
-def test_startup_migration_adds_missing_rsvp_column(monkeypatch):
-    migration_engine = create_engine("sqlite://")
-    with migration_engine.begin() as connection:
-        connection.execute(text(
-            "CREATE TABLE meeting_participants "
-            "(id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL, user_id INTEGER NOT NULL)"
-        ))
+def test_no_show_scheduler_does_not_cancel_before_grace_period(db_session: Session):
+    now = datetime(2026, 10, 10, 10, 14)
+    meeting, _, _ = _meeting_at(
+        db_session,
+        now - timedelta(minutes=14),
+    )
 
-    monkeypatch.setattr(main, "engine", migration_engine)
-    try:
-        main._auto_migrate_schema()
-        columns = {column["name"] for column in inspect(migration_engine).get_columns("meeting_participants")}
-        assert "response_status" in columns
-    finally:
-        migration_engine.dispose()
-````
+    processed = process_no_show_meetings(db_session, now=now)
 
-## File: FETCH_HEAD
-````
+    db_session.refresh(meeting)
+    assert processed == 0
+    assert meeting.status == "scheduled"
 
+
+def test_reminder_scheduler_notifies_organizer_and_accepted_attendees(db_session: Session):
+    now = datetime(2026, 10, 10, 10, 5)
+    meeting, _, organizer = _meeting_at(db_session, now - timedelta(minutes=5))
+    accepted = _create_user(db_session, f"reminder-accepted-{uuid4().hex}")
+    pending = _create_user(db_session, f"reminder-pending-{uuid4().hex}")
+    accepted_invitation = _add_participant(db_session, meeting, accepted)
+    accepted_invitation.response_status = "accepted"
+    _add_participant(db_session, meeting, pending)
+    db_session.commit()
+
+    processed = process_meeting_reminders(db_session, now=now)
+
+    assert processed == 1
+    assert meeting.reminder_sent is True
+    notifications = db_session.query(Notification).all()
+    assert {notification.user_id for notification in notifications} == {
+        organizer.id,
+        accepted.id,
+    }
+
+
+def test_auto_checkout_uses_scheduled_end_time(db_session: Session):
+    now = datetime(2026, 10, 10, 11, 0)
+    meeting, _, _ = _meeting_at(
+        db_session,
+        now - timedelta(hours=2),
+        status="IN_PROGRESS",
+    )
+
+    processed = process_auto_checkouts(db_session, now=now)
+
+    db_session.refresh(meeting)
+    assert processed == 1
+    assert meeting.status == "COMPLETED"
+    assert meeting.check_out_time == meeting.end_time
 ````
 
 ## File: .agents/tasks/plan.md
@@ -962,88 +1419,6 @@ def test_startup_migration_adds_missing_rsvp_column(monkeypatch):
 - Không cần cài thêm dependency: `calendar` là stdlib Python, `python-dateutil` không có trong `requirements.txt` và không cần thiết.
 ````
 
-## File: alembic/env.py
-````python
-from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
-from alembic import context
-
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
-config = context.config
-
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
-
-
-def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
-
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
-
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
-````
-
 ## File: alembic/README
 ````
 Generic single-database configuration.
@@ -1079,6 +1454,55 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     ${downgrades if downgrades else "pass"}
+````
+
+## File: app/core/config.py
+````python
+import logging
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+def load_environment() -> None:
+    """Load project environment variables without overriding process settings."""
+    load_dotenv(dotenv_path=ENV_FILE, override=False)
+
+
+def get_google_oauth_credentials() -> tuple[str, str] | None:
+    load_environment()
+    credentials = {
+        "GOOGLE_CLIENT_ID": os.getenv("GOOGLE_CLIENT_ID"),
+        "GOOGLE_CLIENT_SECRET": os.getenv("GOOGLE_CLIENT_SECRET"),
+    }
+    invalid_variables = [
+        name
+        for name, value in credentials.items()
+        if (
+            not value
+            or not value.strip()
+            or value.strip().lower().startswith(("your_", "your-", "replace_", "replace-"))
+            or "placeholder" in value.strip().lower()
+        )
+    ]
+    if invalid_variables:
+        logger.error(
+            "Google OAuth is not configured; missing or placeholder environment variable(s): %s",
+            ", ".join(invalid_variables),
+        )
+        return None
+
+    client_id = credentials["GOOGLE_CLIENT_ID"]
+    client_secret = credentials["GOOGLE_CLIENT_SECRET"]
+    assert client_id is not None and client_secret is not None
+    return client_id, client_secret
+
+
+load_environment()
 ````
 
 ## File: app/db/session.py
@@ -1452,7 +1876,7 @@ def request_calendar_access_for_invitees(user_ids: list[int], meeting_ids: list[
                 .filter(
                     MeetingParticipant.user_id == user_id,
                     Meeting.id.in_(unique_meeting_ids),
-                    Meeting.status.notin_(["CANCELLED", "canceled"]),
+                    Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
                 )
                 .order_by(Meeting.start_time)
                 .all()
@@ -1467,396 +1891,6 @@ def request_calendar_access_for_invitees(user_ids: list[int], meeting_ids: list[
             sync_user_meetings_to_google(user.id)
         else:
             _send_calendar_consent_email(user, meetings)
-````
-
-## File: app/services/google_calendar_service.py
-````python
-import base64
-import hashlib
-import hmac
-import logging
-import os
-from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-import httpx
-from google.auth.transport.requests import Request as GoogleAuthRequest
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy.orm import Session
-
-from app.core.database import SessionLocal
-from app.core.security import SECRET_KEY
-from app.models.google_calendar_event import GoogleCalendarEvent
-from app.models.meeting import Meeting, MeetingParticipant
-from app.models.user import User
-
-logger = logging.getLogger(__name__)
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_TOKEN_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
-GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
-GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-
-
-def _fernet() -> Fernet:
-    key = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY")
-    if not key:
-        raise RuntimeError("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured")
-    try:
-        return Fernet(key.encode("ascii"))
-    except (ValueError, UnicodeEncodeError) as exc:
-        raise RuntimeError("GOOGLE_TOKEN_ENCRYPTION_KEY must be a valid Fernet key") from exc
-
-
-def encrypt_refresh_token(refresh_token: str) -> str:
-    return _fernet().encrypt(refresh_token.encode("utf-8")).decode("ascii")
-
-
-def decrypt_refresh_token(encrypted_token: str) -> str:
-    try:
-        return _fernet().decrypt(encrypted_token.encode("ascii")).decode("utf-8")
-    except (InvalidToken, UnicodeEncodeError) as exc:
-        raise RuntimeError("Stored Google refresh token cannot be decrypted") from exc
-
-
-def make_calendar_consent_url(user: User) -> str:
-    if not user.email:
-        raise ValueError("Calendar consent requires a user email")
-    expires = int(datetime.now(timezone.utc).timestamp()) + 7 * 24 * 60 * 60
-    message = f"{user.id}:{user.email.strip().lower()}:{expires}"
-    signature = hmac.new(
-        SECRET_KEY.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-    backend_url = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000").rstrip("/")
-    query = urlencode({"user_id": user.id, "expires": expires, "signature": signature})
-    return f"{backend_url}/api/auth/google/calendar/connect?{query}"
-
-
-def verify_calendar_consent_signature(user: User, expires: int, signature: str) -> bool:
-    import time
-
-    if expires < int(time.time()) or not user.email:
-        return False
-    message = f"{user.id}:{user.email.strip().lower()}:{expires}"
-    expected = hmac.new(
-        SECRET_KEY.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
-def _google_config() -> tuple[str, str]:
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        raise RuntimeError("Google OAuth client credentials are not configured")
-    return client_id, client_secret
-
-
-def _access_token(refresh_token: str) -> str:
-    client_id, client_secret = _google_config()
-    response = httpx.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        },
-        timeout=15,
-    )
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        try:
-            error_data = response.json()
-        except ValueError:
-            error_data = {}
-        oauth_error = error_data.get("error") if isinstance(error_data, dict) else None
-        error_description = (
-            error_data.get("error_description")
-            if isinstance(error_data, dict)
-            else None
-        )
-        logger.error(
-            "Google OAuth refresh-token request failed (HTTP %s, error=%s): %s",
-            response.status_code,
-            oauth_error or "unknown",
-            error_description or response.text[:500] or str(exc),
-        )
-        raise
-    access_token = response.json().get("access_token")
-    if not access_token:
-        raise RuntimeError("Google did not return an access token")
-    return access_token
-
-
-def revoke_google_refresh_token(encrypted_refresh_token: str) -> None:
-    """Revoke a stored Google refresh token after the local account is disconnected."""
-    try:
-        refresh_token = decrypt_refresh_token(encrypted_refresh_token)
-        response = httpx.post(
-            GOOGLE_TOKEN_REVOKE_URL,
-            params={"token": refresh_token},
-            timeout=15,
-        )
-        response.raise_for_status()
-    except (RuntimeError, httpx.HTTPError):
-        logger.exception("Could not revoke the disconnected Google Calendar token")
-
-
-def _local_datetime(value: datetime) -> datetime:
-    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
-    try:
-        zone = ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
-        zone = timezone(timedelta(hours=7))
-    if value.tzinfo is None:
-        return value.replace(tzinfo=zone)
-    return value.astimezone(zone)
-
-
-def _timezone_name() -> str:
-    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
-    try:
-        ZoneInfo(timezone_name)
-        return timezone_name
-    except ZoneInfoNotFoundError:
-        return "Asia/Ho_Chi_Minh"
-
-
-def _google_event_id(user_id: int, meeting_id: int) -> str:
-    digest = hashlib.sha256(f"{user_id}:{meeting_id}".encode("ascii")).digest()
-    return base64.b32hexencode(digest).decode("ascii").rstrip("=").lower()
-
-
-def _event_payload(user_id: int, meeting: Meeting) -> dict:
-    room = meeting.room
-    if meeting.meeting_type == "online":
-        location = meeting.meeting_link or ""
-    elif room:
-        location = " - ".join(part for part in (room.name, room.location) if part)
-    else:
-        location = ""
-
-    details = [meeting.description or ""]
-    if meeting.meeting_type == "online" and meeting.meeting_link:
-        details.append(f"Meeting link: {meeting.meeting_link}")
-    description = "\n".join(part for part in details if part)
-    start = _local_datetime(meeting.start_time)
-    end = _local_datetime(meeting.end_time)
-    payload = {
-        "id": _google_event_id(user_id, meeting.id),
-        "summary": meeting.title,
-        "description": description,
-        "location": location,
-        "start": {"dateTime": start.isoformat(), "timeZone": _timezone_name()},
-        "end": {"dateTime": end.isoformat(), "timeZone": _timezone_name()},
-    }
-    if meeting.organizer_id == user_id:
-        attendees = [
-            {"email": participant.user.email}
-            for participant in meeting.participants
-            if participant.user and participant.user.email
-        ]
-        if attendees:
-            payload["attendees"] = attendees
-    return payload
-
-
-def _log_calendar_sync_http_error(
-    exc: httpx.HTTPStatusError,
-    *,
-    meeting_id: int,
-    user_id: int,
-) -> None:
-    response = exc.response
-    try:
-        error_data = response.json()
-    except ValueError:
-        error_data = {}
-
-    google_error = error_data.get("error", {}) if isinstance(error_data, dict) else {}
-    errors = google_error.get("errors", []) if isinstance(google_error, dict) else []
-    reason = errors[0].get("reason") if errors and isinstance(errors[0], dict) else None
-    message = google_error.get("message") if isinstance(google_error, dict) else None
-    message = message or response.text[:500] or str(exc)
-
-    if response.status_code == 403:
-        logger.error(
-            "Google Calendar denied sync for meeting_id=%s user_id=%s "
-            "(reason=%s): %s. If this is an insufficientPermissions error, "
-            "disconnect Google Calendar in Settings and connect again to grant "
-            "the calendar.events scope. Also verify Calendar API access and "
-            "the Google account's calendar sharing policy.",
-            meeting_id,
-            user_id,
-            reason or "unknown",
-            message,
-        )
-        return
-
-    logger.exception(
-        "Could not sync meeting_id=%s to Google Calendar for user_id=%s (HTTP %s)",
-        meeting_id,
-        user_id,
-        response.status_code,
-    )
-
-
-def sync_user_meetings_to_google(user_id: int) -> None:
-    db: Session = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
-        if not user or not user.google_refresh_token:
-            return
-        try:
-            refresh_token = decrypt_refresh_token(user.google_refresh_token)
-            access_token = _access_token(refresh_token)
-        except (RuntimeError, httpx.HTTPError) as exc:
-            logger.warning("Google Calendar authorization unavailable for user_id=%s: %s", user_id, exc)
-            return
-
-        meetings = (
-            db.query(Meeting)
-            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
-            .filter(
-                (Meeting.organizer_id == user_id)
-                | (MeetingParticipant.user_id == user_id),
-                Meeting.status.notin_(["CANCELLED", "canceled"]),
-            )
-            .distinct()
-            .order_by(Meeting.start_time)
-            .all()
-        )
-        existing_meeting_ids = {
-            row[0]
-            for row in db.query(GoogleCalendarEvent.meeting_id)
-            .filter(GoogleCalendarEvent.user_id == user_id)
-            .all()
-        }
-        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-        for meeting in meetings:
-            if meeting.id in existing_meeting_ids:
-                continue
-            google_event_id = _google_event_id(user_id, meeting.id)
-            try:
-                response = httpx.post(
-                    GOOGLE_EVENTS_URL,
-                    headers=headers,
-                    json=_event_payload(user_id, meeting),
-                    params={"sendUpdates": "all"} if meeting.organizer_id == user_id else None,
-                    timeout=15,
-                )
-                if response.status_code == 409:
-                    pass
-                else:
-                    response.raise_for_status()
-                db.add(
-                    GoogleCalendarEvent(
-                        user_id=user_id,
-                        meeting_id=meeting.id,
-                        google_event_id=google_event_id,
-                    )
-                )
-                db.commit()
-                existing_meeting_ids.add(meeting.id)
-            except httpx.HTTPStatusError as exc:
-                db.rollback()
-                _log_calendar_sync_http_error(
-                    exc,
-                    meeting_id=meeting.id,
-                    user_id=user_id,
-                )
-            except (httpx.HTTPError, RuntimeError):
-                db.rollback()
-                logger.exception(
-                    "Could not sync meeting_id=%s to Google Calendar for user_id=%s",
-                    meeting.id,
-                    user_id,
-                )
-    finally:
-        db.close()
-
-
-def delete_google_calendar_event(user: User, google_event_id: str) -> bool:
-    """Delete one event from the connected user's primary Google Calendar."""
-    if not user.google_refresh_token:
-        logger.warning(
-            "Cannot delete Google event %s: user_id=%s has no refresh token",
-            google_event_id,
-            user.id,
-        )
-        return False
-
-    try:
-        refresh_token = decrypt_refresh_token(user.google_refresh_token)
-        client_id, client_secret = _google_config()
-        credentials = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri=GOOGLE_TOKEN_URL,
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=[GOOGLE_CALENDAR_EVENTS_SCOPE],
-        )
-        credentials.refresh(GoogleAuthRequest())
-        service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
-        service.events().delete(
-            calendarId="primary",
-            eventId=google_event_id,
-        ).execute()
-        return True
-    except HttpError as exc:
-        response_status = getattr(getattr(exc, "resp", None), "status", None)
-        if response_status in {404, 410}:
-            logger.warning(
-                "Google event %s is already deleted (HTTP %s) for user_id=%s",
-                google_event_id,
-                response_status,
-                user.id,
-            )
-            return True
-        logger.exception(
-            "Failed to delete Google event %s for user_id=%s (HTTP %s)",
-            google_event_id,
-            user.id,
-            response_status,
-        )
-        return False
-    except Exception:
-        logger.exception(
-            "Failed to delete Google event %s for user_id=%s",
-            google_event_id,
-            user.id,
-        )
-        return False
-
-
-def delete_google_events_for_meeting(meeting_id: int) -> None:
-    """Delete tracked attendee events and retain mappings if Google is unavailable."""
-    db: Session = SessionLocal()
-    try:
-        event_records = (
-            db.query(GoogleCalendarEvent)
-            .filter(GoogleCalendarEvent.meeting_id == meeting_id)
-            .all()
-        )
-        for event_record in event_records:
-            user = db.query(User).filter(User.id == event_record.user_id).first()
-            if user is None:
-                db.delete(event_record)
-                continue
-            if delete_google_calendar_event(user, event_record.google_event_id):
-                db.delete(event_record)
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Could not process Google events for meeting_id=%s", meeting_id)
-    finally:
-        db.close()
 ````
 
 ## File: app/services/notification_service.py
@@ -2004,6 +2038,7 @@ class ReportRoomService:
 ## File: app/services/room_service.py
 ````python
 from datetime import datetime
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.meeting import Meeting
 from app.models.room import Room
@@ -2019,7 +2054,10 @@ def get_available_rooms(
     occupied_room_ids = (
         db.query(Meeting.room_id)
         .filter(
-            Meeting.status != "CANCELLED",
+            func.upper(Meeting.status).notin_(
+                ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+            ),
+            Meeting.check_out_time.is_(None),
             Meeting.start_time < end_time,
             Meeting.end_time > start_time,
         )
@@ -2949,71 +2987,6 @@ def get_available_rooms(
 }
 ````
 
-## File: frontend/js/auth.js
-````javascript
-const AUTH_API_BASE = window.AUTH_API_BASE || 'http://localhost:8000/api';
-
-function handleGoogleAuthCallback() {
-    const callbackValues = new URLSearchParams(window.location.hash.slice(1));
-    const accessToken = callbackValues.get('access_token');
-
-    if (accessToken) {
-        localStorage.setItem('token', accessToken);
-        localStorage.setItem('access_token', accessToken);
-
-        const valuesToStore = {
-            role: callbackValues.get('role'),
-            user_name: callbackValues.get('full_name'),
-            user_email: callbackValues.get('email'),
-            user_id: callbackValues.get('user_id'),
-            user_picture: callbackValues.get('picture'),
-        };
-        Object.entries(valuesToStore).forEach(([key, value]) => {
-            if (value) localStorage.setItem(key, value);
-        });
-
-        const dashboardUrl = new URL('dashboard.html', window.location.href);
-        window.location.replace(dashboardUrl.href);
-        return;
-    }
-
-    const query = new URLSearchParams(window.location.search);
-    if (query.get('calendar_connected') === '1') {
-        const successAlert = document.getElementById('errorAlert');
-        if (successAlert) {
-            successAlert.textContent = 'Đã kết nối Google Calendar. Các cuộc họp được mời sẽ được đồng bộ.';
-            successAlert.classList.remove('hidden', 'bg-red-50', 'border-red-200', 'text-red-600');
-            successAlert.classList.add('bg-green-50', 'border-green-200', 'text-green-700');
-        }
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return;
-    }
-    const oauthError = query.get('google_error');
-    if (!oauthError) return;
-
-    const errorAlert = document.getElementById('errorAlert');
-    const messages = {
-        access_denied: 'Bạn đã hủy đăng nhập bằng Google.',
-        calendar_permission_denied: 'Bạn chưa cấp quyền Google Calendar cho RoomSync.',
-        oauth_failed: 'Không thể đăng nhập bằng Google. Vui lòng thử lại.',
-    };
-    if (errorAlert) {
-        errorAlert.textContent = messages[oauthError] || messages.oauth_failed;
-        errorAlert.classList.remove('hidden');
-    }
-    window.history.replaceState({}, document.title, window.location.pathname);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const googleButton = document.getElementById('googleLoginButton');
-    googleButton?.addEventListener('click', () => {
-        window.location.assign(`${AUTH_API_BASE}/auth/google/login`);
-    });
-
-    handleGoogleAuthCallback();
-});
-````
-
 ## File: migrations/001_add_meeting_recurring_columns.sql
 ````sql
 -- Additive migration for existing MySQL databases. Run while using meeting_db.
@@ -3394,6 +3367,25 @@ CREATE TABLE IF NOT EXISTS google_calendar_events (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ````
 
+## File: migrations/008_add_meeting_participant_response_status.sql
+````sql
+-- Track invitee RSVP state for the dashboard and meeting organizers.
+SET @has_response_status = (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meeting_participants'
+      AND COLUMN_NAME = 'response_status'
+);
+SET @add_response_status = IF(
+    @has_response_status = 0,
+    'ALTER TABLE meeting_participants ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT ''pending''',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_response_status;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+````
+
 ## File: tests/__init__.py
 ````python
 
@@ -3620,137 +3612,6 @@ def test_unconnected_invitee_receives_calendar_consent_email(
     assert meeting.title in sent.get_content()
 ````
 
-## File: tests/test_equipment_admin.py
-````python
-"""Unit tests for Equipment Admin flow (POST, PUT, GET include_inactive, permission checks)."""
-
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from app.models.equipment import Equipment, MeetingEquipment
-from app.models.user import User
-from tests.helpers import _auth_header, _create_meeting, _create_room, _create_user, _make_token
-
-
-def _create_test_equipment(db: Session, name: str = "Mic Test", total_qty: int = 5, is_active: bool = True) -> Equipment:
-    equip = Equipment(
-        name=name,
-        code="TEST-01",
-        category="Audio",
-        total_qty=total_qty,
-        is_active=is_active,
-    )
-    db.add(equip)
-    db.commit()
-    db.refresh(equip)
-    return equip
-
-
-def test_post_and_put_require_admin_token(client: TestClient, db_session: Session):
-    """Test API POST và PUT: Phải trả về 403 Forbidden hoặc 401 Unauthorized nếu không có token Admin."""
-    employee = _create_user(db_session, username="employee1", role="employee")
-    emp_token = _make_token(employee)
-
-    payload = {
-        "name": "Projector Ultra HD",
-        "code": "PRJ-999",
-        "category": "Visual",
-        "total_qty": 2,
-    }
-
-    # 1. POST without token -> 401 Unauthorized
-    resp_no_auth = client.post("/api/equipments/", json=payload)
-    assert resp_no_auth.status_code in (401, 403)
-
-    # 2. POST with employee token -> 403 Forbidden
-    resp_emp = client.post("/api/equipments/", json=payload, headers=_auth_header(emp_token))
-    assert resp_emp.status_code == 403
-
-    # Create an equipment for testing PUT permission
-    equip = _create_test_equipment(db_session)
-
-    update_payload = {"name": "Mic Test Updated"}
-
-    # 3. PUT without token -> 401/403
-    resp_put_no_auth = client.put(f"/api/equipments/{equip.id}", json=update_payload)
-    assert resp_put_no_auth.status_code in (401, 403)
-
-    # 4. PUT with employee token -> 403 Forbidden
-    resp_put_emp = client.put(f"/api/equipments/{equip.id}", json=update_payload, headers=_auth_header(emp_token))
-    assert resp_put_emp.status_code == 403
-
-
-def test_toggle_is_active_and_include_inactive_query(client: TestClient, db_session: Session):
-    """Tạo 1 thiết bị, sau đó gọi PUT để đổi is_active từ True sang False.
-
-    Gọi GET /?include_inactive=true để kiểm tra thiết bị vừa tắt vẫn hiển thị trong list của Admin.
-    """
-    admin = _create_user(db_session, username="admin1", role="admin")
-    admin_token = _make_token(admin)
-    headers = _auth_header(admin_token)
-
-    # 1. Admin POST to create a new equipment (is_active Defaults to True)
-    create_payload = {
-        "name": "Smart Board 75 inch",
-        "code": "SB-075",
-        "category": "Display",
-        "total_qty": 3,
-        "is_active": True,
-    }
-    create_resp = client.post("/api/equipments/", json=create_payload, headers=headers)
-    assert create_resp.status_code == 201
-    created_id = create_resp.json()["id"]
-    assert create_resp.json()["is_active"] is True
-
-    # 2. Call PUT to change is_active from True to False
-    put_payload = {"is_active": False}
-    put_resp = client.put(f"/api/equipments/{created_id}", json=put_payload, headers=headers)
-    assert put_resp.status_code == 200
-    assert put_resp.json()["is_active"] is False
-
-    # 3. GET /api/equipments/ (default include_inactive=false) -> Should NOT contain the inactive equipment
-    get_active_resp = client.get("/api/equipments/", headers=headers)
-    assert get_active_resp.status_code == 200
-    active_ids = [item["id"] for item in get_active_resp.json()]
-    assert created_id not in active_ids
-
-    # 4. GET /api/equipments/?include_inactive=true -> MUST contain the inactive equipment for Admin
-    get_all_resp = client.get("/api/equipments/?include_inactive=true", headers=headers)
-    assert get_all_resp.status_code == 200
-    all_ids = [item["id"] for item in get_all_resp.json()]
-    assert created_id in all_ids
-
-
-def test_update_total_qty_does_not_corrupt_meeting_equipments(client: TestClient, db_session: Session):
-    """AC 4: Khi Admin sửa total_qty của 1 thiết bị, sự thay đổi lưu thành công mà không làm hỏng dữ liệu meeting_equipments."""
-    admin = _create_user(db_session, username="admin_qty", role="admin")
-    admin_token = _make_token(admin)
-    headers = _auth_header(admin_token)
-
-    equip = _create_test_equipment(db_session, total_qty=5)
-    organizer = _create_user(db_session, username="organizer_qty")
-    room = _create_room(db_session, name="Room Qty")
-    from datetime import datetime
-    meeting = _create_meeting(db_session, room, organizer, datetime.now(), datetime.now())
-
-    # Link meeting to equipment
-    me = MeetingEquipment(meeting_id=meeting.id, equipment_id=equip.id, quantity=2, note="For workshop")
-    db_session.add(me)
-    db_session.commit()
-
-    # Admin updates total_qty from 5 to 12
-    put_resp = client.put(f"/api/equipments/{equip.id}", json={"total_qty": 12}, headers=headers)
-    assert put_resp.status_code == 200
-    assert put_resp.json()["total_qty"] == 12
-
-    # Verify meeting_equipments link is intact
-    me_db = db_session.query(MeetingEquipment).filter_by(meeting_id=meeting.id, equipment_id=equip.id).first()
-    assert me_db is not None
-    assert me_db.quantity == 2
-    assert me_db.equipment.total_qty == 12
-````
-
 ## File: tests/test_equipment_availability.py
 ````python
 from datetime import datetime
@@ -3877,339 +3738,6 @@ def test_availability_defaults_to_current_time(client: TestClient, db_session: S
     assert response.json()[0]["available_qty"] == 5
 ````
 
-## File: tests/test_google_auth.py
-````python
-from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlsplit
-
-from cryptography.fernet import Fernet
-
-from app.models.user import User
-from app.routers import auth as auth_router
-from app.core.security import hash_password
-from app.services.google_calendar_service import (
-    decrypt_refresh_token,
-    encrypt_refresh_token,
-    make_calendar_consent_url,
-)
-from tests.helpers import _auth_header, _create_user, _make_token
-
-
-class MockGoogleResponse:
-    def __init__(self, body):
-        self.body = body
-
-    def raise_for_status(self):
-        return None
-
-    def json(self):
-        return self.body
-
-
-def _configure_google_oauth(monkeypatch):
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-google-secret")
-    monkeypatch.setenv(
-        "GOOGLE_REDIRECT_URI",
-        "http://localhost:8000/api/auth/google/callback",
-    )
-    monkeypatch.setenv(
-        "FRONTEND_LOGIN_URL",
-        "http://localhost:8000/static/login.html",
-    )
-
-
-def _mock_google_profile(monkeypatch, profile, token_data=None):
-    token_data = token_data or {"access_token": "google-access-token"}
-    monkeypatch.setattr(
-        auth_router.httpx,
-        "post",
-        lambda *args, **kwargs: MockGoogleResponse(token_data),
-    )
-    monkeypatch.setattr(
-        auth_router.httpx,
-        "get",
-        lambda *args, **kwargs: MockGoogleResponse(profile),
-    )
-
-
-def _start_google_login(client):
-    response = client.get("/api/auth/google/login", follow_redirects=False)
-    assert response.status_code == 307
-    return response, urlsplit(response.headers["location"])
-
-
-def _complete_google_login(client, login_response, location):
-    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
-    return client.get(
-        f"/api/auth/google/callback?code=test-code&state={state}",
-        follow_redirects=False,
-    )
-
-
-def test_google_login_redirect_requests_openid_email_profile(client, monkeypatch):
-    _configure_google_oauth(monkeypatch)
-
-    response, location = _start_google_login(client)
-    query = parse_qs(location.query)
-
-    assert location.hostname == "accounts.google.com"
-    assert query["scope"] == ["openid email profile"]
-    assert query["response_type"] == ["code"]
-    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].startswith(query["state"][0] + "|")
-
-
-def test_calendar_settings_authorization_returns_url_and_state_cookie(
-    client, db_session, monkeypatch
-):
-    _configure_google_oauth(monkeypatch)
-    user = _create_user(db_session, "settings-calendar-owner")
-
-    response = client.get(
-        "/api/auth/google/calendar/authorize",
-        headers=_auth_header(_make_token(user)),
-    )
-
-    assert response.status_code == 200
-    authorization_url = response.json()["authorization_url"]
-    query = parse_qs(urlsplit(authorization_url).query)
-    assert query["scope"] == [
-        "openid email profile https://www.googleapis.com/auth/calendar.events"
-    ]
-    assert query["access_type"] == ["offline"]
-    assert query["prompt"] == ["consent"]
-    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|")[1] == "calendar_settings"
-
-
-def test_calendar_settings_can_connect_a_different_google_account(
-    client, db_session, monkeypatch
-):
-    _configure_google_oauth(monkeypatch)
-    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    user = _create_user(db_session, "settings-calendar-different-google")
-    user.google_refresh_token = encrypt_refresh_token("old-refresh-token")
-    db_session.commit()
-    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
-    authorization = client.get(
-        "/api/auth/google/calendar/authorize",
-        headers=_auth_header(_make_token(user)),
-    )
-    state = authorization.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
-    _mock_google_profile(
-        monkeypatch,
-        {
-            "email": "personal.calendar@example.test",
-            "email_verified": True,
-            "name": "Personal Calendar",
-        },
-        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
-    )
-
-    callback = client.get(
-        f"/api/auth/google/callback?code=calendar-code&state={state}",
-        follow_redirects=False,
-    )
-
-    assert callback.status_code == 303
-    assert callback.headers["location"].startswith(
-        "http://localhost:8000/static/dashboard.html?calendar_connected=1"
-    )
-    db_session.refresh(user)
-    assert decrypt_refresh_token(user.google_refresh_token) != "old-refresh-token"
-    assert decrypt_refresh_token(user.google_refresh_token) == "private-refresh-token"
-
-
-def test_calendar_status_and_disconnect(client, db_session, monkeypatch):
-    user = _create_user(db_session, "settings-calendar-disconnect")
-    headers = _auth_header(_make_token(user))
-    revoke_calls = []
-    monkeypatch.setattr(
-        auth_router,
-        "revoke_google_refresh_token",
-        revoke_calls.append,
-    )
-
-    disconnected = client.get("/api/auth/google/calendar/status", headers=headers)
-    assert disconnected.status_code == 200
-    assert disconnected.json() == {"connected": False, "connected_at": None}
-
-    user.google_refresh_token = "encrypted-refresh-token"
-    user.google_calendar_connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db_session.commit()
-    connected = client.get("/api/auth/google/calendar/status", headers=headers)
-    assert connected.json()["connected"] is True
-
-    response = client.delete(
-        "/api/auth/google/calendar/disconnect",
-        headers=headers,
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"connected": False}
-    assert revoke_calls == ["encrypted-refresh-token"]
-    db_session.refresh(user)
-    assert user.google_refresh_token is None
-    assert user.google_calendar_connected_at is None
-
-
-def test_google_callback_registers_new_user_and_redirects_with_token(
-    client, db_session, monkeypatch
-):
-    _configure_google_oauth(monkeypatch)
-    _mock_google_profile(
-        monkeypatch,
-        {
-            "email": "new.person@example.test",
-            "email_verified": True,
-            "name": "New Person",
-            "picture": "https://images.example.test/person.png",
-        },
-    )
-    login_response, location = _start_google_login(client)
-
-    response = _complete_google_login(client, login_response, location)
-
-    assert response.status_code == 303
-    redirect = urlsplit(response.headers["location"])
-    values = parse_qs(redirect.fragment)
-    user = db_session.query(User).filter_by(email="new.person@example.test").one()
-    assert user.full_name == "New Person"
-    assert user.role == "employee"
-    assert values["access_token"]
-    assert values["email"] == [user.email]
-    assert values["picture"] == ["https://images.example.test/person.png"]
-
-
-def test_google_callback_logs_in_existing_user(client, db_session, monkeypatch):
-    _configure_google_oauth(monkeypatch)
-    user = User(
-        username="known-google-user",
-        email="known@example.test",
-        full_name="Existing User",
-        hashed_password=hash_password("local-password"),
-        role="employee",
-        is_active=True,
-    )
-    db_session.add(user)
-    db_session.commit()
-    _mock_google_profile(
-        monkeypatch,
-        {
-            "email": "known@example.test",
-            "email_verified": True,
-            "name": "Google Display Name",
-            "picture": "https://images.example.test/known.png",
-        },
-    )
-    login_response, location = _start_google_login(client)
-
-    response = _complete_google_login(client, login_response, location)
-
-    assert response.status_code == 303
-    values = parse_qs(urlsplit(response.headers["location"]).fragment)
-    assert values["username"] == ["known-google-user"]
-    assert db_session.query(User).filter_by(email="known@example.test").count() == 1
-
-
-def test_google_callback_rejects_invalid_state(client, monkeypatch):
-    _configure_google_oauth(monkeypatch)
-    _start_google_login(client)
-
-    response = client.get(
-        "/api/auth/google/callback?code=test-code&state=wrong-state",
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid OAuth state"
-
-
-def test_invitee_calendar_consent_stores_encrypted_token_and_starts_sync(
-    client, db_session, monkeypatch
-):
-    _configure_google_oauth(monkeypatch)
-    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    user = User(
-        username="calendar-invitee",
-        email="invitee@example.test",
-        full_name="Calendar Invitee",
-        hashed_password=hash_password("local-password"),
-        role="employee",
-        is_active=True,
-    )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
-    consent_url = make_calendar_consent_url(user)
-    consent_parts = urlsplit(consent_url)
-
-    consent_response = client.get(
-        f"{consent_parts.path}?{consent_parts.query}",
-        follow_redirects=False,
-    )
-    assert consent_response.status_code == 307
-    consent_query = parse_qs(urlsplit(consent_response.headers["location"]).query)
-    assert "https://www.googleapis.com/auth/calendar.events" in consent_query["scope"][0]
-    assert consent_query["access_type"] == ["offline"]
-
-    _mock_google_profile(
-        monkeypatch,
-        {"email": "invitee@example.test", "email_verified": True, "name": "Calendar Invitee"},
-        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
-    )
-    state = consent_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
-    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
-    callback = client.get(
-        f"/api/auth/google/callback?code=calendar-code&state={state}",
-        follow_redirects=False,
-    )
-
-    assert callback.status_code == 303
-    assert "calendar_connected=1" in callback.headers["location"]
-    db_session.expire_all()
-    saved_user = db_session.query(User).filter_by(id=user.id).one()
-    assert saved_user.google_refresh_token != "private-refresh-token"
-    assert decrypt_refresh_token(saved_user.google_refresh_token) == "private-refresh-token"
-    assert saved_user.google_calendar_connected_at is not None
-
-
-def test_calendar_consent_rejects_google_email_mismatch(client, db_session, monkeypatch):
-    _configure_google_oauth(monkeypatch)
-    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    user = User(
-        username="calendar-owner",
-        email="owner@example.test",
-        full_name="Calendar Owner",
-        hashed_password=hash_password("local-password"),
-        role="employee",
-        is_active=True,
-    )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
-    consent_parts = urlsplit(make_calendar_consent_url(user))
-    consent_response = client.get(
-        f"{consent_parts.path}?{consent_parts.query}",
-        follow_redirects=False,
-    )
-    _mock_google_profile(
-        monkeypatch,
-        {"email": "other@example.test", "email_verified": True, "name": "Different Account"},
-        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
-    )
-    state = consent_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
-
-    callback = client.get(
-        f"/api/auth/google/callback?code=calendar-code&state={state}",
-        follow_redirects=False,
-    )
-
-    assert callback.status_code == 403
-    db_session.expire_all()
-    saved_user = db_session.query(User).filter_by(id=user.id).one()
-    assert saved_user.google_refresh_token is None
-````
-
 ## File: tests/test_google_calendar_delete.py
 ````python
 from datetime import datetime, timedelta
@@ -4334,529 +3862,6 @@ def test_cancel_worker_removes_mapping_only_after_success(db_session, monkeypatc
 
     assert deleted == [(user.id, "event-to-delete")]
     assert db_session.query(GoogleCalendarEvent).filter_by(meeting_id=meeting.id).count() == 0
-````
-
-## File: tests/test_google_calendar_service.py
-````python
-from datetime import datetime, timedelta
-
-from cryptography.fernet import Fernet
-import httpx
-from sqlalchemy.orm import sessionmaker
-
-from app.models.google_calendar_event import GoogleCalendarEvent
-from app.models.meeting import MeetingParticipant
-from app.services import google_calendar_service
-from app.services.google_calendar_service import encrypt_refresh_token
-from tests.conftest import test_engine
-from tests.helpers import _add_participant, _create_meeting, _create_room, _create_user
-
-
-class FakeGoogleResponse:
-    status_code = 200
-
-    def raise_for_status(self):
-        return None
-
-
-
-def test_invitee_meeting_is_inserted_once_in_google_calendar(db_session, monkeypatch):
-    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    monkeypatch.setenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
-    organizer = _create_user(db_session, "calendar-sync-organizer")
-    invitee = _create_user(db_session, "calendar-sync-invitee")
-    invitee.google_refresh_token = encrypt_refresh_token("stored-refresh-token")
-    db_session.commit()
-    room = _create_room(db_session, "Calendar Sync Room")
-    start = datetime.now() + timedelta(days=3)
-    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
-    meeting.title = "Project sync"
-    meeting.description = "Planning session"
-    db_session.add(MeetingParticipant(meeting_id=meeting.id, user_id=invitee.id))
-    db_session.commit()
-
-    session_factory = sessionmaker(bind=test_engine)
-    monkeypatch.setattr(google_calendar_service, "SessionLocal", session_factory)
-    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
-    inserted_events = []
-
-    def fake_insert(url, **kwargs):
-        inserted_events.append((url, kwargs))
-        return FakeGoogleResponse()
-
-    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
-
-    google_calendar_service.sync_user_meetings_to_google(invitee.id)
-    google_calendar_service.sync_user_meetings_to_google(invitee.id)
-
-    assert len(inserted_events) == 1
-    url, request = inserted_events[0]
-    payload = request["json"]
-    assert url == google_calendar_service.GOOGLE_EVENTS_URL
-    assert request["headers"]["Authorization"] == "Bearer google-access-token"
-    assert payload["summary"] == "Project sync"
-    assert payload["location"] == "Calendar Sync Room - Floor 1"
-    assert payload["start"]["timeZone"] == "Asia/Ho_Chi_Minh"
-    assert db_session.query(GoogleCalendarEvent).filter_by(user_id=invitee.id, meeting_id=meeting.id).count() == 1
-
-
-def test_organizer_meeting_is_inserted_with_invitees(db_session, monkeypatch):
-    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    organizer = _create_user(db_session, "calendar-sync-connected-organizer")
-    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
-    invitee = _create_user(db_session, "calendar-sync-organizer-invitee")
-    db_session.commit()
-    room = _create_room(db_session, "Organizer Calendar Room")
-    start = datetime.now() + timedelta(days=3)
-    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
-    _add_participant(db_session, meeting, invitee)
-
-    monkeypatch.setattr(google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine))
-    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
-    inserted_events = []
-
-    def fake_insert(url, **kwargs):
-        inserted_events.append((url, kwargs))
-        return FakeGoogleResponse()
-
-    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
-    google_calendar_service.sync_user_meetings_to_google(organizer.id)
-
-    assert len(inserted_events) == 1
-    url, request = inserted_events[0]
-    assert url == google_calendar_service.GOOGLE_EVENTS_URL
-    assert request["params"] == {"sendUpdates": "all"}
-    assert request["json"]["attendees"] == [{"email": invitee.email}]
-    assert db_session.query(GoogleCalendarEvent).filter_by(
-        user_id=organizer.id,
-        meeting_id=meeting.id,
-    ).count() == 1
-
-
-def test_calendar_permission_403_logs_reconnect_guidance(db_session, monkeypatch, caplog):
-    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    organizer = _create_user(db_session, "calendar-sync-403-organizer")
-    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
-    db_session.commit()
-    room = _create_room(db_session, "Calendar 403 Room")
-    start = datetime.now() + timedelta(days=3)
-    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
-
-    monkeypatch.setattr(google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine))
-    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
-
-    def forbidden_insert(url, **kwargs):
-        response = httpx.Response(
-            403,
-            json={
-                "error": {
-                    "code": 403,
-                    "message": "Insufficient Permission",
-                    "errors": [{"reason": "insufficientPermissions"}],
-                }
-            },
-            request=httpx.Request("POST", url),
-        )
-        response.raise_for_status()
-
-    monkeypatch.setattr(google_calendar_service.httpx, "post", forbidden_insert)
-
-    google_calendar_service.sync_user_meetings_to_google(organizer.id)
-
-    assert "insufficientPermissions" in caplog.text
-    assert "disconnect Google Calendar in Settings and connect again" in caplog.text
-    assert db_session.query(GoogleCalendarEvent).filter_by(
-        user_id=organizer.id,
-        meeting_id=meeting.id,
-    ).count() == 0
-
-
-def test_access_token_refresh_sends_client_credentials(monkeypatch):
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "oauth-client-id")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "oauth-client-secret")
-    requests = []
-
-    class TokenResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"access_token": "fresh-access-token"}
-
-    def fake_post(url, **kwargs):
-        requests.append((url, kwargs))
-        return TokenResponse()
-
-    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_post)
-
-    assert google_calendar_service._access_token("refresh-token") == "fresh-access-token"
-    url, request = requests[0]
-    assert url == google_calendar_service.GOOGLE_TOKEN_URL
-    assert request["data"] == {
-        "client_id": "oauth-client-id",
-        "client_secret": "oauth-client-secret",
-        "refresh_token": "refresh-token",
-        "grant_type": "refresh_token",
-    }
-
-
-def test_access_token_refresh_logs_google_oauth_error(monkeypatch, caplog):
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "oauth-client-id")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "oauth-client-secret")
-
-    def failed_refresh(url, **kwargs):
-        response = httpx.Response(
-            400,
-            json={
-                "error": "invalid_grant",
-                "error_description": "Token has been expired or revoked.",
-            },
-            request=httpx.Request("POST", url),
-        )
-        return response
-
-    monkeypatch.setattr(google_calendar_service.httpx, "post", failed_refresh)
-
-    try:
-        google_calendar_service._access_token("secret-refresh-token-value")
-    except httpx.HTTPStatusError:
-        pass
-    else:
-        raise AssertionError("Expected the Google token refresh request to fail")
-
-    assert "invalid_grant" in caplog.text
-    assert "Token has been expired or revoked." in caplog.text
-    assert "oauth-client-secret" not in caplog.text
-    assert "secret-refresh-token-value" not in caplog.text
-````
-
-## File: tests/test_meeting_cancel.py
-````python
-from datetime import datetime, timedelta
-
-from sqlalchemy.orm import Session
-from fastapi.testclient import TestClient
-
-from tests.helpers import (
-    _add_participant,
-    _auth_header,
-    _create_meeting,
-    _create_room,
-    _create_user,
-    _make_token,
-)
-from app.models.meeting import MeetingParticipant
-
-
-def _future_window():
-    start = datetime.utcnow() + timedelta(days=2)
-    return start, start + timedelta(hours=1)
-
-
-def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "cancel-organizer")
-    participant = _create_user(db_session, "cancel-participant")
-    room = _create_room(db_session, "Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-    _add_participant(db_session, meeting, participant)
-
-    headers = _auth_header(_make_token(organizer))
-    response = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-    repeated = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
-    assert repeated.status_code == 200
-    assert repeated.json()["status"] == "CANCELLED"
-
-    db_session.expire_all()
-    saved = db_session.get(type(meeting), meeting.id)
-    assert saved.status == "CANCELLED"
-    assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
-
-
-def test_admin_can_cancel(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "admin-target-organizer")
-    admin = _create_user(db_session, "cancel-admin", role="admin")
-    room = _create_room(db_session, "Admin Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.patch(
-        f"/api/meetings/{meeting.id}/cancel",
-        headers=_auth_header(_make_token(admin)),
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-
-def test_organizer_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "delete-organizer")
-    room = _create_room(db_session, "Delete Organizer Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.delete(
-        f"/api/meetings/{meeting.id}",
-        headers=_auth_header(_make_token(organizer)),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-
-def test_admin_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "delete-admin-target")
-    admin = _create_user(db_session, "delete-admin", role="admin")
-    room = _create_room(db_session, "Delete Admin Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.delete(
-        f"/api/meetings/{meeting.id}",
-        headers=_auth_header(_make_token(admin)),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-
-def test_admin_role_is_case_insensitive(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "upper-admin-target")
-    admin = _create_user(db_session, "upper-case-admin", role="ADMIN")
-    room = _create_room(db_session, "Upper Admin Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.delete(
-        f"/api/meetings/{meeting.id}",
-        headers=_auth_header(_make_token(admin)),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-
-def test_invitee_cannot_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "delete-protected-organizer")
-    invitee = _create_user(db_session, "delete-protected-invitee")
-    room = _create_room(db_session, "Delete Protected Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-    _add_participant(db_session, meeting, invitee)
-
-    response = client.delete(
-        f"/api/meetings/{meeting.id}",
-        headers=_auth_header(_make_token(invitee)),
-    )
-
-    assert response.status_code == 403
-    db_session.expire_all()
-    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
-
-
-def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "protected-organizer")
-    outsider = _create_user(db_session, "cancel-outsider")
-    room = _create_room(db_session, "Protected Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.patch(
-        f"/api/meetings/{meeting.id}/cancel",
-        headers=_auth_header(_make_token(outsider)),
-    )
-    assert response.status_code == 403
-    db_session.expire_all()
-    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
-
-
-def test_cancel_requires_authentication(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "auth-cancel-organizer")
-    room = _create_room(db_session, "Auth Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.patch(f"/api/meetings/{meeting.id}/cancel")
-    assert response.status_code == 401
-
-
-def test_cancel_missing_meeting_returns_404(client: TestClient, db_session: Session):
-    user = _create_user(db_session, "missing-cancel-user")
-    response = client.patch(
-        "/api/meetings/999999/cancel",
-        headers=_auth_header(_make_token(user)),
-    )
-    assert response.status_code == 404
-
-
-def test_room_can_be_booked_again_after_cancel(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "reuse-organizer")
-    room = _create_room(db_session, "Reusable Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    cancel = client.patch(
-        f"/api/meetings/{meeting.id}/cancel",
-        headers=_auth_header(_make_token(organizer)),
-    )
-    assert cancel.status_code == 200
-
-    booking = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Replacement meeting",
-            "room_id": room.id,
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-    assert booking.status_code == 201
-    assert len(booking.json()) == 1
-
-    available = client.get(
-        "/api/rooms/available/",
-        params={"start_time": start.isoformat(), "end_time": end.isoformat()},
-    )
-    assert available.status_code == 200
-    assert room.id not in {item["id"] for item in available.json()}
-````
-
-## File: tests/test_meeting_create.py
-````python
-from datetime import datetime, timedelta
-
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from app.routers import meetings as meetings_router
-from tests.helpers import _auth_header, _create_room, _create_user, _make_token
-
-
-def _future_window():
-    start = datetime.utcnow() + timedelta(days=2)
-    return start, start + timedelta(hours=1)
-
-
-def test_create_offline_meeting_with_room(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "create-offline-organizer")
-    room = _create_room(db_session, "Create Offline Room")
-    start, end = _future_window()
-
-    response = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Offline meeting",
-            "meeting_type": "offline",
-            "room_id": room.id,
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-
-    assert response.status_code == 201
-    meeting = response.json()[0]
-    assert meeting["meeting_type"] == "offline"
-    assert meeting["room_id"] == room.id
-
-
-def test_create_offline_meeting_without_room_returns_400(
-    client: TestClient, db_session: Session
-):
-    organizer = _create_user(db_session, "create-offline-no-room")
-    start, end = _future_window()
-
-    response = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Offline meeting without room",
-            "meeting_type": "offline",
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Offline meetings require a room_id"
-
-
-def test_create_online_meeting_with_link(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "create-online-organizer")
-    start, end = _future_window()
-
-    response = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Online meeting",
-            "meeting_type": "online",
-            "meeting_link": "https://meet.test/room",
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-
-    assert response.status_code == 201
-    meeting = response.json()[0]
-    assert meeting["meeting_type"] == "online"
-    assert meeting["meeting_link"] == "https://meet.test/room"
-    assert meeting["room_id"] is None
-
-
-def test_create_online_meeting_without_link_returns_400(
-    client: TestClient, db_session: Session
-):
-    organizer = _create_user(db_session, "create-online-no-link")
-    start, end = _future_window()
-
-    response = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Online meeting without link",
-            "meeting_type": "online",
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Online meetings require a meeting_link"
-
-
-def test_create_meeting_schedules_google_sync_for_connected_organizer(
-    client: TestClient, db_session: Session, monkeypatch
-):
-    organizer = _create_user(db_session, "create-connected-organizer")
-    organizer.google_refresh_token = "encrypted-refresh-token"
-    db_session.commit()
-    room = _create_room(db_session, "Connected Organizer Room")
-    start, end = _future_window()
-    synced_user_ids = []
-    monkeypatch.setattr(
-        meetings_router,
-        "sync_user_meetings_to_google",
-        synced_user_ids.append,
-    )
-
-    response = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Automatically synced meeting",
-            "meeting_type": "offline",
-            "room_id": room.id,
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-
-    assert response.status_code == 201
-    assert synced_user_ids == [organizer.id]
 ````
 
 ## File: tests/test_room_create.py
@@ -5040,11 +4045,106 @@ format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
 ````
 
+## File: FETCH_HEAD
+````
+
+````
+
 ## File: requirements-dev.txt
 ````
 -r requirements.txt
 pytest
 httpx
+````
+
+## File: alembic/versions/33c26788d6a2_fix_missing_meeting_link_column.py
+````python
+"""Add the missing meeting_link column to meetings.
+
+Revision ID: 33c26788d6a2
+Revises: cf70acc36382
+Create Date: 2026-10-09 19:15:47.700439
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+revision: str = "33c26788d6a2"
+down_revision: Union[str, Sequence[str], None] = "cf70acc36382"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Add meeting_link if the existing database does not already have it."""
+    inspector = sa.inspect(op.get_bind())
+    if "meetings" not in inspector.get_table_names():
+        raise RuntimeError("The meetings table must exist before applying this migration.")
+
+    columns = {column["name"] for column in inspector.get_columns("meetings")}
+    if "meeting_link" not in columns:
+        op.add_column("meetings", sa.Column("meeting_link", sa.String(length=255), nullable=True))
+
+
+def downgrade() -> None:
+    """Remove meeting_link if present."""
+    inspector = sa.inspect(op.get_bind())
+    if "meetings" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("meetings")}
+    if "meeting_link" in columns:
+        op.drop_column("meetings", "meeting_link")
+````
+
+## File: alembic/versions/cf70acc36382_add_google_refresh_token_to_users.py
+````python
+"""Add google_refresh_token to users
+
+Revision ID: cf70acc36382
+Revises: 
+Create Date: 2026-10-09 17:49:57.088496
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = 'cf70acc36382'
+down_revision: Union[str, Sequence[str], None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Add Google Calendar OAuth columns to users when they are missing."""
+    inspector = sa.inspect(op.get_bind())
+    if "users" not in inspector.get_table_names():
+        raise RuntimeError("The users table must exist before applying this migration.")
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "google_refresh_token" not in existing_columns:
+        op.add_column("users", sa.Column("google_refresh_token", sa.Text(), nullable=True))
+    if "google_calendar_connected_at" not in existing_columns:
+        op.add_column("users", sa.Column("google_calendar_connected_at", sa.DateTime(), nullable=True))
+
+
+def downgrade() -> None:
+    """Remove the Google Calendar OAuth columns when present."""
+    inspector = sa.inspect(op.get_bind())
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "google_calendar_connected_at" in existing_columns:
+        op.drop_column("users", "google_calendar_connected_at")
+    if "google_refresh_token" in existing_columns:
+        op.drop_column("users", "google_refresh_token")
 ````
 
 ## File: app/models/notification.py
@@ -5383,7 +4483,9 @@ def get_equipment_availability(
         )
         .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
         .filter(
-            func.upper(Meeting.status) != "CANCELLED",
+            func.upper(Meeting.status).notin_(
+                ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+            ),
             Meeting.start_time < end_time,
             Meeting.end_time > start_time,
         )
@@ -5452,7 +4554,9 @@ def check_equipment_availability(
             .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
             .filter(
                 MeetingEquipment.equipment_id == item.equipment_id,
-                Meeting.status != "CANCELLED",  # Bỏ qua cuộc họp đã hủy
+                func.upper(Meeting.status).notin_(
+                    ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+                ),
                 Meeting.start_time < end_time,
                 Meeting.end_time > start_time
             )
@@ -5470,6 +4574,461 @@ def check_equipment_availability(
                 detail=f"Thiết bị '{equip.name}' không đủ số lượng trong khung giờ này. "
                        f"Yêu cầu: {item.quantity}, Khả dụng: {available_qty} (Tổng: {equip.total_qty}, Đã đặt: {booked_qty})."
             )
+````
+
+## File: app/services/google_calendar_service.py
+````python
+import base64
+import hashlib
+import hmac
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import httpx
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy.orm import Session
+
+from app.core.database import SessionLocal
+from app.core.security import SECRET_KEY
+from app.models.google_calendar_event import GoogleCalendarEvent
+from app.models.meeting import Meeting, MeetingParticipant
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_TOKEN_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+
+
+def _fernet() -> Fernet:
+    key = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY")
+    if not key:
+        raise RuntimeError("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured")
+    try:
+        return Fernet(key.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise RuntimeError("GOOGLE_TOKEN_ENCRYPTION_KEY must be a valid Fernet key") from exc
+
+
+def encrypt_refresh_token(refresh_token: str) -> str:
+    return _fernet().encrypt(refresh_token.encode("utf-8")).decode("ascii")
+
+
+def decrypt_refresh_token(encrypted_token: str) -> str:
+    try:
+        return _fernet().decrypt(encrypted_token.encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeEncodeError) as exc:
+        raise RuntimeError("Stored Google refresh token cannot be decrypted") from exc
+
+
+def make_calendar_consent_url(user: User) -> str:
+    if not user.email:
+        raise ValueError("Calendar consent requires a user email")
+    expires = int(datetime.now(timezone.utc).timestamp()) + 7 * 24 * 60 * 60
+    message = f"{user.id}:{user.email.strip().lower()}:{expires}"
+    signature = hmac.new(
+        SECRET_KEY.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    backend_url = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+    query = urlencode({"user_id": user.id, "expires": expires, "signature": signature})
+    return f"{backend_url}/api/auth/google/calendar/connect?{query}"
+
+
+def verify_calendar_consent_signature(user: User, expires: int, signature: str) -> bool:
+    import time
+
+    if expires < int(time.time()) or not user.email:
+        return False
+    message = f"{user.id}:{user.email.strip().lower()}:{expires}"
+    expected = hmac.new(
+        SECRET_KEY.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _google_config() -> tuple[str, str]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("Google OAuth client credentials are not configured")
+    return client_id, client_secret
+
+
+def _access_token(refresh_token: str) -> str:
+    client_id, client_secret = _google_config()
+    response = httpx.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=15,
+    )
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            error_data = response.json()
+        except ValueError:
+            error_data = {}
+        oauth_error = error_data.get("error") if isinstance(error_data, dict) else None
+        error_description = (
+            error_data.get("error_description")
+            if isinstance(error_data, dict)
+            else None
+        )
+        logger.error(
+            "Google OAuth refresh-token request failed (HTTP %s, error=%s): %s",
+            response.status_code,
+            oauth_error or "unknown",
+            error_description or response.text[:500] or str(exc),
+        )
+        raise
+    access_token = response.json().get("access_token")
+    if not access_token:
+        raise RuntimeError("Google did not return an access token")
+    return access_token
+
+
+def revoke_google_refresh_token(encrypted_refresh_token: str) -> None:
+    """Revoke a stored Google refresh token after the local account is disconnected."""
+    try:
+        refresh_token = decrypt_refresh_token(encrypted_refresh_token)
+        response = httpx.post(
+            GOOGLE_TOKEN_REVOKE_URL,
+            params={"token": refresh_token},
+            timeout=15,
+        )
+        response.raise_for_status()
+    except (RuntimeError, httpx.HTTPError):
+        logger.exception("Could not revoke the disconnected Google Calendar token")
+
+
+def _local_datetime(value: datetime) -> datetime:
+    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        zone = timezone(timedelta(hours=7))
+    if value.tzinfo is None:
+        return value.replace(tzinfo=zone)
+    return value.astimezone(zone)
+
+
+def _timezone_name() -> str:
+    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+    try:
+        ZoneInfo(timezone_name)
+        return timezone_name
+    except ZoneInfoNotFoundError:
+        return "Asia/Ho_Chi_Minh"
+
+
+def _google_event_id(user_id: int, meeting_id: int) -> str:
+    digest = hashlib.sha256(f"{user_id}:{meeting_id}".encode("ascii")).digest()
+    return base64.b32hexencode(digest).decode("ascii").rstrip("=").lower()
+
+
+def _event_payload(user_id: int, meeting: Meeting) -> dict:
+    room = meeting.room
+    if meeting.meeting_type == "online":
+        location = meeting.meeting_link or ""
+    elif room:
+        location = " - ".join(part for part in (room.name, room.location) if part)
+    else:
+        location = ""
+
+    details = [meeting.description or ""]
+    if meeting.meeting_type == "online" and meeting.meeting_link:
+        details.append(f"Meeting link: {meeting.meeting_link}")
+    description = "\n".join(part for part in details if part)
+    start = _local_datetime(meeting.start_time)
+    end = _local_datetime(meeting.end_time)
+    payload = {
+        "id": _google_event_id(user_id, meeting.id),
+        "summary": meeting.title,
+        "description": description,
+        "location": location,
+        "start": {"dateTime": start.isoformat(), "timeZone": _timezone_name()},
+        "end": {"dateTime": end.isoformat(), "timeZone": _timezone_name()},
+    }
+    if meeting.organizer_id == user_id:
+        attendees = [
+            {"email": participant.user.email}
+            for participant in meeting.participants
+            if participant.user and participant.user.email
+        ]
+        if attendees:
+            payload["attendees"] = attendees
+    return payload
+
+
+def _log_calendar_sync_http_error(
+    exc: httpx.HTTPStatusError,
+    *,
+    meeting_id: int,
+    user_id: int,
+) -> None:
+    response = exc.response
+    try:
+        error_data = response.json()
+    except ValueError:
+        error_data = {}
+
+    google_error = error_data.get("error", {}) if isinstance(error_data, dict) else {}
+    errors = google_error.get("errors", []) if isinstance(google_error, dict) else []
+    reason = errors[0].get("reason") if errors and isinstance(errors[0], dict) else None
+    message = google_error.get("message") if isinstance(google_error, dict) else None
+    message = message or response.text[:500] or str(exc)
+
+    if response.status_code == 403:
+        logger.error(
+            "Google Calendar denied sync for meeting_id=%s user_id=%s "
+            "(reason=%s): %s. If this is an insufficientPermissions error, "
+            "disconnect Google Calendar in Settings and connect again to grant "
+            "the calendar.events scope. Also verify Calendar API access and "
+            "the Google account's calendar sharing policy.",
+            meeting_id,
+            user_id,
+            reason or "unknown",
+            message,
+        )
+        return
+
+    logger.exception(
+        "Could not sync meeting_id=%s to Google Calendar for user_id=%s (HTTP %s)",
+        meeting_id,
+        user_id,
+        response.status_code,
+    )
+
+
+def sync_user_meetings_to_google(user_id: int) -> None:
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+        if not user or not user.google_refresh_token:
+            return
+        try:
+            refresh_token = decrypt_refresh_token(user.google_refresh_token)
+            access_token = _access_token(refresh_token)
+        except (RuntimeError, httpx.HTTPError) as exc:
+            logger.warning("Google Calendar authorization unavailable for user_id=%s: %s", user_id, exc)
+            return
+
+        meetings = (
+            db.query(Meeting)
+            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .filter(
+                (Meeting.organizer_id == user_id)
+                | (MeetingParticipant.user_id == user_id),
+                Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
+            )
+            .distinct()
+            .order_by(Meeting.start_time)
+            .all()
+        )
+        existing_meeting_ids = {
+            row[0]
+            for row in db.query(GoogleCalendarEvent.meeting_id)
+            .filter(GoogleCalendarEvent.user_id == user_id)
+            .all()
+        }
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+        for meeting in meetings:
+            if meeting.id in existing_meeting_ids:
+                continue
+            google_event_id = _google_event_id(user_id, meeting.id)
+            try:
+                response = httpx.post(
+                    GOOGLE_EVENTS_URL,
+                    headers=headers,
+                    json=_event_payload(user_id, meeting),
+                    params={"sendUpdates": "all"} if meeting.organizer_id == user_id else None,
+                    timeout=15,
+                )
+                if response.status_code == 409:
+                    pass
+                else:
+                    response.raise_for_status()
+                db.add(
+                    GoogleCalendarEvent(
+                        user_id=user_id,
+                        meeting_id=meeting.id,
+                        google_event_id=google_event_id,
+                    )
+                )
+                db.commit()
+                existing_meeting_ids.add(meeting.id)
+            except httpx.HTTPStatusError as exc:
+                db.rollback()
+                _log_calendar_sync_http_error(
+                    exc,
+                    meeting_id=meeting.id,
+                    user_id=user_id,
+                )
+            except (httpx.HTTPError, RuntimeError):
+                db.rollback()
+                logger.exception(
+                    "Could not sync meeting_id=%s to Google Calendar for user_id=%s",
+                    meeting.id,
+                    user_id,
+                )
+    finally:
+        db.close()
+
+
+def delete_google_calendar_event(user: User, google_event_id: str) -> bool:
+    """Delete one event from the connected user's primary Google Calendar."""
+    if not user.google_refresh_token:
+        logger.warning(
+            "Cannot delete Google event %s: user_id=%s has no refresh token",
+            google_event_id,
+            user.id,
+        )
+        return False
+
+    try:
+        refresh_token = decrypt_refresh_token(user.google_refresh_token)
+        client_id, client_secret = _google_config()
+        credentials = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri=GOOGLE_TOKEN_URL,
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=[GOOGLE_CALENDAR_EVENTS_SCOPE],
+        )
+        credentials.refresh(GoogleAuthRequest())
+        service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
+        service.events().delete(
+            calendarId="primary",
+            eventId=google_event_id,
+        ).execute()
+        return True
+    except HttpError as exc:
+        response_status = getattr(getattr(exc, "resp", None), "status", None)
+        if response_status in {404, 410}:
+            logger.warning(
+                "Google event %s is already deleted (HTTP %s) for user_id=%s",
+                google_event_id,
+                response_status,
+                user.id,
+            )
+            return True
+        logger.exception(
+            "Failed to delete Google event %s for user_id=%s (HTTP %s)",
+            google_event_id,
+            user.id,
+            response_status,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            "Failed to delete Google event %s for user_id=%s",
+            google_event_id,
+            user.id,
+        )
+        return False
+
+
+def delete_google_events_for_meeting(meeting_id: int) -> None:
+    """Delete tracked attendee events and retain mappings if Google is unavailable."""
+    db: Session = SessionLocal()
+    try:
+        event_records = (
+            db.query(GoogleCalendarEvent)
+            .filter(GoogleCalendarEvent.meeting_id == meeting_id)
+            .all()
+        )
+        for event_record in event_records:
+            user = db.query(User).filter(User.id == event_record.user_id).first()
+            if user is None:
+                db.delete(event_record)
+                continue
+            if delete_google_calendar_event(user, event_record.google_event_id):
+                db.delete(event_record)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Could not process Google events for meeting_id=%s", meeting_id)
+    finally:
+        db.close()
+````
+
+## File: frontend/js/auth.js
+````javascript
+const AUTH_API_BASE = window.AUTH_API_BASE || window.API_URL || 'http://localhost:8000/api';
+
+function handleGoogleAuthCallback() {
+    const callbackValues = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = callbackValues.get('access_token');
+
+    if (accessToken) {
+        localStorage.setItem('token', accessToken);
+        localStorage.setItem('access_token', accessToken);
+
+        const valuesToStore = {
+            role: callbackValues.get('role'),
+            user_name: callbackValues.get('full_name'),
+            user_email: callbackValues.get('email'),
+            user_id: callbackValues.get('user_id'),
+            user_picture: callbackValues.get('picture'),
+        };
+        Object.entries(valuesToStore).forEach(([key, value]) => {
+            if (value) localStorage.setItem(key, value);
+        });
+
+        const dashboardUrl = new URL('dashboard.html', window.location.href);
+        window.location.replace(dashboardUrl.href);
+        return;
+    }
+
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('calendar_connected') === '1') {
+        const successAlert = document.getElementById('errorAlert');
+        if (successAlert) {
+            successAlert.textContent = 'Đã kết nối Google Calendar. Các cuộc họp được mời sẽ được đồng bộ.';
+            successAlert.classList.remove('hidden', 'bg-red-50', 'border-red-200', 'text-red-600');
+            successAlert.classList.add('bg-green-50', 'border-green-200', 'text-green-700');
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return;
+    }
+    const oauthError = query.get('google_error');
+    if (!oauthError) return;
+
+    const errorAlert = document.getElementById('errorAlert');
+    const messages = {
+        access_denied: 'Bạn đã hủy đăng nhập bằng Google.',
+        calendar_permission_denied: 'Bạn chưa cấp quyền Google Calendar cho RoomSync.',
+        oauth_failed: 'Không thể đăng nhập bằng Google. Vui lòng thử lại.',
+    };
+    if (errorAlert) {
+        errorAlert.textContent = messages[oauthError] || messages.oauth_failed;
+        errorAlert.classList.remove('hidden');
+    }
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const googleButton = document.getElementById('googleLoginButton');
+    googleButton?.addEventListener('click', () => {
+        window.location.assign(`${AUTH_API_BASE}/auth/google/login`);
+    });
+
+    handleGoogleAuthCallback();
+});
 ````
 
 ## File: frontend/js/create-meeting.js
@@ -6750,6 +6309,200 @@ with engine.connect() as conn:
 print("Patch DB completed successfully!")
 ````
 
+## File: tests/test_meetings_mine.py
+````python
+"""Tests for the personal meeting list and invite responses."""
+
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
+
+from app import main
+from tests.helpers import (
+    _add_participant,
+    _auth_header,
+    _create_meeting,
+    _create_room,
+    _create_user,
+    _make_token,
+)
+
+
+def test_mine_separates_organizer_and_invitee_and_includes_rsvp(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "mine_organizer")
+    invitee = _create_user(db_session, "mine_invitee")
+    outsider = _create_user(db_session, "mine_outsider")
+    room = _create_room(db_session, "Mine Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=1),
+        datetime.utcnow() + timedelta(days=1, hours=1),
+    )
+    canceled_meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=3),
+        datetime.utcnow() + timedelta(days=3, hours=1),
+        status="canceled",
+    )
+    participation = _add_participant(db_session, meeting, invitee)
+    participation.response_status = "accepted"
+    db_session.commit()
+
+    organizer_response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(organizer))
+    )
+    assert organizer_response.status_code == 200
+    organizer_item = organizer_response.json()[0]
+    assert organizer_item["id"] == meeting.id
+    assert organizer_item["is_organizer"] is True
+    assert organizer_item["participants"][0]["response_status"] == "accepted"
+    assert all(item["id"] != canceled_meeting.id for item in organizer_response.json())
+
+    invitee_response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(invitee))
+    )
+    assert invitee_response.status_code == 200
+    invitee_item = invitee_response.json()[0]
+    assert invitee_item["is_organizer"] is False
+    assert invitee_item["my_response_status"] == "accepted"
+
+    outsider_response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(outsider))
+    )
+    assert outsider_response.status_code == 200
+    assert outsider_response.json() == []
+
+
+def test_invitee_can_update_own_response_but_nonparticipant_cannot(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "rsvp_organizer")
+    invitee = _create_user(db_session, "rsvp_invitee")
+    outsider = _create_user(db_session, "rsvp_outsider")
+    room = _create_room(db_session, "RSVP Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=2),
+        datetime.utcnow() + timedelta(days=2, hours=1),
+    )
+    _add_participant(db_session, meeting, invitee)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/response",
+        headers=_auth_header(_make_token(invitee)),
+        json={"response_status": "declined"},
+    )
+    assert response.status_code == 200
+    assert response.json()["response_status"] == "declined"
+
+    outsider_response = client.patch(
+        f"/api/meetings/{meeting.id}/response",
+        headers=_auth_header(_make_token(outsider)),
+        json={"response_status": "accepted"},
+    )
+    assert outsider_response.status_code == 404
+
+    invalid_response = client.patch(
+        f"/api/meetings/{meeting.id}/response",
+        headers=_auth_header(_make_token(invitee)),
+        json={"response_status": "maybe"},
+    )
+    assert invalid_response.status_code == 422
+
+
+def test_mine_handles_missing_organizer_and_room_relationships(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "orphan_organizer")
+    invitee = _create_user(db_session, "orphan_invitee")
+    room = _create_room(db_session, "Orphan Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=2),
+        datetime.utcnow() + timedelta(days=2, hours=1),
+    )
+    _add_participant(db_session, meeting, invitee)
+    meeting.organizer_id = None
+    meeting.room_id = None
+    db_session.commit()
+
+    response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(invitee))
+    )
+
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert item["organizer_name"] == "Người tổ chức"
+    assert item["room_name"] is None
+    assert item["is_organizer"] is False
+
+
+def test_missing_rsvp_column_returns_actionable_service_error(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "schema_organizer")
+    invitee = _create_user(db_session, "schema_invitee")
+    room = _create_room(db_session, "Schema Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() - timedelta(days=4, hours=1),
+        datetime.utcnow() - timedelta(days=4),
+    )
+    _add_participant(db_session, meeting, invitee)
+    meeting_id = meeting.id
+    db_session.execute(text("ALTER TABLE meeting_participants DROP COLUMN response_status"))
+    db_session.commit()
+
+    headers = _auth_header(_make_token(invitee))
+    mine_response = client.get("/api/meetings/mine", headers=headers)
+    assert mine_response.status_code == 503
+    assert "schema/migration" in mine_response.json()["detail"]
+
+    list_response = client.get("/api/meetings/")
+    assert list_response.status_code == 503
+    history_response = client.get("/api/meetings/history", headers=headers)
+    assert history_response.status_code == 503
+
+    rsvp_response = client.patch(
+        f"/api/meetings/{meeting_id}/response",
+        headers=headers,
+        json={"response_status": "accepted"},
+    )
+    assert rsvp_response.status_code == 503
+    assert "schema/migration" in rsvp_response.json()["detail"]
+
+
+def test_startup_migration_adds_missing_rsvp_column(monkeypatch):
+    migration_engine = create_engine("sqlite://")
+    with migration_engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE meeting_participants "
+            "(id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL, user_id INTEGER NOT NULL)"
+        ))
+
+    monkeypatch.setattr(main, "engine", migration_engine)
+    try:
+        main._auto_migrate_schema()
+        columns = {column["name"] for column in inspect(migration_engine).get_columns("meeting_participants")}
+        assert "response_status" in columns
+    finally:
+        migration_engine.dispose()
+````
+
 ## File: .dockerignore
 ````
 __pycache__
@@ -6782,6 +6535,92 @@ COPY . .
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+````
+
+## File: alembic/env.py
+````python
+import os
+from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config
+from sqlalchemy import pool
+
+from alembic import context
+
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
+config = context.config
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+
+# Interpret the config file for Python logging.
+# This line sets up loggers basically.
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# add your model's MetaData object here
+# for 'autogenerate' support
+# from myapp import mymodel
+# target_metadata = mymodel.Base.metadata
+target_metadata = None
+
+# other values from the config, defined by the needs of env.py,
+# can be acquired:
+# my_important_option = config.get_main_option("my_important_option")
+# ... etc.
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode.
+
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well.  By skipping the Engine creation
+    we don't even need a DBAPI to be available.
+
+    Calls to context.execute() here emit the given string to the
+    script output.
+
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode.
+
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, target_metadata=target_metadata
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
 ````
 
 ## File: app/core/database.py
@@ -6841,6 +6680,994 @@ Error generating stack: `+e.message+`
 ````
 User-agent: *
 Disallow: /
+````
+
+## File: tests/test_equipment_admin.py
+````python
+"""Unit tests for Equipment Admin flow (POST, PUT, GET include_inactive, permission checks)."""
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.equipment import Equipment, MeetingEquipment
+from app.models.user import User
+from tests.helpers import _auth_header, _create_meeting, _create_room, _create_user, _make_token
+
+
+def _create_test_equipment(db: Session, name: str = "Mic Test", total_qty: int = 5, is_active: bool = True) -> Equipment:
+    equip = Equipment(
+        name=name,
+        code="TEST-01",
+        category="Audio",
+        total_qty=total_qty,
+        is_active=is_active,
+    )
+    db.add(equip)
+    db.commit()
+    db.refresh(equip)
+    return equip
+
+
+def test_post_and_put_require_admin_token(client: TestClient, db_session: Session):
+    """Test API POST và PUT: Phải trả về 403 Forbidden hoặc 401 Unauthorized nếu không có token Admin."""
+    employee = _create_user(db_session, username="employee1", role="employee")
+    emp_token = _make_token(employee)
+
+    payload = {
+        "name": "Projector Ultra HD",
+        "code": "PRJ-999",
+        "category": "Visual",
+        "total_qty": 2,
+    }
+
+    # 1. POST without token -> 401 Unauthorized
+    resp_no_auth = client.post("/api/equipments/", json=payload)
+    assert resp_no_auth.status_code in (401, 403)
+
+    # 2. POST with employee token -> 403 Forbidden
+    resp_emp = client.post("/api/equipments/", json=payload, headers=_auth_header(emp_token))
+    assert resp_emp.status_code == 403
+
+    # Create an equipment for testing PUT permission
+    equip = _create_test_equipment(db_session)
+
+    update_payload = {"name": "Mic Test Updated"}
+
+    # 3. PUT without token -> 401/403
+    resp_put_no_auth = client.put(f"/api/equipments/{equip.id}", json=update_payload)
+    assert resp_put_no_auth.status_code in (401, 403)
+
+    # 4. PUT with employee token -> 403 Forbidden
+    resp_put_emp = client.put(f"/api/equipments/{equip.id}", json=update_payload, headers=_auth_header(emp_token))
+    assert resp_put_emp.status_code == 403
+
+
+def test_toggle_is_active_and_include_inactive_query(client: TestClient, db_session: Session):
+    """Tạo 1 thiết bị, sau đó gọi PUT để đổi is_active từ True sang False.
+
+    Gọi GET /?include_inactive=true để kiểm tra thiết bị vừa tắt vẫn hiển thị trong list của Admin.
+    """
+    admin = _create_user(db_session, username="admin1", role="admin")
+    admin_token = _make_token(admin)
+    headers = _auth_header(admin_token)
+
+    # 1. Admin POST to create a new equipment (is_active Defaults to True)
+    create_payload = {
+        "name": "Smart Board 75 inch",
+        "code": "SB-075",
+        "category": "Display",
+        "total_qty": 3,
+        "is_active": True,
+    }
+    create_resp = client.post("/api/equipments/", json=create_payload, headers=headers)
+    assert create_resp.status_code == 201
+    created_id = create_resp.json()["id"]
+    assert create_resp.json()["is_active"] is True
+
+    # 2. Call PUT to change is_active from True to False
+    put_payload = {"is_active": False}
+    put_resp = client.put(f"/api/equipments/{created_id}", json=put_payload, headers=headers)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["is_active"] is False
+
+    # 3. GET /api/equipments/ (default include_inactive=false) -> Should NOT contain the inactive equipment
+    get_active_resp = client.get("/api/equipments/", headers=headers)
+    assert get_active_resp.status_code == 200
+    active_ids = [item["id"] for item in get_active_resp.json()]
+    assert created_id not in active_ids
+
+    # 4. GET /api/equipments/?include_inactive=true -> MUST contain the inactive equipment for Admin
+    get_all_resp = client.get("/api/equipments/?include_inactive=true", headers=headers)
+    assert get_all_resp.status_code == 200
+    all_ids = [item["id"] for item in get_all_resp.json()]
+    assert created_id in all_ids
+
+
+def test_update_total_qty_does_not_corrupt_meeting_equipments(client: TestClient, db_session: Session):
+    """AC 4: Khi Admin sửa total_qty của 1 thiết bị, sự thay đổi lưu thành công mà không làm hỏng dữ liệu meeting_equipments."""
+    admin = _create_user(db_session, username="admin_qty", role="admin")
+    admin_token = _make_token(admin)
+    headers = _auth_header(admin_token)
+
+    equip = _create_test_equipment(db_session, total_qty=5)
+    organizer = _create_user(db_session, username="organizer_qty")
+    room = _create_room(db_session, name="Room Qty")
+    from datetime import datetime
+    meeting = _create_meeting(db_session, room, organizer, datetime.now(), datetime.now())
+
+    # Link meeting to equipment
+    me = MeetingEquipment(meeting_id=meeting.id, equipment_id=equip.id, quantity=2, note="For workshop")
+    db_session.add(me)
+    db_session.commit()
+
+    # Admin updates total_qty from 5 to 12
+    put_resp = client.put(f"/api/equipments/{equip.id}", json={"total_qty": 12}, headers=headers)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["total_qty"] == 12
+
+    # Verify meeting_equipments link is intact
+    db_session.expire_all()
+    me_db = db_session.query(MeetingEquipment).filter_by(meeting_id=meeting.id, equipment_id=equip.id).first()
+    assert me_db is not None
+    assert me_db.quantity == 2
+    assert me_db.equipment.total_qty == 12
+````
+
+## File: tests/test_google_auth.py
+````python
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlsplit
+
+from cryptography.fernet import Fernet
+
+from app.models.user import User
+from app.routers import auth as auth_router
+from app.core.security import hash_password
+from app.services.google_calendar_service import (
+    decrypt_refresh_token,
+    encrypt_refresh_token,
+    make_calendar_consent_url,
+)
+from tests.helpers import _auth_header, _create_user, _make_token
+
+
+class MockGoogleResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.body
+
+
+def _configure_google_oauth(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-google-secret")
+    monkeypatch.setenv(
+        "GOOGLE_REDIRECT_URI",
+        "http://localhost:8000/api/auth/google/callback",
+    )
+    monkeypatch.setenv(
+        "FRONTEND_LOGIN_URL",
+        "http://localhost:8000/static/login.html",
+    )
+
+
+def _mock_google_profile(monkeypatch, profile, token_data=None):
+    token_data = token_data or {"access_token": "google-access-token"}
+    monkeypatch.setattr(
+        auth_router.httpx,
+        "post",
+        lambda *args, **kwargs: MockGoogleResponse(token_data),
+    )
+    monkeypatch.setattr(
+        auth_router.httpx,
+        "get",
+        lambda *args, **kwargs: MockGoogleResponse(profile),
+    )
+
+
+def _start_google_login(client):
+    response = client.get("/api/auth/google/login", follow_redirects=False)
+    assert response.status_code == 307
+    return response, urlsplit(response.headers["location"])
+
+
+def _complete_google_login(client, login_response, location):
+    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    return client.get(
+        f"/api/auth/google/callback?code=test-code&state={state}",
+        follow_redirects=False,
+    )
+
+
+def test_google_login_redirect_requests_openid_email_profile(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+
+    response, location = _start_google_login(client)
+    query = parse_qs(location.query)
+
+    assert location.hostname == "accounts.google.com"
+    assert query["scope"] == ["openid email profile"]
+    assert query["response_type"] == ["code"]
+    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].startswith(query["state"][0] + "|")
+
+
+def test_calendar_settings_authorization_returns_url_and_state_cookie(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    user = _create_user(db_session, "settings-calendar-owner")
+
+    response = client.get(
+        "/api/auth/google/calendar/authorize",
+        headers=_auth_header(_make_token(user)),
+    )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    query = parse_qs(urlsplit(authorization_url).query)
+    assert query["scope"] == [
+        "openid email profile https://www.googleapis.com/auth/calendar.events"
+    ]
+    assert query["access_type"] == ["offline"]
+    assert query["prompt"] == ["consent"]
+    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|")[1] == "calendar_settings"
+
+
+def test_calendar_settings_can_connect_a_different_google_account(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = _create_user(db_session, "settings-calendar-different-google")
+    user.google_refresh_token = encrypt_refresh_token("old-refresh-token")
+    db_session.commit()
+    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
+    authorization = client.get(
+        "/api/auth/google/calendar/authorize",
+        headers=_auth_header(_make_token(user)),
+    )
+    state = authorization.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "personal.calendar@example.test",
+            "email_verified": True,
+            "name": "Personal Calendar",
+        },
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert callback.headers["location"].startswith(
+        "http://localhost:8000/static/dashboard.html?calendar_connected=1"
+    )
+    db_session.refresh(user)
+    assert decrypt_refresh_token(user.google_refresh_token) != "old-refresh-token"
+    assert decrypt_refresh_token(user.google_refresh_token) == "private-refresh-token"
+
+
+def test_calendar_status_and_disconnect(client, db_session, monkeypatch):
+    user = _create_user(db_session, "settings-calendar-disconnect")
+    headers = _auth_header(_make_token(user))
+    revoke_calls = []
+    monkeypatch.setattr(
+        auth_router,
+        "revoke_google_refresh_token",
+        revoke_calls.append,
+    )
+
+    disconnected = client.get("/api/auth/google/calendar/status", headers=headers)
+    assert disconnected.status_code == 200
+    assert disconnected.json() == {"connected": False, "connected_at": None}
+
+    user.google_refresh_token = "encrypted-refresh-token"
+    user.google_calendar_connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_session.commit()
+    connected = client.get("/api/auth/google/calendar/status", headers=headers)
+    assert connected.json()["connected"] is True
+
+    response = client.delete(
+        "/api/auth/google/calendar/disconnect",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False}
+    assert revoke_calls == ["encrypted-refresh-token"]
+    db_session.refresh(user)
+    assert user.google_refresh_token is None
+    assert user.google_calendar_connected_at is None
+
+
+def test_google_callback_registers_new_user_and_redirects_with_token(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "new.person@example.test",
+            "email_verified": True,
+            "name": "New Person",
+            "picture": "https://images.example.test/person.png",
+        },
+    )
+    login_response, location = _start_google_login(client)
+
+    response = _complete_google_login(client, login_response, location)
+
+    assert response.status_code == 303
+    redirect = urlsplit(response.headers["location"])
+    values = parse_qs(redirect.fragment)
+    user = db_session.query(User).filter_by(email="new.person@example.test").one()
+    assert user.full_name == "New Person"
+    assert user.role == "employee"
+    assert values["access_token"]
+    assert values["email"] == [user.email]
+    assert values["picture"] == ["https://images.example.test/person.png"]
+
+
+def test_google_callback_logs_in_existing_user(client, db_session, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    user = User(
+        username="known-google-user",
+        email="known@example.test",
+        full_name="Existing User",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "known@example.test",
+            "email_verified": True,
+            "name": "Google Display Name",
+            "picture": "https://images.example.test/known.png",
+        },
+    )
+    login_response, location = _start_google_login(client)
+
+    response = _complete_google_login(client, login_response, location)
+
+    assert response.status_code == 303
+    values = parse_qs(urlsplit(response.headers["location"]).fragment)
+    assert values["username"] == ["known-google-user"]
+    assert db_session.query(User).filter_by(email="known@example.test").count() == 1
+
+
+def test_google_callback_rejects_invalid_state(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    _start_google_login(client)
+
+    response = client.get(
+        "/api/auth/google/callback?code=test-code&state=wrong-state",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid OAuth state"
+
+
+def test_invitee_calendar_consent_stores_encrypted_token_and_starts_sync(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = User(
+        username="calendar-invitee",
+        email="invitee@example.test",
+        full_name="Calendar Invitee",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    consent_url = make_calendar_consent_url(user)
+    consent_parts = urlsplit(consent_url)
+
+    consent_response = client.get(
+        f"{consent_parts.path}?{consent_parts.query}",
+        follow_redirects=False,
+    )
+    assert consent_response.status_code == 307
+    consent_query = parse_qs(urlsplit(consent_response.headers["location"]).query)
+    assert "https://www.googleapis.com/auth/calendar.events" in consent_query["scope"][0]
+    assert consent_query["access_type"] == ["offline"]
+
+    _mock_google_profile(
+        monkeypatch,
+        {"email": "invitee@example.test", "email_verified": True, "name": "Calendar Invitee"},
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+    state = consent_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert "calendar_connected=1" in callback.headers["location"]
+    db_session.expire_all()
+    saved_user = db_session.query(User).filter_by(id=user.id).one()
+    assert saved_user.google_refresh_token != "private-refresh-token"
+    assert decrypt_refresh_token(saved_user.google_refresh_token) == "private-refresh-token"
+    assert saved_user.google_calendar_connected_at is not None
+
+
+def test_calendar_consent_rejects_google_email_mismatch(client, db_session, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = User(
+        username="calendar-owner",
+        email="owner@example.test",
+        full_name="Calendar Owner",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    consent_parts = urlsplit(make_calendar_consent_url(user))
+    consent_response = client.get(
+        f"{consent_parts.path}?{consent_parts.query}",
+        follow_redirects=False,
+    )
+    _mock_google_profile(
+        monkeypatch,
+        {"email": "other@example.test", "email_verified": True, "name": "Different Account"},
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+    state = consent_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 403
+    db_session.expire_all()
+    saved_user = db_session.query(User).filter_by(id=user.id).one()
+    assert saved_user.google_refresh_token is None
+````
+
+## File: tests/test_google_calendar_service.py
+````python
+from datetime import datetime, timedelta
+
+from cryptography.fernet import Fernet
+import httpx
+from sqlalchemy.orm import sessionmaker
+
+from app.models.google_calendar_event import GoogleCalendarEvent
+from app.models.meeting import MeetingParticipant
+from app.services import google_calendar_service
+from app.services.google_calendar_service import encrypt_refresh_token
+from tests.conftest import test_engine
+from tests.helpers import _add_participant, _create_meeting, _create_room, _create_user
+
+
+class FakeGoogleResponse:
+    status_code = 200
+
+    def raise_for_status(self):
+        return None
+
+
+
+def test_invitee_meeting_is_inserted_once_in_google_calendar(db_session, monkeypatch):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+    organizer = _create_user(db_session, "calendar-sync-organizer")
+    invitee = _create_user(db_session, "calendar-sync-invitee")
+    invitee.google_refresh_token = encrypt_refresh_token("stored-refresh-token")
+    db_session.commit()
+    room = _create_room(db_session, "Calendar Sync Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+    meeting.title = "Project sync"
+    meeting.description = "Planning session"
+    db_session.add(MeetingParticipant(meeting_id=meeting.id, user_id=invitee.id))
+    db_session.commit()
+
+    session_factory = sessionmaker(bind=test_engine)
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", session_factory)
+    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
+    inserted_events = []
+
+    def fake_insert(url, **kwargs):
+        inserted_events.append((url, kwargs))
+        return FakeGoogleResponse()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
+
+    google_calendar_service.sync_user_meetings_to_google(invitee.id)
+    google_calendar_service.sync_user_meetings_to_google(invitee.id)
+
+    assert len(inserted_events) == 1
+    url, request = inserted_events[0]
+    payload = request["json"]
+    assert url == google_calendar_service.GOOGLE_EVENTS_URL
+    assert request["headers"]["Authorization"] == "Bearer google-access-token"
+    assert payload["summary"] == "Project sync"
+    assert payload["location"] == "Calendar Sync Room - Floor 1"
+    assert payload["start"]["timeZone"] == "Asia/Ho_Chi_Minh"
+    assert db_session.query(GoogleCalendarEvent).filter_by(user_id=invitee.id, meeting_id=meeting.id).count() == 1
+
+
+def test_organizer_meeting_is_inserted_with_invitees(db_session, monkeypatch):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    organizer = _create_user(db_session, "calendar-sync-connected-organizer")
+    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
+    invitee = _create_user(db_session, "calendar-sync-organizer-invitee")
+    db_session.commit()
+    room = _create_room(db_session, "Organizer Calendar Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+    _add_participant(db_session, meeting, invitee)
+
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine))
+    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
+    inserted_events = []
+
+    def fake_insert(url, **kwargs):
+        inserted_events.append((url, kwargs))
+        return FakeGoogleResponse()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
+    google_calendar_service.sync_user_meetings_to_google(organizer.id)
+
+    assert len(inserted_events) == 1
+    url, request = inserted_events[0]
+    assert url == google_calendar_service.GOOGLE_EVENTS_URL
+    assert request["params"] == {"sendUpdates": "all"}
+    assert request["json"]["attendees"] == [{"email": invitee.email}]
+    assert db_session.query(GoogleCalendarEvent).filter_by(
+        user_id=organizer.id,
+        meeting_id=meeting.id,
+    ).count() == 1
+
+
+def test_calendar_permission_403_logs_reconnect_guidance(db_session, monkeypatch, caplog):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    organizer = _create_user(db_session, "calendar-sync-403-organizer")
+    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
+    db_session.commit()
+    room = _create_room(db_session, "Calendar 403 Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine))
+    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
+
+    def forbidden_insert(url, **kwargs):
+        response = httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": 403,
+                    "message": "Insufficient Permission",
+                    "errors": [{"reason": "insufficientPermissions"}],
+                }
+            },
+            request=httpx.Request("POST", url),
+        )
+        response.raise_for_status()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", forbidden_insert)
+
+    google_calendar_service.sync_user_meetings_to_google(organizer.id)
+
+    assert "insufficientPermissions" in caplog.text
+    assert "disconnect Google Calendar in Settings and connect again" in caplog.text
+    assert db_session.query(GoogleCalendarEvent).filter_by(
+        user_id=organizer.id,
+        meeting_id=meeting.id,
+    ).count() == 0
+
+
+def test_access_token_refresh_sends_client_credentials(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "oauth-client-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "oauth-client-secret")
+    requests = []
+
+    class TokenResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"access_token": "fresh-access-token"}
+
+    def fake_post(url, **kwargs):
+        requests.append((url, kwargs))
+        return TokenResponse()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_post)
+
+    assert google_calendar_service._access_token("refresh-token") == "fresh-access-token"
+    url, request = requests[0]
+    assert url == google_calendar_service.GOOGLE_TOKEN_URL
+    assert request["data"] == {
+        "client_id": "oauth-client-id",
+        "client_secret": "oauth-client-secret",
+        "refresh_token": "refresh-token",
+        "grant_type": "refresh_token",
+    }
+
+
+def test_access_token_refresh_logs_google_oauth_error(monkeypatch, caplog):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "oauth-client-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "oauth-client-secret")
+
+    def failed_refresh(url, **kwargs):
+        response = httpx.Response(
+            400,
+            json={
+                "error": "invalid_grant",
+                "error_description": "Token has been expired or revoked.",
+            },
+            request=httpx.Request("POST", url),
+        )
+        return response
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", failed_refresh)
+
+    try:
+        google_calendar_service._access_token("secret-refresh-token-value")
+    except httpx.HTTPStatusError:
+        pass
+    else:
+        raise AssertionError("Expected the Google token refresh request to fail")
+
+    assert "invalid_grant" in caplog.text
+    assert "Token has been expired or revoked." in caplog.text
+    assert "oauth-client-secret" not in caplog.text
+    assert "secret-refresh-token-value" not in caplog.text
+````
+
+## File: tests/test_meeting_cancel.py
+````python
+from datetime import datetime, timedelta
+
+from sqlalchemy.orm import Session
+from fastapi.testclient import TestClient
+
+from tests.helpers import (
+    _add_participant,
+    _auth_header,
+    _create_meeting,
+    _create_room,
+    _create_user,
+    _make_token,
+)
+from app.models.meeting import MeetingParticipant
+
+
+def _future_window():
+    start = datetime.utcnow() + timedelta(days=2)
+    return start, start + timedelta(hours=1)
+
+
+def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "cancel-organizer")
+    participant = _create_user(db_session, "cancel-participant")
+    room = _create_room(db_session, "Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, participant)
+
+    headers = _auth_header(_make_token(organizer))
+    response = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+    repeated = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "CANCELLED"
+
+    db_session.expire_all()
+    saved = db_session.get(type(meeting), meeting.id)
+    assert saved.status == "CANCELLED"
+    assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
+
+
+def test_admin_can_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "admin-target-organizer")
+    admin = _create_user(db_session, "cancel-admin", role="admin")
+    room = _create_room(db_session, "Admin Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(admin)),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_organizer_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-organizer")
+    room = _create_room(db_session, "Delete Organizer Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_admin_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-admin-target")
+    admin = _create_user(db_session, "delete-admin", role="admin")
+    room = _create_room(db_session, "Delete Admin Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_admin_role_is_case_insensitive(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "upper-admin-target")
+    admin = _create_user(db_session, "upper-case-admin", role="ADMIN")
+    room = _create_room(db_session, "Upper Admin Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_invitee_cannot_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-protected-organizer")
+    invitee = _create_user(db_session, "delete-protected-invitee")
+    room = _create_room(db_session, "Delete Protected Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, invitee)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(invitee)),
+    )
+
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+
+
+def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "protected-organizer")
+    outsider = _create_user(db_session, "cancel-outsider")
+    room = _create_room(db_session, "Protected Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(outsider)),
+    )
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+
+
+def test_cancel_requires_authentication(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "auth-cancel-organizer")
+    room = _create_room(db_session, "Auth Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(f"/api/meetings/{meeting.id}/cancel")
+    assert response.status_code == 401
+
+
+def test_cancel_missing_meeting_returns_404(client: TestClient, db_session: Session):
+    user = _create_user(db_session, "missing-cancel-user")
+    response = client.patch(
+        "/api/meetings/999999/cancel",
+        headers=_auth_header(_make_token(user)),
+    )
+    assert response.status_code == 404
+
+
+def test_room_can_be_booked_again_after_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "reuse-organizer")
+    room = _create_room(db_session, "Reusable Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    cancel = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert cancel.status_code == 200
+
+    booking = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Replacement meeting",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert booking.status_code == 201
+    assert len(booking.json()) == 1
+
+    available = client.get(
+        "/api/rooms/available/",
+        params={"start_time": start.isoformat(), "end_time": end.isoformat()},
+    )
+    assert available.status_code == 200
+    assert room.id not in {item["id"] for item in available.json()}
+````
+
+## File: tests/test_meeting_create.py
+````python
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.routers import meetings as meetings_router
+from tests.helpers import _auth_header, _create_room, _create_user, _make_token
+
+
+def _future_window():
+    start = datetime.utcnow() + timedelta(days=2)
+    return start, start + timedelta(hours=1)
+
+
+def test_create_offline_meeting_with_room(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "create-offline-organizer")
+    room = _create_room(db_session, "Create Offline Room")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Offline meeting",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    meeting = response.json()[0]
+    assert meeting["meeting_type"] == "offline"
+    assert meeting["room_id"] == room.id
+
+
+def test_create_offline_meeting_without_room_returns_400(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-offline-no-room")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Offline meeting without room",
+            "meeting_type": "offline",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Offline meetings require a room_id"
+
+
+def test_create_online_meeting_with_link(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "create-online-organizer")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Online meeting",
+            "meeting_type": "online",
+            "meeting_link": "https://meet.test/room",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    meeting = response.json()[0]
+    assert meeting["meeting_type"] == "online"
+    assert meeting["meeting_link"] == "https://meet.test/room"
+    assert meeting["room_id"] is None
+
+
+def test_create_online_meeting_without_link_returns_400(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-online-no-link")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Online meeting without link",
+            "meeting_type": "online",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Online meetings require a meeting_link"
+
+
+def test_create_meeting_schedules_google_sync_for_connected_organizer(
+    client: TestClient, db_session: Session, monkeypatch
+):
+    organizer = _create_user(db_session, "create-connected-organizer")
+    organizer.google_refresh_token = "encrypted-refresh-token"
+    db_session.commit()
+    room = _create_room(db_session, "Connected Organizer Room")
+    start, end = _future_window()
+    synced_user_ids = []
+    monkeypatch.setattr(
+        meetings_router,
+        "sync_user_meetings_to_google",
+        synced_user_ids.append,
+    )
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Automatically synced meeting",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    assert synced_user_ids == [organizer.id]
 ````
 
 ## File: .gitignore
@@ -7109,10 +7936,12 @@ __all__ = [
 
 ## File: app/models/room.py
 ````python
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
-from sqlalchemy.orm import relationship
-from app.db.session import Base
+from uuid import uuid4
 
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, event, func
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Mapper, relationship
+from app.db.session import Base
 
 
 class Room(Base):
@@ -7127,11 +7956,427 @@ class Room(Base):
     description = Column(Text, nullable=True, comment="Mô tả")
     amenities = Column(Text, nullable=True, comment="Tiện ích phòng họp (JSON list)")
     is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái phòng")
+    qr_token = Column(String(64), nullable=True, unique=True, index=True, default=lambda: str(uuid4()))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 
+    def generate_qr_token(self) -> str:
+        """Generate a stable QR token for this room when it does not have one."""
+        if not self.qr_token:
+            self.qr_token = str(uuid4())
+        return self.qr_token
+
     def __repr__(self) -> str:
         return f"<Room id={self.id} name={self.name!r}>"
+
+
+@event.listens_for(Room, "before_insert")
+def _ensure_room_qr_token(mapper: Mapper[Room], connection: Connection, room: Room) -> None:
+    room.generate_qr_token()
+````
+
+## File: tests/test_meetings_history.py
+````python
+"""Tests for GET /api/meetings/history."""
+
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from tests.helpers import (
+    _create_user,
+    _create_room,
+    _create_meeting,
+    _add_participant,
+    _make_token,
+    _auth_header,
+)
+
+
+class TestNoToken:
+    def test_returns_401_without_token(self, client: TestClient):
+        resp = client.get("/api/meetings/history")
+        assert resp.status_code == 401
+
+
+class TestOrganizerSeesMeeting:
+    def test_organizer_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer")
+        room = _create_room(db_session)
+        past = datetime.utcnow() - timedelta(days=3)
+        end = datetime.utcnow() - timedelta(days=1)
+        m = _create_meeting(db_session, room, org, past, end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id in ids
+
+
+class TestParticipantSeesMeeting:
+    def test_invited_user_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer2")
+        invitee = _create_user(db_session, "invitee")
+        room = _create_room(db_session, "Room B")
+        past = datetime.utcnow() - timedelta(days=5)
+        end = datetime.utcnow() - timedelta(days=4)
+        m = _create_meeting(db_session, room, org, past, end)
+        _add_participant(db_session, m, invitee)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(invitee)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id in ids
+
+
+class TestNonParticipantExcluded:
+    def test_outsider_sees_nothing(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer3")
+        outsider = _create_user(db_session, "outsider")
+        room = _create_room(db_session, "Room C")
+        past = datetime.utcnow() - timedelta(days=7)
+        end = datetime.utcnow() - timedelta(days=6)
+        _create_meeting(db_session, room, org, past, end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(outsider)))
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestFutureMeetingExcluded:
+    def test_future_meeting_not_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer4")
+        room = _create_room(db_session, "Room D")
+        future_start = datetime.utcnow() + timedelta(days=1)
+        future_end = datetime.utcnow() + timedelta(days=2)
+        m = _create_meeting(db_session, room, org, future_start, future_end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id not in ids
+
+
+class TestCanceledMeetingExcluded:
+    def test_canceled_meeting_not_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer5")
+        room = _create_room(db_session, "Room E")
+        past = datetime.utcnow() - timedelta(days=10)
+        end = datetime.utcnow() - timedelta(days=9)
+        m = _create_meeting(db_session, room, org, past, end, status="canceled")
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id not in ids
+
+
+class TestNoDuplicates:
+    def test_no_duplicate_when_organizer_and_participant(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer6")
+        room = _create_room(db_session, "Room F")
+        past = datetime.utcnow() - timedelta(days=2)
+        end = datetime.utcnow() - timedelta(hours=1)
+        m = _create_meeting(db_session, room, org, past, end)
+        _add_participant(db_session, m, org)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert ids.count(m.id) == 1, "Duplicate records must not be returned"
+
+
+class TestOrderByDesc:
+    def test_ordered_by_end_time_desc(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer7")
+        room = _create_room(db_session, "Room G")
+        m1 = _create_meeting(db_session, room, org,
+                             datetime.utcnow() - timedelta(days=10),
+                             datetime.utcnow() - timedelta(days=9))
+        m2 = _create_meeting(db_session, room, org,
+                             datetime.utcnow() - timedelta(days=3),
+                             datetime.utcnow() - timedelta(days=2))
+        m3 = _create_meeting(db_session, room, org,
+                             datetime.utcnow() - timedelta(days=20),
+                             datetime.utcnow() - timedelta(days=19))
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert ids == [m2.id, m1.id, m3.id]
+
+
+class TestResponseShape:
+    def test_response_has_expected_fields(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer8")
+        room = _create_room(db_session, "Room H")
+        past = datetime.utcnow() - timedelta(days=5)
+        end = datetime.utcnow() - timedelta(days=4)
+        _create_meeting(db_session, room, org, past, end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        item = resp.json()[0]
+        expected = {
+            "id", "title", "description",
+            "meeting_type", "meeting_link", "online_link",
+            "room_id", "organizer_id",
+            "start_time", "end_time", "status",
+            "is_recurring", "recurring_type",
+            "equipments", "participant_ids",
+        }
+        assert set(item.keys()) == expected
+````
+
+## File: docker-compose.yml
+````yaml
+services:
+  roomsync_db:
+    image: mysql:8.0
+    container_name: roomsync_db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-03062006}
+      MYSQL_DATABASE: meeting_db
+      MYSQL_USER: roomsync_user
+      MYSQL_PASSWORD: roomsync_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: roomsync_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-03062006}@roomsync_db:3306/meeting_db
+      SECRET_KEY: roomsync_super_secret_jwt_key
+    volumes:
+      - .:/app
+    depends_on:
+      roomsync_db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+````
+
+## File: schema.sql
+````sql
+CREATE DATABASE IF NOT EXISTS meeting_db
+    DEFAULT CHARACTER SET utf8mb4
+    DEFAULT COLLATE utf8mb4_unicode_ci;
+
+USE meeting_db;
+
+CREATE TABLE IF NOT EXISTS users (
+    id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    username        VARCHAR(50) NOT NULL,
+    email           VARCHAR(150) DEFAULT NULL,
+    full_name       VARCHAR(150) DEFAULT NULL,
+    hashed_password VARCHAR(255) NOT NULL,
+    role            VARCHAR(20) NOT NULL DEFAULT 'user',
+    is_active       TINYINT(1) NOT NULL DEFAULT 1,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_username (username),
+    UNIQUE KEY uq_users_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS rooms (
+    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name        VARCHAR(100) NOT NULL,
+    location    VARCHAR(255) DEFAULT NULL,
+    capacity    INT NOT NULL DEFAULT 1,
+    description TEXT DEFAULT NULL,
+    amenities   TEXT DEFAULT NULL,
+    is_active   TINYINT(1) NOT NULL DEFAULT 1,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_rooms_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS meetings (
+    id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    title          VARCHAR(200) NOT NULL,
+    description    TEXT DEFAULT NULL,
+    meeting_type   VARCHAR(20) NOT NULL DEFAULT 'offline',
+    online_link    VARCHAR(500) DEFAULT NULL,
+    is_recurring   TINYINT(1) NOT NULL DEFAULT 0,
+    recurring_type VARCHAR(20) DEFAULT NULL,
+    room_id        INT UNSIGNED DEFAULT NULL,
+    organizer_id   INT UNSIGNED DEFAULT NULL,
+    start_time     DATETIME NOT NULL,
+    end_time       DATETIME NOT NULL,
+    status         VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_meetings_room_id (room_id),
+    KEY idx_meetings_organizer_id (organizer_id),
+    KEY idx_meetings_start_time (start_time),
+    CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_meetings_organizer FOREIGN KEY (organizer_id) REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS meeting_participants (
+    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    meeting_id INT UNSIGNED NOT NULL,
+    user_id    INT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_meeting_participant (meeting_id, user_id),
+    CONSTRAINT fk_meeting_participants_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_meeting_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+````
+
+## File: app/core/security.py
+````python
+from datetime import datetime, timedelta
+from typing import Any, Dict
+import hashlib
+import os
+import secrets
+
+from dotenv import load_dotenv
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.user import User
+
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY is not configured")
+
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+DEFAULT_ITERATIONS = 100_000
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+def hash_password(plain_password: str, salt: str | None = None, iterations: int = DEFAULT_ITERATIONS) -> str:
+    """Return a PBKDF2-HMAC-SHA256 password hash."""
+    salt = salt or secrets.token_hex(12)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), iterations
+    )
+    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        algorithm, iterations_text, salt, expected = hashed_password.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            "sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), int(iterations_text)
+        )
+        return secrets.compare_digest(digest.hex(), expected)
+    except (TypeError, ValueError):
+        return False
+
+
+def authenticate_user(db: Session, username: str, password: str) -> User:
+    """Authenticate with a username or email against the MySQL users table."""
+    user = db.query(User).filter(
+        (User.username == username) | (User.email == username)
+    ).first()
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sai tên đăng nhập hoặc mật khẩu",
+    )
+    if user is None or not verify_password(password, user.hashed_password):
+        raise invalid
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
+    return user
+
+
+def create_access_token(data: Dict[str, Any], expires_delta: timedelta | None = None) -> str:
+    payload = data.copy()
+    payload["exp"] = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Phiên đăng nhập không hợp lệ hoặc đã hết hạn",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.username == username).first()
+    if user is None or not user.is_active:
+        raise credentials_exception
+    return user
+
+
+def require_role(required_role: str):
+    def role_checker(current_user: User = Depends(get_current_user)):
+        if current_user.role != required_role and current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Quyền hạn không đủ! Yêu cầu vai trò {required_role.upper()}.",
+            )
+        return current_user
+
+    return role_checker
+````
+
+## File: app/models/user.py
+````python
+# app/models/user.py
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
+from app.core.database import Base
+
+
+class User(Base):
+    """Model đại diện cho bảng người dùng (tài khoản) trong hệ thống."""
+
+    __tablename__ = "users"
+
+    # ✅ Sửa primary_primary_key thành primary_key
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False, index=True, comment="Tên đăng nhập")
+    email = Column(String(150), unique=True, nullable=True, comment="Địa chỉ Email")
+    full_name = Column(String(150), nullable=True, comment="Họ và tên người dùng")
+    hashed_password = Column(String(255), nullable=False, comment="Mật khẩu đã băm")
+    google_refresh_token = Column(Text, nullable=True)
+    google_calendar_connected_at = Column(DateTime, nullable=True)
+    google_refresh_token = Column(Text, nullable=True)
+    google_calendar_connected_at = Column(DateTime, nullable=True)
+    role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
+    is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} username={self.username!r} role={self.role!r}>"
 ````
 
 ## File: app/routers/auth.py
@@ -7511,368 +8756,6 @@ def admin_only_route(current_user: User = Depends(require_role("admin"))):
     return {"status": "success", "message": f"Xin chào Admin {current_user.full_name}! Bạn có toàn quyền quản trị."}
 ````
 
-## File: tests/test_meetings_history.py
-````python
-"""Tests for GET /api/meetings/history."""
-
-from datetime import datetime, timedelta
-
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from tests.helpers import (
-    _create_user,
-    _create_room,
-    _create_meeting,
-    _add_participant,
-    _make_token,
-    _auth_header,
-)
-
-
-class TestNoToken:
-    def test_returns_401_without_token(self, client: TestClient):
-        resp = client.get("/api/meetings/history")
-        assert resp.status_code == 401
-
-
-class TestOrganizerSeesMeeting:
-    def test_organizer_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer")
-        room = _create_room(db_session)
-        past = datetime.utcnow() - timedelta(days=3)
-        end = datetime.utcnow() - timedelta(days=1)
-        m = _create_meeting(db_session, room, org, past, end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id in ids
-
-
-class TestParticipantSeesMeeting:
-    def test_invited_user_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer2")
-        invitee = _create_user(db_session, "invitee")
-        room = _create_room(db_session, "Room B")
-        past = datetime.utcnow() - timedelta(days=5)
-        end = datetime.utcnow() - timedelta(days=4)
-        m = _create_meeting(db_session, room, org, past, end)
-        _add_participant(db_session, m, invitee)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(invitee)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id in ids
-
-
-class TestNonParticipantExcluded:
-    def test_outsider_sees_nothing(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer3")
-        outsider = _create_user(db_session, "outsider")
-        room = _create_room(db_session, "Room C")
-        past = datetime.utcnow() - timedelta(days=7)
-        end = datetime.utcnow() - timedelta(days=6)
-        _create_meeting(db_session, room, org, past, end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(outsider)))
-        assert resp.status_code == 200
-        assert resp.json() == []
-
-
-class TestFutureMeetingExcluded:
-    def test_future_meeting_not_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer4")
-        room = _create_room(db_session, "Room D")
-        future_start = datetime.utcnow() + timedelta(days=1)
-        future_end = datetime.utcnow() + timedelta(days=2)
-        m = _create_meeting(db_session, room, org, future_start, future_end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id not in ids
-
-
-class TestCanceledMeetingExcluded:
-    def test_canceled_meeting_not_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer5")
-        room = _create_room(db_session, "Room E")
-        past = datetime.utcnow() - timedelta(days=10)
-        end = datetime.utcnow() - timedelta(days=9)
-        m = _create_meeting(db_session, room, org, past, end, status="canceled")
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id not in ids
-
-
-class TestNoDuplicates:
-    def test_no_duplicate_when_organizer_and_participant(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer6")
-        room = _create_room(db_session, "Room F")
-        past = datetime.utcnow() - timedelta(days=2)
-        end = datetime.utcnow() - timedelta(hours=1)
-        m = _create_meeting(db_session, room, org, past, end)
-        _add_participant(db_session, m, org)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert ids.count(m.id) == 1, "Duplicate records must not be returned"
-
-
-class TestOrderByDesc:
-    def test_ordered_by_end_time_desc(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer7")
-        room = _create_room(db_session, "Room G")
-        m1 = _create_meeting(db_session, room, org,
-                             datetime.utcnow() - timedelta(days=10),
-                             datetime.utcnow() - timedelta(days=9))
-        m2 = _create_meeting(db_session, room, org,
-                             datetime.utcnow() - timedelta(days=3),
-                             datetime.utcnow() - timedelta(days=2))
-        m3 = _create_meeting(db_session, room, org,
-                             datetime.utcnow() - timedelta(days=20),
-                             datetime.utcnow() - timedelta(days=19))
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert ids == [m2.id, m1.id, m3.id]
-
-
-class TestResponseShape:
-    def test_response_has_expected_fields(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer8")
-        room = _create_room(db_session, "Room H")
-        past = datetime.utcnow() - timedelta(days=5)
-        end = datetime.utcnow() - timedelta(days=4)
-        _create_meeting(db_session, room, org, past, end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        item = resp.json()[0]
-        expected = {
-            "id", "title", "description",
-            "meeting_type", "meeting_link", "online_link",
-            "room_id", "organizer_id",
-            "start_time", "end_time", "status",
-            "is_recurring", "recurring_type",
-            "equipments", "participant_ids",
-        }
-        assert set(item.keys()) == expected
-````
-
-## File: schema.sql
-````sql
-CREATE DATABASE IF NOT EXISTS meeting_db
-    DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE meeting_db;
-
-CREATE TABLE IF NOT EXISTS users (
-    id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    username        VARCHAR(50) NOT NULL,
-    email           VARCHAR(150) DEFAULT NULL,
-    full_name       VARCHAR(150) DEFAULT NULL,
-    hashed_password VARCHAR(255) NOT NULL,
-    role            VARCHAR(20) NOT NULL DEFAULT 'user',
-    is_active       TINYINT(1) NOT NULL DEFAULT 1,
-    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_users_username (username),
-    UNIQUE KEY uq_users_email (email)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS rooms (
-    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    name        VARCHAR(100) NOT NULL,
-    location    VARCHAR(255) DEFAULT NULL,
-    capacity    INT NOT NULL DEFAULT 1,
-    description TEXT DEFAULT NULL,
-    amenities   TEXT DEFAULT NULL,
-    is_active   TINYINT(1) NOT NULL DEFAULT 1,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_rooms_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS meetings (
-    id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    title          VARCHAR(200) NOT NULL,
-    description    TEXT DEFAULT NULL,
-    meeting_type   VARCHAR(20) NOT NULL DEFAULT 'offline',
-    online_link    VARCHAR(500) DEFAULT NULL,
-    is_recurring   TINYINT(1) NOT NULL DEFAULT 0,
-    recurring_type VARCHAR(20) DEFAULT NULL,
-    room_id        INT UNSIGNED DEFAULT NULL,
-    organizer_id   INT UNSIGNED DEFAULT NULL,
-    start_time     DATETIME NOT NULL,
-    end_time       DATETIME NOT NULL,
-    status         VARCHAR(20) NOT NULL DEFAULT 'scheduled',
-    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at     DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    KEY idx_meetings_room_id (room_id),
-    KEY idx_meetings_organizer_id (organizer_id),
-    KEY idx_meetings_start_time (start_time),
-    CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT fk_meetings_organizer FOREIGN KEY (organizer_id) REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-CREATE TABLE IF NOT EXISTS meeting_participants (
-    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    meeting_id INT UNSIGNED NOT NULL,
-    user_id    INT UNSIGNED NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_meeting_participant (meeting_id, user_id),
-    CONSTRAINT fk_meeting_participants_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_meeting_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-````
-
-## File: app/core/security.py
-````python
-from datetime import datetime, timedelta
-from typing import Any, Dict
-import hashlib
-import os
-import secrets
-
-from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
-from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.models.user import User
-
-load_dotenv()
-
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("SECRET_KEY is not configured")
-
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-DEFAULT_ITERATIONS = 100_000
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-
-
-def hash_password(plain_password: str, salt: str | None = None, iterations: int = DEFAULT_ITERATIONS) -> str:
-    """Return a PBKDF2-HMAC-SHA256 password hash."""
-    salt = salt or secrets.token_hex(12)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), iterations
-    )
-    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    try:
-        algorithm, iterations_text, salt, expected = hashed_password.split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
-        digest = hashlib.pbkdf2_hmac(
-            "sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), int(iterations_text)
-        )
-        return secrets.compare_digest(digest.hex(), expected)
-    except (TypeError, ValueError):
-        return False
-
-
-def authenticate_user(db: Session, username: str, password: str) -> User:
-    """Authenticate with a username or email against the MySQL users table."""
-    user = db.query(User).filter(
-        (User.username == username) | (User.email == username)
-    ).first()
-    invalid = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Sai tên đăng nhập hoặc mật khẩu",
-    )
-    if user is None or not verify_password(password, user.hashed_password):
-        raise invalid
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
-    return user
-
-
-def create_access_token(data: Dict[str, Any], expires_delta: timedelta | None = None) -> str:
-    payload = data.copy()
-    payload["exp"] = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Phiên đăng nhập không hợp lệ hoặc đã hết hạn",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if not username:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-
-    user = db.query(User).filter(User.username == username).first()
-    if user is None or not user.is_active:
-        raise credentials_exception
-    return user
-
-
-def require_role(required_role: str):
-    def role_checker(current_user: User = Depends(get_current_user)):
-        if current_user.role != required_role and current_user.role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Quyền hạn không đủ! Yêu cầu vai trò {required_role.upper()}.",
-            )
-        return current_user
-
-    return role_checker
-````
-
-## File: app/models/user.py
-````python
-# app/models/user.py
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
-from app.core.database import Base
-
-
-class User(Base):
-    """Model đại diện cho bảng người dùng (tài khoản) trong hệ thống."""
-
-    __tablename__ = "users"
-
-    # ✅ Sửa primary_primary_key thành primary_key
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    username = Column(String(50), unique=True, nullable=False, index=True, comment="Tên đăng nhập")
-    email = Column(String(150), unique=True, nullable=True, comment="Địa chỉ Email")
-    full_name = Column(String(150), nullable=True, comment="Họ và tên người dùng")
-    hashed_password = Column(String(255), nullable=False, comment="Mật khẩu đã băm")
-    google_refresh_token = Column(Text, nullable=True)
-    google_calendar_connected_at = Column(DateTime, nullable=True)
-    google_refresh_token = Column(Text, nullable=True)
-    google_calendar_connected_at = Column(DateTime, nullable=True)
-    role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
-    is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
-    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
-
-    def __repr__(self) -> str:
-        return f"<User id={self.id} username={self.username!r} role={self.role!r}>"
-````
-
 ## File: app/schemas/room.py
 ````python
 import json
@@ -7931,6 +8814,12 @@ class RoomResponse(RoomBase):
 
     class Config:
         from_attributes = True
+
+
+class RoomQRResponse(BaseModel):
+    room_id: int
+    room_name: str
+    qr_token: str
 ````
 
 ## File: frontend/css/booking.css
@@ -8902,548 +9791,6 @@ button {
 }
 ````
 
-## File: frontend/index.html
-````html
-<!DOCTYPE html>
-<html lang="vi">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Đăng nhập - RoomSync</title>
-    <!-- Nhúng Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=10">
-    <link rel="stylesheet" href="css/booking.css">
-    <style>
-        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
-        .custom-input:focus {
-            border-color: #004CFF !important;
-            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
-        }
-    </style>
-</head>
-
-<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
-
-    <div
-        class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
-
-        <!-- KHUNG CHỨA FORM -->
-        <div
-            class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
-
-            <!-- THẺ FORM ĐĂNG NHẬP -->
-            <div
-                class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
-
-                <!-- LogoMark Component -->
-                <div class="flex items-center gap-2.5 mb-8">
-                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style="background-color: #004CFF;">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
-                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
-                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
-                            <circle cx="12" cy="15" r="1.5" fill="white" />
-                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
-                        </svg>
-                    </div>
-                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
-                </div>
-
-                <!-- Tiêu đề -->
-                <div class="mb-8">
-                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
-                        Đăng nhập vào tài khoản
-                    </h1>
-                    <p class="mt-1.5 text-sm text-gray-500">
-                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
-                    </p>
-                </div>
-
-                <!-- LoginForm Component -->
-                <form id="loginForm" class="w-full">
-
-                    <!-- Input Email / Username -->
-                    <div class="mb-6">
-                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
-                            Email công ty
-                        </label>
-                        <div class="relative">
-                            <span
-                                class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path
-                                        d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                    <polyline points="22,6 12,13 2,6" />
-                                </svg>
-                            </span>
-                            <input type="text" id="username" name="username" placeholder="ten@congty.com" required
-                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none" />
-                        </div>
-                    </div>
-
-                    <!-- Input Password -->
-                    <div class="mb-6">
-                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
-                            Mật khẩu
-                        </label>
-                        <div class="relative">
-                            <span
-                                class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                                </svg>
-                            </span>
-                            <input type="password" id="password" name="password" placeholder="••••••••" required
-                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none" />
-                            <button type="button" id="togglePassword"
-                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
-                                aria-label="Hiện mật khẩu">
-                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                    stroke-linejoin="round">
-                                    <path
-                                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                                    <line x1="1" y1="1" x2="23" y2="23" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
-                    <div class="flex items-center justify-between mb-6">
-                        <label class="flex items-center gap-2 cursor-pointer select-none">
-                            <div class="relative">
-                                <input type="checkbox" id="rememberMe" class="sr-only" />
-                                <div id="checkboxBox"
-                                    class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
-                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10"
-                                        fill="none">
-                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5"
-                                            stroke-linecap="round" stroke-linejoin="round" />
-                                    </svg>
-                                </div>
-                            </div>
-                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
-                        </label>
-                        <a href="#" class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]">
-                            Quên mật khẩu?
-                        </a>
-                    </div>
-
-                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
-                    <div id="errorAlert"
-                        class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
-                        Tài khoản hoặc mật khẩu không chính xác!
-                    </div>
-
-                    <!-- Nút Đăng nhập -->
-                    <button type="submit"
-                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
-                        Đăng Nhập
-                    </button>
-
-                    <p class="mt-6 text-xs text-center text-gray-400">
-                        Chưa có tài khoản?
-                        <a href="#" class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]">
-                            Liên hệ quản trị viên
-                        </a>
-                    </p>
-                </form>
-
-            </div>
-
-            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
-            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
-                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
-            </p>
-
-        </div>
-
-        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
-        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
-            <img src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
-                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
-                class="absolute inset-0 w-full h-full object-cover" style="opacity: 0.45;" />
-
-            <div class="absolute inset-0"
-                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"></div>
-
-            <div class="absolute inset-0 flex flex-col justify-end p-14">
-                <div class="flex flex-wrap gap-3 mb-10">
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
-                        style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
-                        style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
-                        style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
-                        style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
-                </div>
-
-                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
-                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
-                </h2>
-                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
-                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá
-                    tại một nơi duy nhất.
-                </p>
-
-                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
-                    <div>
-                        <div class="text-lg font-semibold text-white">2.400+</div>
-                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
-                    </div>
-                    <div>
-                        <div class="text-lg font-semibold text-white">98,5%</div>
-                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
-                    </div>
-                    <div>
-                        <div class="text-lg font-semibold text-white">340+</div>
-                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-    </div>
-
-    <!-- Script xử lý UI (Giữ nguyên) -->
-    <script>
-        // 1. Tương tác Ẩn / Hiện Mật Khẩu
-        const togglePasswordBtn = document.getElementById('togglePassword');
-        const passwordInput = document.getElementById('password');
-        const eyeIcon = document.getElementById('eyeIcon');
-
-        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
-        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
-
-        let isPasswordOpen = false;
-
-        if (togglePasswordBtn && passwordInput) {
-            togglePasswordBtn.addEventListener('click', () => {
-                isPasswordOpen = !isPasswordOpen;
-                passwordInput.type = isPasswordOpen ? 'text' : 'password';
-                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
-                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
-            });
-        }
-
-        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
-        const rememberCheckbox = document.getElementById('rememberMe');
-        const checkboxBox = document.getElementById('checkboxBox');
-        const checkIcon = document.getElementById('checkIcon');
-
-        if (rememberCheckbox) {
-            rememberCheckbox.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    checkboxBox.style.backgroundColor = '#004CFF';
-                    checkboxBox.style.borderColor = '#004CFF';
-                    checkIcon.classList.remove('hidden');
-                } else {
-                    checkboxBox.style.backgroundColor = '#FFFFFF';
-                    checkboxBox.style.borderColor = '#D1D5DB';
-                    checkIcon.classList.add('hidden');
-                }
-            });
-        }
-    </script>
-
-
-
-    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
-    <script src="js/login.js?v=2"></script>
-</body>
-
-</html>
-````
-
-## File: frontend/login.html
-````html
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Đăng nhập - RoomSync</title>
-    <!-- Nhúng Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=10">
-    <link rel="stylesheet" href="css/booking.css">
-    <style>
-        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
-        .custom-input:focus {
-            border-color: #004CFF !important;
-            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
-        }
-    </style>
-</head>
-<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
-
-    <div class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
-
-        <!-- KHUNG CHỨA FORM -->
-        <div class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
-
-            <!-- THẺ FORM ĐĂNG NHẬP -->
-            <div class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
-
-                <!-- LogoMark Component -->
-                <div class="flex items-center gap-2.5 mb-8">
-                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background-color: #004CFF;">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
-                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
-                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
-                            <circle cx="12" cy="15" r="1.5" fill="white" />
-                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
-                        </svg>
-                    </div>
-                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
-                </div>
-
-                <!-- Tiêu đề -->
-                <div class="mb-8">
-                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
-                        Đăng nhập vào tài khoản
-                    </h1>
-                    <p class="mt-1.5 text-sm text-gray-500">
-                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
-                    </p>
-                </div>
-
-                <!-- LoginForm Component -->
-                <form id="loginForm" class="w-full">
-
-                    <!-- Input Email / Username -->
-                    <div class="mb-6">
-                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
-                            Email công ty
-                        </label>
-                        <div class="relative">
-                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                    <polyline points="22,6 12,13 2,6" />
-                                </svg>
-                            </span>
-                            <input
-                                type="text"
-                                id="username"
-                                name="username"
-                                placeholder="ten@congty.com"
-                                required
-                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
-                            />
-                        </div>
-                    </div>
-
-                    <!-- Input Password -->
-                    <div class="mb-6">
-                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
-                            Mật khẩu
-                        </label>
-                        <div class="relative">
-                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                                </svg>
-                            </span>
-                            <input
-                                type="password"
-                                id="password"
-                                name="password"
-                                placeholder="••••••••"
-                                required
-                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
-                            />
-                            <button
-                                type="button"
-                                id="togglePassword"
-                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
-                                aria-label="Hiện mật khẩu"
-                            >
-                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                                    <line x1="1" y1="1" x2="23" y2="23" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
-                    <div class="flex items-center justify-between mb-6">
-                        <label class="flex items-center gap-2 cursor-pointer select-none">
-                            <div class="relative">
-                                <input type="checkbox" id="rememberMe" class="sr-only" />
-                                <div id="checkboxBox" class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
-                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                                    </svg>
-                                </div>
-                            </div>
-                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
-                        </label>
-                        <a
-                            href="#"
-                            class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
-                        >
-                            Quên mật khẩu?
-                        </a>
-                    </div>
-
-                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
-                    <div id="errorAlert" class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
-                        Tài khoản hoặc mật khẩu không chính xác!
-                    </div>
-
-                    <!-- Nút Đăng nhập -->
-                    <button
-                        type="submit"
-                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25"
-                    >
-                        Đăng Nhập
-                    </button>
-
-                    <div class="my-5 flex items-center gap-3 text-xs text-gray-400" aria-hidden="true">
-                        <span class="h-px flex-1 bg-gray-200"></span>
-                        <span>hoặc</span>
-                        <span class="h-px flex-1 bg-gray-200"></span>
-                    </div>
-
-                    <button
-                        type="button"
-                        id="googleLoginButton"
-                        class="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-blue-100"
-                    >
-                        <span class="text-lg font-bold text-[#4285F4]" aria-hidden="true">G</span>
-                        Đăng nhập với Google
-                    </button>
-
-                    <p class="mt-6 text-xs text-center text-gray-400">
-                        Chưa có tài khoản?
-                        <a
-                            href="#"
-                            class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
-                        >
-                            Liên hệ quản trị viên
-                        </a>
-                    </p>
-                </form>
-
-            </div>
-
-            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
-            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
-                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
-            </p>
-
-        </div>
-
-        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
-        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
-            <img
-                src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
-                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
-                class="absolute inset-0 w-full h-full object-cover"
-                style="opacity: 0.45;"
-            />
-
-            <div
-                class="absolute inset-0"
-                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"
-            ></div>
-
-            <div class="absolute inset-0 flex flex-col justify-end p-14">
-                <div class="flex flex-wrap gap-3 mb-10">
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
-                </div>
-
-                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
-                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
-                </h2>
-                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
-                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá tại một nơi duy nhất.
-                </p>
-
-                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
-                    <div>
-                        <div class="text-lg font-semibold text-white">2.400+</div>
-                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
-                    </div>
-                    <div>
-                        <div class="text-lg font-semibold text-white">98,5%</div>
-                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
-                    </div>
-                    <div>
-                        <div class="text-lg font-semibold text-white">340+</div>
-                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-    </div>
-
-    <!-- Script xử lý UI -->
-    <script>
-        // 1. Tương tác Ẩn / Hiện Mật Khẩu
-        const togglePasswordBtn = document.getElementById('togglePassword');
-        const passwordInput = document.getElementById('password');
-        const eyeIcon = document.getElementById('eyeIcon');
-
-        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
-        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
-
-        let isPasswordOpen = false;
-
-        if (togglePasswordBtn && passwordInput) {
-            togglePasswordBtn.addEventListener('click', () => {
-                isPasswordOpen = !isPasswordOpen;
-                passwordInput.type = isPasswordOpen ? 'text' : 'password';
-                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
-                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
-            });
-        }
-
-        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
-        const rememberCheckbox = document.getElementById('rememberMe');
-        const checkboxBox = document.getElementById('checkboxBox');
-        const checkIcon = document.getElementById('checkIcon');
-
-        if (rememberCheckbox) {
-            rememberCheckbox.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    checkboxBox.style.backgroundColor = '#004CFF';
-                    checkboxBox.style.borderColor = '#004CFF';
-                    checkIcon.classList.remove('hidden');
-                } else {
-                    checkboxBox.style.backgroundColor = '#FFFFFF';
-                    checkboxBox.style.borderColor = '#D1D5DB';
-                    checkIcon.classList.add('hidden');
-                }
-            });
-        }
-    </script>
-
-    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
-    <script src="js/login.js?v=2"></script>
-    <script src="js/auth.js?v=1"></script>
-</body>
-</html>
-````
-
 ## File: scripts/seed.py
 ````python
 """Create repeatable demo data for local feature testing."""
@@ -9850,252 +10197,613 @@ if __name__ == "__main__":
     seed()
 ````
 
-## File: README.md
-````markdown
-# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
+## File: frontend/index.html
+````html
+<!DOCTYPE html>
+<html lang="vi">
 
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
-![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
-
-Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
-
----
-
-## 📌 1. Bảng Công nghệ (Tech Stack)
-
-* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
-* **Database:** MySQL
-* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
-* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
-* **Validation & Schemas:** Pydantic v2
-* **Server Runner:** Uvicorn ASGI Server
-
-## 🔐 Google OAuth 2.0
-
-The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).
-
-Users can connect or disconnect their own Google Calendar from the dashboard Settings page. Once connected, newly created meetings are added to the organizer's calendar and Google sends invitations to meeting invitees; connecting also syncs the user's existing meetings. Invitees may still receive a Calendar consent email so their own calendar can be synchronized. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` and `migrations/008_add_meeting_participant_response_status.sql` before deploying. Set `FRONTEND_DASHBOARD_URL` to the dashboard's public URL (defaults to `/static/dashboard.html`). For production, use HTTPS and the exact public callback/frontend URLs.
-
----
-
-## 📁 2. Cấu trúc Dự án (Project Structure)
-
-```text
-MeetingManagement/
-├── app/
-│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
-│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
-│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
-│   ├── models/                # SQLAlchemy Models (ORM Mapping)
-│   │   ├── user.py            # Bảng người dùng
-│   │   ├── room.py            # Bảng phòng họp
-│   │   └── meeting.py         # Bảng lịch họp
-│   ├── routers/               # API Endpoints (Controllers)
-│   │   └── auth.py            # API Đăng nhập / Xác thực
-│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
-│       └── auth.py
-│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
-├── scripts/
-│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
-├── .env.example               # Mẫu cấu hình biến môi trường
-├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
-├── README.md                  # Tài liệu hướng dẫn sử dụng
-├── requirements.txt           # Thư viện phụ thuộc của dự án
-└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
-````
-
-## File: frontend/js/login.js
-````javascript
-document.addEventListener('DOMContentLoaded', () => {
-    const loginForm = document.getElementById('loginForm');
-    const errorAlert = document.getElementById('errorAlert');
-
-    if (!loginForm) return;
-
-    loginForm.addEventListener('submit', async function (e) {
-        e.preventDefault();
-
-        if (errorAlert) errorAlert.classList.add('hidden');
-
-        const usernameInput = document.getElementById('username') || document.getElementById('loginEmail');
-        const passwordInput = document.getElementById('password') || document.getElementById('loginPassword');
-
-        if (!usernameInput || !passwordInput) {
-            console.error("Không tìm thấy input username/password!");
-            return;
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập - RoomSync</title>
+    <!-- Nhúng Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css?v=10">
+    <link rel="stylesheet" href="css/booking.css">
+    <style>
+        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
+        .custom-input:focus {
+            border-color: #004CFF !important;
+            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
         }
+    </style>
+</head>
 
-        const username = usernameInput.value.trim();
-        const password = passwordInput.value;
+<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
 
-        try {
-            // Thay vì dùng URLSearchParams, hãy gửi dạng JSON chuẩn
-            const res = await fetch('http://localhost:8000/api/auth/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    username: username,
-                    password: password
-                })
+    <div
+        class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
+
+        <!-- KHUNG CHỨA FORM -->
+        <div
+            class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
+
+            <!-- THẺ FORM ĐĂNG NHẬP -->
+            <div
+                class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
+
+                <!-- LogoMark Component -->
+                <div class="flex items-center gap-2.5 mb-8">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style="background-color: #004CFF;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
+                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
+                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
+                            <circle cx="12" cy="15" r="1.5" fill="white" />
+                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
+                        </svg>
+                    </div>
+                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
+                </div>
+
+                <!-- Tiêu đề -->
+                <div class="mb-8">
+                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
+                        Đăng nhập vào tài khoản
+                    </h1>
+                    <p class="mt-1.5 text-sm text-gray-500">
+                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
+                    </p>
+                </div>
+
+                <!-- LoginForm Component -->
+                <form id="loginForm" class="w-full">
+
+                    <!-- Input Email / Username -->
+                    <div class="mb-6">
+                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Email công ty
+                        </label>
+                        <div class="relative">
+                            <span
+                                class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path
+                                        d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                            </span>
+                            <input type="text" id="username" name="username" placeholder="ten@congty.com" required
+                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none" />
+                        </div>
+                    </div>
+
+                    <!-- Input Password -->
+                    <div class="mb-6">
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Mật khẩu
+                        </label>
+                        <div class="relative">
+                            <span
+                                class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                            </span>
+                            <input type="password" id="password" name="password" placeholder="••••••••" required
+                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none" />
+                            <button type="button" id="togglePassword"
+                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                                aria-label="Hiện mật khẩu">
+                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path
+                                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                                    <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
+                    <div class="flex items-center justify-between mb-6">
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
+                            <div class="relative">
+                                <input type="checkbox" id="rememberMe" class="sr-only" />
+                                <div id="checkboxBox"
+                                    class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
+                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10"
+                                        fill="none">
+                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5"
+                                            stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </div>
+                            </div>
+                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
+                        </label>
+                        <a href="#" class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]">
+                            Quên mật khẩu?
+                        </a>
+                    </div>
+
+                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
+                    <div id="errorAlert"
+                        class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
+                        Tài khoản hoặc mật khẩu không chính xác!
+                    </div>
+
+                    <!-- Nút Đăng nhập -->
+                    <button type="submit"
+                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                        Đăng Nhập
+                    </button>
+
+                    <div class="my-5 flex items-center gap-3 text-xs text-gray-400" aria-hidden="true">
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                        <span>hoặc</span>
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                    </div>
+
+                    <button type="button" id="googleLoginButton"
+                        class="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-blue-100">
+                        <span class="text-lg font-bold text-[#4285F4]" aria-hidden="true">G</span>
+                        Đăng nhập với Google
+                    </button>
+
+                    <p class="mt-6 text-xs text-center text-gray-400">
+                        Chưa có tài khoản?
+                        <a href="#" class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]">
+                            Liên hệ quản trị viên
+                        </a>
+                    </p>
+                </form>
+
+            </div>
+
+            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
+            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
+                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
+            </p>
+
+        </div>
+
+        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
+        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
+            <img src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
+                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
+                class="absolute inset-0 w-full h-full object-cover" style="opacity: 0.45;" />
+
+            <div class="absolute inset-0"
+                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"></div>
+
+            <div class="absolute inset-0 flex flex-col justify-end p-14">
+                <div class="flex flex-wrap gap-3 mb-10">
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
+                </div>
+
+                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
+                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
+                </h2>
+                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
+                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá
+                    tại một nơi duy nhất.
+                </p>
+
+                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
+                    <div>
+                        <div class="text-lg font-semibold text-white">2.400+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">98,5%</div>
+                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">340+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script xử lý UI (Giữ nguyên) -->
+    <script>
+        // 1. Tương tác Ẩn / Hiện Mật Khẩu
+        const togglePasswordBtn = document.getElementById('togglePassword');
+        const passwordInput = document.getElementById('password');
+        const eyeIcon = document.getElementById('eyeIcon');
+
+        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
+        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
+
+        let isPasswordOpen = false;
+
+        if (togglePasswordBtn && passwordInput) {
+            togglePasswordBtn.addEventListener('click', () => {
+                isPasswordOpen = !isPasswordOpen;
+                passwordInput.type = isPasswordOpen ? 'text' : 'password';
+                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
+                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
             });
-
-            const result = await res.json();
-
-            if (res.ok) {
-                // Lưu Token vào LocalStorage[cite: 5]
-                const token = result.access_token || result.token;
-                localStorage.setItem('token', token);
-
-                if (result.full_name) localStorage.setItem('user_name', result.full_name);
-                const email = result.email || result.user?.email;
-                if (email) localStorage.setItem('user_email', email);
-                if (result.user_name) localStorage.setItem('user_name', result.user_name);
-                if (result.role) localStorage.setItem('role', result.role);
-
-                // 👉 LƯU THÊM EMAIL THẬT TỪ DATABASE VÀO LOCALSTORAGE
-                localStorage.setItem('user_email', result.email || username);
-
-                // Chuyển hướng sang trang Dashboard[cite: 5]
-                window.location.href = 'dashboard.html';
-            } else {
-                if (errorAlert) {
-                    // Xử lý an toàn để tránh hiện chữ [object Object] khi FastAPI trả về lỗi cấu trúc
-                    let errorMessage = 'Tài khoản hoặc mật khẩu không chính xác!';
-                    if (result.detail) {
-                        if (typeof result.detail === 'string') {
-                            errorMessage = result.detail;
-                        } else if (Array.isArray(result.detail)) {
-                            errorMessage = result.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
-                        } else if (typeof result.detail === 'object') {
-                            errorMessage = result.detail.msg || JSON.stringify(result.detail);
-                        }
-                    }
-
-                    errorAlert.textContent = errorMessage;
-                    errorAlert.classList.remove('hidden');
-                } else {
-                    alert('Tài khoản hoặc mật khẩu không chính xác!');
-                }
-            }
-        } catch (err) {
-            console.error('Lỗi kết nối:', err);
-            if (errorAlert) {
-                errorAlert.textContent = 'Không thể kết nối đến máy chủ Backend!';
-                errorAlert.classList.remove('hidden');
-            }
         }
-    });
-});
+
+        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
+        const rememberCheckbox = document.getElementById('rememberMe');
+        const checkboxBox = document.getElementById('checkboxBox');
+        const checkIcon = document.getElementById('checkIcon');
+
+        if (rememberCheckbox) {
+            rememberCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    checkboxBox.style.backgroundColor = '#004CFF';
+                    checkboxBox.style.borderColor = '#004CFF';
+                    checkIcon.classList.remove('hidden');
+                } else {
+                    checkboxBox.style.backgroundColor = '#FFFFFF';
+                    checkboxBox.style.borderColor = '#D1D5DB';
+                    checkIcon.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+
+    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
+    <script src="js/login.js?v=3"></script>
+    <script src="js/auth.js?v=2"></script>
+</body>
+
+</html>
 ````
 
-## File: app/models/meeting.py
-````python
-# app/models/meeting.py
-from sqlalchemy import (
-    Boolean,
-    Column,
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-)
-from sqlalchemy.orm import relationship, synonym
+## File: frontend/login.html
+````html
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập - RoomSync</title>
+    <!-- Nhúng Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css?v=10">
+    <link rel="stylesheet" href="css/booking.css">
+    <style>
+        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
+        .custom-input:focus {
+            border-color: #004CFF !important;
+            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
 
-from app.core.database import Base
+    <div class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
 
+        <!-- KHUNG CHỨA FORM -->
+        <div class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
 
-class Meeting(Base):
-    __tablename__ = "meetings"
+            <!-- THẺ FORM ĐĂNG NHẬP -->
+            <div class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    title = Column(String(200), nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    # meeting_type: 'online' | 'offline' — online meetings do not require a room
-    meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
-    meeting_link = Column(String, nullable=True)
-    online_link = synonym("meeting_link")
-    is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
-    recurring_type = Column(String(20), nullable=True)
-    # room_id is nullable: online meetings have no room
-    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True, index=True)
-    organizer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime, nullable=False)
-    status = Column(String(20), nullable=False, default="scheduled")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+                <!-- LogoMark Component -->
+                <div class="flex items-center gap-2.5 mb-8">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background-color: #004CFF;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
+                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
+                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
+                            <circle cx="12" cy="15" r="1.5" fill="white" />
+                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
+                        </svg>
+                    </div>
+                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
+                </div>
 
-    # Relationships
-    equipments = relationship("MeetingEquipment", back_populates="meeting", cascade="all, delete-orphan")
-    room = relationship("Room", lazy="joined")
-    organizer = relationship("User", lazy="joined")
-    participants = relationship(
-        "MeetingParticipant",
-        back_populates="meeting",
-        lazy="selectin",
-        cascade="all, delete-orphan",
-    )
+                <!-- Tiêu đề -->
+                <div class="mb-8">
+                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
+                        Đăng nhập vào tài khoản
+                    </h1>
+                    <p class="mt-1.5 text-sm text-gray-500">
+                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
+                    </p>
+                </div>
 
-    def __repr__(self) -> str:
-        return f"<Meeting id={self.id} title={self.title!r}>"
+                <!-- LoginForm Component -->
+                <form id="loginForm" class="w-full">
 
+                    <!-- Input Email / Username -->
+                    <div class="mb-6">
+                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Email công ty
+                        </label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                            </span>
+                            <input
+                                type="text"
+                                id="username"
+                                name="username"
+                                placeholder="ten@congty.com"
+                                required
+                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
+                            />
+                        </div>
+                    </div>
 
-class MeetingParticipant(Base):
-    __tablename__ = "meeting_participants"
+                    <!-- Input Password -->
+                    <div class="mb-6">
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Mật khẩu
+                        </label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                            </span>
+                            <input
+                                type="password"
+                                id="password"
+                                name="password"
+                                placeholder="••••••••"
+                                required
+                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
+                            />
+                            <button
+                                type="button"
+                                id="togglePassword"
+                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                                aria-label="Hiện mật khẩu"
+                            >
+                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                                    <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    meeting_id = Column(
-        Integer,
-        ForeignKey("meetings.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id = Column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    response_status = Column(String(20), nullable=False, default="pending", server_default="pending")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
+                    <div class="flex items-center justify-between mb-6">
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
+                            <div class="relative">
+                                <input type="checkbox" id="rememberMe" class="sr-only" />
+                                <div id="checkboxBox" class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
+                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </div>
+                            </div>
+                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
+                        </label>
+                        <a
+                            href="#"
+                            class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
+                        >
+                            Quên mật khẩu?
+                        </a>
+                    </div>
 
-    # Relationships
-    meeting = relationship("Meeting", back_populates="participants")
-    user = relationship("User", lazy="joined")
+                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
+                    <div id="errorAlert" class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
+                        Tài khoản hoặc mật khẩu không chính xác!
+                    </div>
 
-    __table_args__ = (
-        UniqueConstraint("meeting_id", "user_id", name="uq_meeting_participant"),
-    )
+                    <!-- Nút Đăng nhập -->
+                    <button
+                        type="submit"
+                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25"
+                    >
+                        Đăng Nhập
+                    </button>
 
-    def __repr__(self) -> str:
-        return f"<MeetingParticipant meeting_id={self.meeting_id} user_id={self.user_id}>"
+                    <div class="my-5 flex items-center gap-3 text-xs text-gray-400" aria-hidden="true">
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                        <span>hoặc</span>
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                    </div>
+
+                    <button
+                        type="button"
+                        id="googleLoginButton"
+                        class="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-blue-100"
+                    >
+                        <span class="text-lg font-bold text-[#4285F4]" aria-hidden="true">G</span>
+                        Đăng nhập với Google
+                    </button>
+
+                    <p class="mt-6 text-xs text-center text-gray-400">
+                        Chưa có tài khoản?
+                        <a
+                            href="#"
+                            class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
+                        >
+                            Liên hệ quản trị viên
+                        </a>
+                    </p>
+                </form>
+
+            </div>
+
+            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
+            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
+                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
+            </p>
+
+        </div>
+
+        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
+        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
+            <img
+                src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
+                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
+                class="absolute inset-0 w-full h-full object-cover"
+                style="opacity: 0.45;"
+            />
+
+            <div
+                class="absolute inset-0"
+                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"
+            ></div>
+
+            <div class="absolute inset-0 flex flex-col justify-end p-14">
+                <div class="flex flex-wrap gap-3 mb-10">
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
+                </div>
+
+                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
+                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
+                </h2>
+                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
+                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá tại một nơi duy nhất.
+                </p>
+
+                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
+                    <div>
+                        <div class="text-lg font-semibold text-white">2.400+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">98,5%</div>
+                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">340+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script xử lý UI -->
+    <script>
+        // 1. Tương tác Ẩn / Hiện Mật Khẩu
+        const togglePasswordBtn = document.getElementById('togglePassword');
+        const passwordInput = document.getElementById('password');
+        const eyeIcon = document.getElementById('eyeIcon');
+
+        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
+        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
+
+        let isPasswordOpen = false;
+
+        if (togglePasswordBtn && passwordInput) {
+            togglePasswordBtn.addEventListener('click', () => {
+                isPasswordOpen = !isPasswordOpen;
+                passwordInput.type = isPasswordOpen ? 'text' : 'password';
+                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
+                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+            });
+        }
+
+        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
+        const rememberCheckbox = document.getElementById('rememberMe');
+        const checkboxBox = document.getElementById('checkboxBox');
+        const checkIcon = document.getElementById('checkIcon');
+
+        if (rememberCheckbox) {
+            rememberCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    checkboxBox.style.backgroundColor = '#004CFF';
+                    checkboxBox.style.borderColor = '#004CFF';
+                    checkIcon.classList.remove('hidden');
+                } else {
+                    checkboxBox.style.backgroundColor = '#FFFFFF';
+                    checkboxBox.style.borderColor = '#D1D5DB';
+                    checkIcon.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+
+    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
+    <script src="js/login.js?v=3"></script>
+    <script src="js/auth.js?v=2"></script>
+</body>
+</html>
 ````
 
 ## File: app/routers/rooms.py
 ````python
 import json
 from datetime import datetime
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 
 from app.core.database import get_db
-from app.core.security import require_role
+from app.core.security import get_current_user, require_role
 from app.models.room import Room
 from app.models.meeting import Meeting
-from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse
+from app.models.user import User
+from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse, RoomQRResponse
 from app.services import room_service
 # Khởi tạo APIRouter (KHÔNG thêm prefix ở đây vì đã có prefix="/api/rooms" ở main.py)
 router = APIRouter()
+
+
+@router.get("/{room_id}/qr-code", response_model=RoomQRResponse, summary="Lấy mã QR phòng họp")
+def get_room_qr_code(
+    room_id: int,
+    meeting_id: Optional[int] = Query(None, description="Cuộc họp do người tổ chức hiện tại chủ trì"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    role = str(current_user.role or "").strip().casefold()
+    room = db.query(Room).filter(Room.id == room_id).first()
+    if room is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng họp")
+    if role not in {"admin", "manager"}:
+        if meeting_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Chỉ Admin, Manager hoặc chủ trì cuộc họp mới được lấy mã QR phòng.",
+            )
+        meeting = db.query(Meeting).filter(
+            Meeting.id == meeting_id,
+            Meeting.room_id == room_id,
+            Meeting.organizer_id == current_user.id,
+            func.upper(Meeting.status).in_(["SCHEDULED", "IN_PROGRESS"]),
+        ).first()
+        if meeting is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Bạn không có quyền lấy mã QR cho cuộc họp này.",
+            )
+    if not room.qr_token:
+        room.generate_qr_token()
+        db.commit()
+        db.refresh(room)
+    return RoomQRResponse(room_id=room.id, room_name=room.name, qr_token=room.qr_token)
 
 # GET /api/rooms/: Lấy danh sách tất cả phòng
 @router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
@@ -10120,7 +10828,10 @@ def get_available_rooms(
 
     # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
     busy_rooms_query = db.query(Meeting.room_id).filter(
-        Meeting.status.notin_(["CANCELLED", "canceled"]),
+        func.upper(Meeting.status).notin_(
+            ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+        ),
+        Meeting.check_out_time.is_(None),
         and_(
             Meeting.start_time < end_time,
             Meeting.end_time > start_time
@@ -10245,6 +10956,253 @@ def read_available_rooms(
     return rooms
 ````
 
+## File: frontend/js/login.js
+````javascript
+const API_URL = window.API_URL || 'http://localhost:8000/api';
+
+document.addEventListener('DOMContentLoaded', () => {
+    const loginForm = document.getElementById('loginForm');
+    const errorAlert = document.getElementById('errorAlert');
+
+    if (!loginForm) return;
+
+    loginForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        if (errorAlert) errorAlert.classList.add('hidden');
+
+        const usernameInput = document.getElementById('username') || document.getElementById('loginEmail');
+        const passwordInput = document.getElementById('password') || document.getElementById('loginPassword');
+
+        if (!usernameInput || !passwordInput) {
+            console.error("Không tìm thấy input username/password!");
+            return;
+        }
+
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+
+        try {
+            const res = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    password: password
+                })
+            });
+
+            const result = await res.json();
+
+            if (res.ok) {
+                // Lưu Token vào LocalStorage[cite: 5]
+                const token = result.access_token || result.token;
+                localStorage.setItem('token', token);
+
+                if (result.full_name) localStorage.setItem('user_name', result.full_name);
+                const email = result.email || result.user?.email;
+                if (email) localStorage.setItem('user_email', email);
+                if (result.user_name) localStorage.setItem('user_name', result.user_name);
+                if (result.role) localStorage.setItem('role', result.role);
+
+                // 👉 LƯU THÊM EMAIL THẬT TỪ DATABASE VÀO LOCALSTORAGE
+                localStorage.setItem('user_email', result.email || username);
+
+                // Chuyển hướng sang trang Dashboard[cite: 5]
+                window.location.href = 'dashboard.html';
+            } else {
+                if (errorAlert) {
+                    // Xử lý an toàn để tránh hiện chữ [object Object] khi FastAPI trả về lỗi cấu trúc
+                    let errorMessage = 'Tài khoản hoặc mật khẩu không chính xác!';
+                    if (result.detail) {
+                        if (typeof result.detail === 'string') {
+                            errorMessage = result.detail;
+                        } else if (Array.isArray(result.detail)) {
+                            errorMessage = result.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
+                        } else if (typeof result.detail === 'object') {
+                            errorMessage = result.detail.msg || JSON.stringify(result.detail);
+                        }
+                    }
+
+                    errorAlert.textContent = errorMessage;
+                    errorAlert.classList.remove('hidden');
+                } else {
+                    alert('Tài khoản hoặc mật khẩu không chính xác!');
+                }
+            }
+        } catch (err) {
+            console.error('Lỗi kết nối:', err);
+            if (errorAlert) {
+                errorAlert.textContent = 'Không thể kết nối đến máy chủ Backend!';
+                errorAlert.classList.remove('hidden');
+            }
+        }
+    });
+});
+````
+
+## File: README.md
+````markdown
+# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
+
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
+
+Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
+
+---
+
+## 📌 1. Bảng Công nghệ (Tech Stack)
+
+* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
+* **Database:** MySQL
+* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
+* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
+* **Validation & Schemas:** Pydantic v2
+* **Server Runner:** Uvicorn ASGI Server
+
+## Docker (local development)
+
+Set `MYSQL_ROOT_PASSWORD` in `.env` if you want to override the local default, then start the stack and apply database migrations:
+
+```sh
+docker compose up --build -d
+docker compose exec web alembic upgrade head
+```
+
+Compose configures the backend to connect to the `roomsync_db` service and the `meeting_db` database; do not use `localhost` as the database host from inside the backend container. Check service health with `docker compose ps` and backend output with `docker compose logs web`.
+
+## QR meeting check-in
+
+Apply the Alembic migration with `alembic upgrade head` to add room QR tokens and meeting check-in fields. Admins and managers can retrieve the room QR payload from `GET /api/v1/rooms/{room_id}/qr-code`; display its `qr_token` value as the room's QR code. Organizers and accepted invitees can scan that code during the 15-minute check-in window using the dashboard's booking list. Check-in and check-out are available at `/api/v1/meetings/{meeting_id}/check-in` and `/api/v1/meetings/{meeting_id}/check-out`. The API process runs reminder, no-show cancellation, and automatic check-out jobs every minute. Configure the existing SMTP environment variables to send no-show emails.
+
+## 🔐 Google OAuth 2.0
+
+The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).
+
+Users can connect or disconnect their own Google Calendar from the dashboard Settings page. Once connected, newly created meetings are added to the organizer's calendar and Google sends invitations to meeting invitees; connecting also syncs the user's existing meetings. Invitees may still receive a Calendar consent email so their own calendar can be synchronized. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` and `migrations/008_add_meeting_participant_response_status.sql` before deploying. Set `FRONTEND_DASHBOARD_URL` to the dashboard's public URL (defaults to `/static/dashboard.html`). For production, use HTTPS and the exact public callback/frontend URLs.
+
+---
+
+## 📁 2. Cấu trúc Dự án (Project Structure)
+
+```text
+MeetingManagement/
+├── app/
+│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
+│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
+│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
+│   ├── models/                # SQLAlchemy Models (ORM Mapping)
+│   │   ├── user.py            # Bảng người dùng
+│   │   ├── room.py            # Bảng phòng họp
+│   │   └── meeting.py         # Bảng lịch họp
+│   ├── routers/               # API Endpoints (Controllers)
+│   │   └── auth.py            # API Đăng nhập / Xác thực
+│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
+│       └── auth.py
+│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
+├── scripts/
+│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
+├── .env.example               # Mẫu cấu hình biến môi trường
+├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
+├── README.md                  # Tài liệu hướng dẫn sử dụng
+├── requirements.txt           # Thư viện phụ thuộc của dự án
+└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
+````
+
+## File: app/models/meeting.py
+````python
+# app/models/meeting.py
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import relationship, synonym
+
+from app.core.database import Base
+
+
+class Meeting(Base):
+    __tablename__ = "meetings"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    title = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    # meeting_type: 'online' | 'offline' — online meetings do not require a room
+    meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
+    meeting_link = Column(String(255), nullable=True)
+    online_link = synonym("meeting_link")
+    is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
+    recurring_type = Column(String(20), nullable=True)
+    # room_id is nullable: online meetings have no room
+    room_id = Column(Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True, index=True)
+    organizer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    status = Column(String(20), nullable=False, default="scheduled")
+    check_in_time = Column(DateTime, nullable=True)
+    check_out_time = Column(DateTime, nullable=True)
+    reminder_sent = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+
+    # Relationships
+    equipments = relationship("MeetingEquipment", back_populates="meeting", cascade="all, delete-orphan")
+    room = relationship("Room", lazy="joined")
+    organizer = relationship("User", lazy="joined")
+    participants = relationship(
+        "MeetingParticipant",
+        back_populates="meeting",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Meeting id={self.id} title={self.title!r}>"
+
+
+class MeetingParticipant(Base):
+    __tablename__ = "meeting_participants"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    meeting_id = Column(
+        Integer,
+        ForeignKey("meetings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    response_status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    # Relationships
+    meeting = relationship("Meeting", back_populates="participants")
+    user = relationship("User", lazy="joined")
+
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "user_id", name="uq_meeting_participant"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MeetingParticipant meeting_id={self.meeting_id} user_id={self.user_id}>"
+````
+
 ## File: app/schemas/meeting.py
 ````python
 from datetime import datetime
@@ -10256,6 +11214,14 @@ from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentIte
 
 class MeetingParticipationResponse(BaseModel):
     response_status: Literal["accepted", "declined"]
+
+
+class MeetingCheckInRequest(BaseModel):
+    qr_token: str
+
+
+class MeetingCheckOutRequest(BaseModel):
+    qr_token: str
 
 
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
@@ -10311,6 +11277,8 @@ class MeetingResponse(BaseModel):
     is_recurring: bool = False
     recurring_type: Optional[str] = None
     status: str
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
     equipments: Optional[List[MeetingEquipmentItemOutput]] = []
     participant_ids: Optional[List[int]] = []
 
@@ -10374,53 +11342,9 @@ class SuggestTimeResponse(BaseModel):
     suggested_slots: List[TimeSlot]
 ````
 
-## File: requirements.txt
-````
-fastapi==0.104.1
-fastapi-cli==0.0.32
-google-auth==2.56.3
-google-api-python-client>=2.150,<3.0
-google-genai>=1.0.0
-greenlet==3.5.5
-h11==0.16.0
-httpcore==1.0.9
-httptools==0.8.0
-httpx==0.28.1
-idna==3.18
-iniconfig==2.3.0
-Jinja2==3.1.6
-markdown-it-py==4.2.0
-MarkupSafe==3.0.3
-mdurl==0.1.2
-orjson==3.12.0
-packaging==26.3
-passlib==1.7.4
-pluggy==1.6.0
-pyasn1==0.6.4
-pyasn1_modules==0.4.2
-pycparser==3.0
-uvicorn[standard]==0.24.0
-sqlalchemy==2.0.23
-aiomysql==0.2.0
-pymysql==1.1.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-alembic==1.12.1
-python-dotenv==1.0.0
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-openpyxl==3.1.2
-reportlab==4.0.7
-qrcode==7.4.2
-pillow==10.1.0
-requests==2.31.0
-pytest==8.3.2
-````
-
 ## File: app/services/meeting_service.py
 ````python
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -10429,12 +11353,106 @@ from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting, MeetingParticipant
+from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
 logger = logging.getLogger(__name__)
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class MeetingService:
+
+    @staticmethod
+    def check_in_meeting(
+        db: Session,
+        meeting_id: int,
+        qr_token: str,
+        current_user: User,
+        now: datetime | None = None,
+    ) -> Meeting:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+        if (meeting.status or "").casefold() != "scheduled":
+            raise HTTPException(status_code=400, detail="Cuộc họp không ở trạng thái có thể check-in.")
+
+        accepted_participant = any(
+            participant.user_id == current_user.id
+            and (participant.response_status or "").casefold() == "accepted"
+            for participant in meeting.participants
+        )
+        if meeting.organizer_id != current_user.id and not accepted_participant:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền check-in cuộc họp này.")
+
+        if meeting.room is None or not meeting.room.qr_token or meeting.room.qr_token != qr_token:
+            raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+
+        current_time = now or _utc_now()
+        if current_time < meeting.start_time - timedelta(minutes=15):
+            raise HTTPException(
+                status_code=400,
+                detail="Chưa đến thời gian check-in (cho phép trước 15 phút)",
+            )
+        if current_time > meeting.start_time + timedelta(minutes=15):
+            raise HTTPException(status_code=400, detail="Đã quá thời gian check-in")
+
+        meeting.status = "IN_PROGRESS"
+        meeting.check_in_time = current_time
+        if meeting.organizer_id is not None:
+            db.add(
+                Notification(
+                    user_id=meeting.organizer_id,
+                    title="Check-in cuộc họp thành công",
+                    content=(
+                        f"Cuộc họp '{meeting.title}' đã check-in thành công và bắt đầu."
+                    ),
+                )
+            )
+        try:
+            db.commit()
+            db.refresh(meeting)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception("Failed to check in meeting_id=%s", meeting_id)
+            raise HTTPException(status_code=503, detail="Không thể lưu check-in cuộc họp.") from exc
+        return meeting
+
+    @staticmethod
+    def check_out_meeting(
+        db: Session,
+        meeting_id: int,
+        qr_token: str,
+        current_user: User,
+        now: datetime | None = None,
+    ) -> Meeting:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+        if (meeting.status or "").casefold() != "in_progress":
+            raise HTTPException(status_code=400, detail="Cuộc họp không ở trạng thái có thể check-out.")
+
+        is_participant = any(
+            participant.user_id == current_user.id for participant in meeting.participants
+        )
+        if meeting.organizer_id != current_user.id and not is_participant:
+            raise HTTPException(status_code=403, detail="Bạn không thuộc cuộc họp này.")
+        if meeting.room is None or not meeting.room.qr_token or meeting.room.qr_token != qr_token:
+            raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+
+        meeting.status = "COMPLETED"
+        meeting.check_out_time = now or _utc_now()
+        try:
+            db.commit()
+            db.refresh(meeting)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception("Failed to check out meeting_id=%s", meeting_id)
+            raise HTTPException(status_code=503, detail="Không thể lưu check-out cuộc họp.") from exc
+        return meeting
 
     @staticmethod
     def cancel_meeting(db: Session, meeting_id: int, current_user: User):
@@ -10584,7 +11602,7 @@ class MeetingService:
                 if meeting_type == 'offline':
                     overlapping_meeting = db.query(Meeting).filter(
                         Meeting.room_id == room_id,
-                        Meeting.status.notin_(["CANCELLED", "canceled"]),
+                        Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
                         and_(
                             Meeting.start_time < e_time,
                             Meeting.end_time > s_time
@@ -10693,7 +11711,7 @@ class MeetingService:
         day_end = datetime.combine(target_date, datetime.max.time())
         
         meetings = db.query(Meeting).filter(
-            Meeting.status.notin_(["CANCELLED", "canceled"]),
+            Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
             Meeting.start_time <= day_end,
             Meeting.end_time >= day_start,
             Meeting.organizer_id.in_(participant_ids)
@@ -10904,6 +11922,7 @@ body {
    ========================================== */
 .main-content {
     flex: 1;
+    min-width: 0;
     margin-left: 230px;
     display: flex;
     flex-direction: column;
@@ -11113,13 +12132,18 @@ body {
 .chip.active { background: #1d4ed8; color: #ffffff; border-color: #1d4ed8; }
 .status-summary { font-size: 12.5px; color: #64748b; margin-left: 14px; }
 
-.room-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.room-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .room-card { background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; overflow: hidden; }
 .card-image { position: relative; height: 170px; }
 .card-image img { width: 100%; height: 100%; object-fit: cover; }
 .status-badge { position: absolute; top: 12px; right: 12px; padding: 4px 12px; border-radius: 14px; font-size: 11px; font-weight: 600; }
+.status-badge.has-qr-action { right: 12px; }
 .status-green { background: #dcfce7; color: #15803d; }
 .status-red { background: #fee2e2; color: #b91c1c; }
+.room-qr-icon { position: absolute; top: 10px; left: 12px; display: inline-grid; place-items: center; width: 38px; height: 38px; padding: 8px; color: #1d4ed8; background: rgba(255, 255, 255, .96); border: 1px solid rgba(219, 234, 254, .95); border-radius: 50%; box-shadow: 0 2px 8px rgba(15, 23, 42, .18); cursor: pointer; transition: color 150ms ease, background-color 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
+.room-qr-icon svg { width: 21px; height: 21px; fill: currentColor; }
+.room-qr-icon:hover, .room-qr-icon:focus-visible { color: #fff; background: #1d4ed8; transform: scale(1.08); box-shadow: 0 4px 12px rgba(29, 78, 216, .32); }
+.room-qr-icon:focus-visible, .qr-icon-button:focus-visible, .qr-close-button:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
 
 .card-body { padding: 16px; }
 .card-body h3 { font-size: 15px; font-weight: 700; color: #0f172a; }
@@ -11127,9 +12151,11 @@ body {
 .amenities-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .tag { background: #f8fafc; border: 1px solid #f1f5f9; font-size: 11px; padding: 3px 8px; border-radius: 6px; color: #64748b; }
 
-.card-actions { display: flex; gap: 8px; }
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-schedule { flex: 1; background: #ffffff; border: 1px solid #e2e8f0; color: #334155; padding: 9px; border-radius: 8px; font-weight: 600; font-size: 12px; cursor: pointer; }
 .btn-book { flex: 1; background: #1d4ed8; color: #ffffff; border: none; padding: 9px; border-radius: 8px; font-weight: 600; font-size: 12px; cursor: pointer; }
+.btn-admin-action { flex: 1; min-width: 52px; padding: 9px 8px; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.btn-admin-action:hover { background: #f1f5f9; }
 
 /* TABLES & SETTINGS */
 .table-card, .settings-card { background: white; border: 1px solid #e2e8f0; border-radius: 14px; padding: 24px; }
@@ -11206,6 +12232,83 @@ body {
 .booking-guest-status.declined { color: #b91c1c; }
 .booking-guest-status.pending { color: #94a3b8; }
 .booking-list-empty { padding: 28px 16px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 10px; text-align: center; font-size: 13px; }
+
+.booking-qr-button { min-height: 34px; padding: 7px 11px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 7px; font-size: 12px; font-weight: 600; }
+.booking-qr-button:hover { background: #dbeafe; }
+.qr-check-modal .modal-content { width: min(440px, calc(100vw - 32px)); }
+.qr-reader { width: 100%; min-height: 220px; margin: 16px 0; overflow: hidden; border-radius: 8px; }
+.qr-manual-label { display: block; margin-bottom: 6px; color: #4b5563; font-size: 12px; font-weight: 600; }
+.qr-toast { position: fixed; z-index: 10001; right: 24px; bottom: 24px; max-width: min(420px, calc(100vw - 48px)); padding: 12px 16px; color: #fff; background: #047857; border-radius: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2); opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity 160ms ease, transform 160ms ease; }
+.qr-toast.is-visible { opacity: 1; transform: translateY(0); }
+.qr-toast.is-error { background: #b91c1c; }
+
+.qr-display-modal { z-index: 10000; }
+.qr-display-modal .modal-content { width: min(440px, calc(100vw - 32px)); padding: 18px 20px; }
+.qr-display-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.qr-header-actions { display: flex; align-items: center; gap: 7px; flex: none; }
+.qr-display-eyebrow { margin: 0 0 7px; color: #2563eb; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+.qr-display-heading h3 { margin: 0; color: #0f172a; font-size: 21px; font-weight: 750; }
+.qr-display-subtitle { margin: 6px 0 0; color: #64748b; font-size: 13px; }
+.qr-close-button { display: inline-grid; place-items: center; width: 36px; height: 36px; flex: none; color: #64748b; background: #f1f5f9; border: 0; border-radius: 50%; font-size: 24px; line-height: 1; cursor: pointer; }
+.qr-close-button:hover { color: #0f172a; background: #e2e8f0; }
+.qr-icon-button { display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 8px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 50%; cursor: pointer; transition: color 150ms ease, background-color 150ms ease, transform 150ms ease; }
+.qr-icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.qr-icon-button:hover { color: #1d4ed8; background: #eff6ff; transform: scale(1.06); }
+.qr-image-frame { display: grid; place-items: center; margin: 12px auto 4px; background: #fff; }
+.qr-image-room { width: 300px; max-width: 100%; min-height: 300px; padding: 8px; border: 1px solid #e2e8f0; border-radius: 12px; }
+.qr-image-frame canvas, .qr-image-frame img { display: block; max-width: 100%; height: auto; }
+.qr-display-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.qr-secondary-button, .qr-primary-button { min-height: 42px; padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.qr-secondary-button { color: #334155; background: #fff; border: 1px solid #cbd5e1; }
+.qr-secondary-button:hover { background: #f8fafc; }
+.qr-primary-button { color: #fff; background: #1d4ed8; border: 1px solid #1d4ed8; }
+.qr-primary-button:hover { background: #1e40af; }
+.qr-presenter-modal { z-index: 10000; overflow-y: auto; }
+.qr-presenter-card { position: relative; display: flex; flex-direction: column; align-items: center; width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 26px 28px; overflow-y: auto; color: #0f172a; background: #fff; border-radius: 18px; box-shadow: 0 24px 72px rgba(15, 23, 42, .25); text-align: center; }
+.qr-presenter-info { width: 100%; padding: 0 40px; }
+.qr-presenter-info h2 { margin: 0; color: #0f172a; font-size: clamp(22px, 3vw, 34px); font-weight: 800; }
+.qr-presenter-room { margin: 8px 0 0; color: #334155; font-size: clamp(16px, 2vw, 22px); font-weight: 700; }
+.qr-presenter-time { margin: 5px 0 0; color: #2563eb; font-size: clamp(15px, 2vw, 20px); font-weight: 700; }
+.qr-image-presenter { width: min(560px, 38vh, calc(100vw - 64px)); height: min(560px, 38vh, calc(100vw - 64px)); padding: 10px; border: 1px solid #e2e8f0; border-radius: 14px; }
+.qr-presenter-hint { margin: 0; color: #64748b; font-size: 14px; }
+.qr-presenter-actions { margin-top: 18px; }
+.qr-presenter-close { position: absolute; top: 16px; right: 16px; }
+.qr-presenter-modal:fullscreen { display: flex !important; align-items: stretch; justify-content: center; padding: 0; background: #fff; backdrop-filter: none; }
+.qr-presenter-modal:fullscreen .qr-presenter-card { width: 100%; max-height: none; justify-content: center; padding: 24px; border-radius: 0; box-shadow: none; }
+.qr-presenter-modal:fullscreen .qr-image-presenter { width: min(52vh, 75vw, 900px); height: min(52vh, 75vw, 900px); margin: 16px auto; }
+
+@media (max-width: 620px) {
+    .qr-display-modal .modal-content { padding: 16px; }
+    .qr-display-heading { align-items: center; }
+    .qr-header-actions { gap: 5px; }
+    .qr-icon-button, .qr-close-button { width: 34px; height: 34px; }
+    .qr-presenter-card { padding: 56px 16px 20px; }
+    .qr-image-presenter { width: min(76vw, 38vh); height: min(76vw, 38vh); }
+}
+
+@media (min-width: 768px) {
+    .room-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1024px) {
+    .room-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+}
+
+@media (max-width: 767px) {
+    .main-content { margin-left: 0; }
+    .app-layout:not(.collapsed) .sidebar { transform: translateX(-100%); }
+    .app-layout.collapsed .sidebar { transform: translateX(0); }
+    .topbar { flex-wrap: wrap; padding: 12px 16px; }
+    .topbar-left { flex: 1 1 100%; min-width: 0; }
+    .search-box { flex: 1; min-width: 0; width: auto; }
+    .topbar-right { justify-content: flex-end; }
+    .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .filter-wrapper { flex-direction: column; align-items: stretch; gap: 12px; }
+    .filter-left { flex-wrap: wrap; }
+    .filter-chips { width: 100%; margin-left: 0; overflow-x: auto; }
+    .chip { flex: 0 0 auto; }
+    .filter-right { display: flex; justify-content: flex-end; }
+}
 
 .equipment-availability-filters { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
 .equipment-filter-field { display: flex; flex-direction: column; gap: 6px; color: #475569; font-size: 12px; font-weight: 600; }
@@ -11608,6 +12711,50 @@ input:checked + .slider:before {
 }
 ````
 
+## File: requirements.txt
+````
+fastapi==0.115.0
+fastapi-cli==0.0.32
+google-auth==2.56.3
+google-api-python-client>=2.150,<3.0
+google-genai>=1.0.0
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.18
+iniconfig==2.3.0
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+orjson==3.12.0
+packaging==26.3
+passlib==1.7.4
+pluggy==1.6.0
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+aiomysql==0.2.0
+pymysql==1.1.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+alembic==1.12.1
+python-dotenv==1.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+openpyxl==3.1.2
+reportlab==4.0.7
+qrcode==7.4.2
+pillow==10.1.0
+requests==2.31.0
+pytest==8.3.2
+````
+
 ## File: app/routers/meetings.py
 ````python
 # app/routers/meetings.py
@@ -11624,6 +12771,8 @@ from app.db.session import get_db
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import (
+    MeetingCheckInRequest,
+    MeetingCheckOutRequest,
     MeetingCreateRequest,
     MeetingParticipationResponse,
     MeetingResponse,
@@ -11713,6 +12862,26 @@ def suggest_time(
     return MeetingService.suggest_time(db=db, payload=payload)
 
 
+@router.post("/{meeting_id}/check-in", response_model=MeetingResponse)
+def check_in_meeting(
+    meeting_id: int,
+    payload: MeetingCheckInRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.check_in_meeting(db, meeting_id, payload.qr_token, current_user)
+
+
+@router.post("/{meeting_id}/check-out", response_model=MeetingResponse)
+def check_out_meeting(
+    meeting_id: int,
+    payload: MeetingCheckOutRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.check_out_meeting(db, meeting_id, payload.qr_token, current_user)
+
+
 @router.get(
     "/",
     response_model=List[MeetingResponse],
@@ -11725,7 +12894,9 @@ def get_meetings(
     end_date: Optional[datetime] = Query(None, description="Lọc đến ngày"),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Meeting).filter(Meeting.status.notin_(["CANCELLED", "canceled"]))
+    query = db.query(Meeting).filter(
+        Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"])
+    )
 
     if room_id:
         query = query.filter(Meeting.room_id == room_id)
@@ -11763,7 +12934,11 @@ def get_my_meetings(
                 (Meeting.organizer_id == current_user.id)
                 | (MeetingParticipant.user_id == current_user.id)
             )
-            .filter(Meeting.status.notin_(["CANCELLED", "canceled", "cancelled"]))
+            .filter(
+                Meeting.status.notin_(
+                    ["CANCELLED", "canceled", "cancelled", "CANCELLED_NO_SHOW"]
+                )
+            )
             .distinct()
             .order_by(Meeting.start_time)
             .all()
@@ -11873,7 +13048,7 @@ def get_meeting_history(
         db.query(Meeting)
         .filter(
             Meeting.end_time < now,
-            Meeting.status.notin_(["CANCELLED", "canceled"]),
+            Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
             (
                 (Meeting.organizer_id == current_user.id)
                 | Meeting.id.in_(participant_meeting_ids)
@@ -11929,140 +13104,6 @@ def cancel_meeting_legacy(
     meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
     background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
     return meeting
-````
-
-## File: app/main.py
-````python
-from pathlib import Path
-from fastapi import FastAPI, Depends
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session, configure_mappers
-from sqlalchemy import inspect
-
-# 1. DB & Models
-from app.db.session import Base
-from app.core.database import engine, get_db
-from app.models.user import User
-from app.models.room import Room
-from app.models.meeting import Meeting
-from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
-from app.models.google_calendar_event import GoogleCalendarEvent
-
-# 2. Routers & Security
-from app.routers import auth, equipment, meetings, notifications, rooms, users
-from app.core.security import authenticate_user
-from app.routers.auth import issue_token
-from app.schemas.auth import LoginRequest
-from app.routers import auth, equipment, meetings, notifications, rooms, users
-from app.routers import reports
-# 3. Khởi tạo Mapper & Tạo bảng Database
-try:
-    configure_mappers()
-except Exception as e:
-    print(f"❌ Lỗi cấu hình ORM Models: {e}")
-
-from sqlalchemy import text
-
-Base.metadata.create_all(bind=engine)
-
-# Tự động cập nhật các cột mới nếu các bảng đã tồn tại từ schema cũ
-def _auto_migrate_schema():
-    try:
-        with engine.begin() as conn:
-            if engine.dialect.name == "mysql":
-                # 1. Kiểm tra bảng meetings
-                cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
-                if "meeting_type" not in cols_meetings:
-                    conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
-                    print("✅ Đã tự động thêm cột 'meeting_type' vào bảng meetings.")
-                if "online_link" not in cols_meetings:
-                    conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
-                    print("✅ Đã tự động thêm cột 'online_link' vào bảng meetings.")
-
-                # Cho phép room_id nhận giá trị NULL (cho cuộc họp trực tuyến)
-                room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
-                if room_id_col and room_id_col[2] == 'NO':
-                    col_type = room_id_col[1]
-                    conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
-                    print("✅ Đã cập nhật cột 'room_id' cho phép NULL.")
-
-                # 2. Kiểm tra bảng rooms
-                cols_rooms = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM rooms")).fetchall()]
-                if "amenities" not in cols_rooms:
-                    conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
-                    print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
-
-            if "meeting_participants" in inspect(conn).get_table_names():
-                participant_columns = {
-                    column["name"]
-                    for column in inspect(conn).get_columns("meeting_participants")
-                }
-                if "response_status" not in participant_columns:
-                    conn.execute(text(
-                        "ALTER TABLE meeting_participants "
-                        "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
-                    ))
-                    print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
-    except Exception as e:
-        print(f"⚠️ Thông báo cập nhật schema: {e}")
-
-_auto_migrate_schema()
-
-# 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
-app = FastAPI(title="Meeting Management System API", version="1.0.0")
-
-# 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 6. Cấu hình Static Files & Frontend
-BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "frontend"
-
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
-    assets_dir = FRONTEND_DIR / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
-
-# 7. Đăng ký API Routers với Prefix chuẩn
-app.include_router(auth.router, prefix="/api", tags=["auth"])
-app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
-app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
-app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
-app.include_router(notifications.router, prefix="/api", tags=["notifications"])
-app.include_router(users.router, prefix="/api", tags=["users"])
-app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
-# 8. Endpoints Đăng nhập & Root
-@app.post("/api/login", tags=["auth"])
-def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = authenticate_user(db, payload.username, payload.password)
-    token_response = issue_token(user)
-    return {
-        **token_response.model_dump(),
-        "user_name": token_response.full_name,
-    }
-
-@app.get("/", tags=["Root"])
-def read_root():
-    return {"status": "success", "message": "Meeting Management System API is running"}
-
-@app.get("/dashboard", tags=["Web UI"])
-def render_dashboard_page():
-    path = FRONTEND_DIR / "dashboard.html"
-    return FileResponse(path) if path.exists() else {"error": "Dashboard page not found"}
-
-@app.get("/app", tags=["Web UI"])
-def render_index_page():
-    path = FRONTEND_DIR / "index.html"
-    return FileResponse(path) if path.exists() else {"error": "Application page not found"}
 ````
 
 ## File: frontend/dashboard.html
@@ -12634,6 +13675,76 @@ def render_index_page():
         </div>
     </div>
 
+    <div id="qrCheckModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="qrCheckTitle">
+        <div class="modal-content">
+            <h3 id="qrCheckTitle">Quét mã QR phòng họp</h3>
+            <p id="qrCheckDescription" class="subtitle">Đưa mã QR phòng họp vào khung quét.</p>
+            <div id="qrReader" class="qr-reader"></div>
+            <label class="qr-manual-label" for="qrTokenInput">Hoặc nhập mã QR</label>
+            <input id="qrTokenInput" class="form-control" type="text" autocomplete="off"
+                placeholder="Mã QR phòng họp">
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQrCheckModal()">Đóng</button>
+                <button type="button" class="btn-primary" onclick="submitQrCheck()">Xác nhận</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrToast" class="qr-toast" role="status" aria-live="polite"></div>
+
+    <div id="roomQrModal" class="modal qr-display-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="roomQrName">
+        <div class="modal-content qr-display-card">
+            <div class="qr-display-heading">
+                <div>
+                    <p class="qr-display-eyebrow">MÃ QR PHÒNG HỌP</p>
+                    <h3 id="roomQrName">Phòng họp</h3>
+                    <p id="roomQrLocation" class="qr-display-subtitle"></p>
+                </div>
+                <div class="qr-header-actions">
+                    <button class="qr-icon-button" type="button" onclick="copyRoomQrToken()" title="Sao chép Token"
+                        aria-label="Sao chép Token">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="8" y="8" width="12" height="12" rx="2"></rect>
+                            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-icon-button" type="button" onclick="downloadRoomQrImage()" title="Tải ảnh QR"
+                        aria-label="Tải ảnh QR">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M12 3v12m0 0 4-4m-4 4-4-4"></path>
+                            <path d="M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-close-button" type="button" onclick="closeRoomQrModal()" title="Đóng"
+                        aria-label="Đóng">×</button>
+                </div>
+            </div>
+            <div id="roomQrImage" class="qr-image-frame qr-image-room"></div>
+        </div>
+    </div>
+
+    <div id="presenterQRModal" class="modal qr-presenter-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="presenterQRTitle">
+        <div class="qr-presenter-card">
+            <button class="qr-close-button qr-presenter-close" type="button" onclick="closePresenterQrModal()"
+                aria-label="Đóng">×</button>
+            <div class="qr-presenter-info">
+                <p class="qr-display-eyebrow">CHECK-IN CUỘC HỌP</p>
+                <h2 id="presenterQRTitle">Cuộc họp</h2>
+                <p id="presenterQRRoom" class="qr-presenter-room"></p>
+                <p id="presenterQRTime" class="qr-presenter-time"></p>
+            </div>
+            <div id="presenterQRImage" class="qr-image-frame qr-image-presenter"></div>
+            <p class="qr-presenter-hint">Mở camera điện thoại và quét mã để check-in</p>
+            <div class="qr-display-actions qr-presenter-actions">
+                <button id="presenterQRFullscreenButton" type="button" class="qr-secondary-button"
+                    onclick="togglePresenterQrFullscreen()">Phóng to / Fullscreen</button>
+                <button type="button" class="qr-primary-button" onclick="copyPresenterQrToken()">Sao chép Token</button>
+            </div>
+        </div>
+    </div>
+
     <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
     <div id="roomModal" class="modal" style="display: none;">
         <div class="modal-content">
@@ -12863,11 +13974,195 @@ def render_index_page():
         </section>
     </div>
 
-    <script src="js/app.js?v=12"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="js/app.js?v=15"></script>
     <script src="js/create-meeting.js?v=3"></script>
 </body>
 
 </html>
+````
+
+## File: app/main.py
+````python
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+from fastapi import FastAPI, Depends
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session, configure_mappers
+from sqlalchemy import inspect
+
+# 1. DB & Models
+from app.db.session import Base
+from app.core.database import engine, get_db, SessionLocal
+from app.models.user import User
+from app.models.room import Room
+from app.models.meeting import Meeting
+from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
+from app.models.google_calendar_event import GoogleCalendarEvent
+
+# 2. Routers & Security
+from app.routers import auth, equipment, meetings, notifications, rooms, users
+from app.core.security import authenticate_user
+from app.routers.auth import issue_token
+from app.schemas.auth import LoginRequest
+from app.routers import auth, equipment, meetings, notifications, rooms, users
+from app.routers import reports
+from app.services.scheduler import (
+    process_auto_checkouts,
+    process_meeting_reminders,
+    process_no_show_meetings,
+)
+# 3. Khởi tạo Mapper & Tạo bảng Database
+try:
+    configure_mappers()
+except Exception as e:
+    print(f"❌ Lỗi cấu hình ORM Models: {e}")
+
+from sqlalchemy import text
+
+Base.metadata.create_all(bind=engine)
+
+# Tự động cập nhật các cột mới nếu các bảng đã tồn tại từ schema cũ
+def _auto_migrate_schema():
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "mysql":
+                # 1. Kiểm tra bảng meetings
+                cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
+                if "meeting_type" not in cols_meetings:
+                    conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
+                    print("✅ Đã tự động thêm cột 'meeting_type' vào bảng meetings.")
+                if "online_link" not in cols_meetings:
+                    conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
+                    print("✅ Đã tự động thêm cột 'online_link' vào bảng meetings.")
+
+                # Cho phép room_id nhận giá trị NULL (cho cuộc họp trực tuyến)
+                room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
+                if room_id_col and room_id_col[2] == 'NO':
+                    col_type = room_id_col[1]
+                    conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
+                    print("✅ Đã cập nhật cột 'room_id' cho phép NULL.")
+
+                # 2. Kiểm tra bảng rooms
+                cols_rooms = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM rooms")).fetchall()]
+                if "amenities" not in cols_rooms:
+                    conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
+                    print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
+
+            if "meeting_participants" in inspect(conn).get_table_names():
+                participant_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("meeting_participants")
+                }
+                if "response_status" not in participant_columns:
+                    conn.execute(text(
+                        "ALTER TABLE meeting_participants "
+                        "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
+                    ))
+                    print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
+    except Exception as e:
+        print(f"⚠️ Thông báo cập nhật schema: {e}")
+
+_auto_migrate_schema()
+
+
+logger = logging.getLogger(__name__)
+
+
+def _run_meeting_scheduler_cycle() -> None:
+    for job in (
+        process_meeting_reminders,
+        process_no_show_meetings,
+        process_auto_checkouts,
+    ):
+        db = SessionLocal()
+        try:
+            job(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Meeting scheduler job failed: %s", job.__name__)
+        finally:
+            db.close()
+
+
+async def _meeting_scheduler_loop() -> None:
+    while True:
+        await asyncio.sleep(60)
+        await asyncio.to_thread(_run_meeting_scheduler_cycle)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
+    try:
+        yield
+    finally:
+        scheduler_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler_task
+
+
+# 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
+app = FastAPI(title="Meeting Management System API", version="1.0.0", lifespan=lifespan)
+
+# 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 6. Cấu hình Static Files & Frontend
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+    assets_dir = FRONTEND_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+# 7. Đăng ký API Routers với Prefix chuẩn
+app.include_router(auth.router, prefix="/api", tags=["auth"])
+app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
+app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
+# Versioned aliases for the QR check-in API.
+app.include_router(rooms.router, prefix="/api/v1/rooms", tags=["rooms-v1"])
+app.include_router(meetings.router, prefix="/api/v1/meetings", tags=["meetings-v1"])
+app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
+app.include_router(notifications.router, prefix="/api", tags=["notifications"])
+app.include_router(users.router, prefix="/api", tags=["users"])
+app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
+# 8. Endpoints Đăng nhập & Root
+@app.post("/api/login", tags=["auth"])
+def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):
+    user = authenticate_user(db, payload.username, payload.password)
+    token_response = issue_token(user)
+    return {
+        **token_response.model_dump(),
+        "user_name": token_response.full_name,
+    }
+
+@app.get("/", tags=["Root"])
+def read_root():
+    return {"status": "success", "message": "Meeting Management System API is running"}
+
+@app.get("/dashboard", tags=["Web UI"])
+def render_dashboard_page():
+    path = FRONTEND_DIR / "dashboard.html"
+    return FileResponse(path) if path.exists() else {"error": "Dashboard page not found"}
+
+@app.get("/app", tags=["Web UI"])
+def render_index_page():
+    path = FRONTEND_DIR / "index.html"
+    return FileResponse(path) if path.exists() else {"error": "Application page not found"}
 ````
 
 ## File: frontend/js/app.js
@@ -12875,7 +14170,7 @@ def render_index_page():
 /* ==========================================================================
    GLOBAL CONFIGURATION & STATE MANAGEMENT
    ========================================================================== */
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = window.API_URL || "http://localhost:8000/api";
 let allRooms = [];
 let myBookings = [];
 let bookingCalendarView = 'month';
@@ -12884,6 +14179,13 @@ let bookingSelectedDate = new Date();
 let selectedRoomId = null;
 let equipmentAvailabilityTimer = null;
 let googleCalendarOAuthError = null;
+let activeQrScanner = null;
+let activeQrMeetingId = null;
+let activeQrAction = null;
+let qrSubmissionInProgress = false;
+let qrToastTimer = null;
+let activeRoomQrToken = '';
+let activePresenterQrToken = '';
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -13523,16 +14825,30 @@ async function fetchRooms(isAdmin) {
 }
 
 function renderRooms(rooms, isAdmin) {
-    const gridOverview = document.getElementById('roomGridOverview');
     const gridRooms = document.getElementById('roomGridRooms');
-
+    renderDashboardRooms(rooms, isAdmin);
     if (!rooms || rooms.length === 0) {
-        const emptyHTML = '<p class="text-muted" style="padding: 16px;">Chưa có phòng họp nào trong hệ thống.</p>';
-        if (gridOverview) gridOverview.innerHTML = emptyHTML;
-        if (gridRooms) gridRooms.innerHTML = emptyHTML;
+        if (gridRooms) gridRooms.innerHTML = emptyRoomsMessage();
         return;
     }
+    if (gridRooms) gridRooms.innerHTML = buildRoomCards(rooms, isAdmin);
+}
 
+function renderDashboardRooms(rooms, isAdmin) {
+    const gridOverview = document.getElementById('roomGridOverview');
+    if (!gridOverview) return;
+    if (!rooms || rooms.length === 0) {
+        gridOverview.innerHTML = emptyRoomsMessage();
+        return;
+    }
+    gridOverview.innerHTML = buildRoomCards(rooms, isAdmin);
+}
+
+function emptyRoomsMessage() {
+    return '<p class="text-muted" style="padding: 16px;">Chưa có phòng họp nào trong hệ thống.</p>';
+}
+
+function buildRoomCards(rooms, isAdmin) {
     const htmlContent = rooms.map(room => {
         const isAvailable = room.is_available !== false && room.is_active !== false;
         const statusClass = isAvailable ? 'status-green' : 'status-red';
@@ -13562,7 +14878,12 @@ function renderRooms(rooms, isAdmin) {
             <div class="room-card">
                 <div class="card-image">
                     <img src="${room.image_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c'}" alt="${escapeHtml(room.name)}">
-                    <span class="status-badge ${statusClass}">${statusText}</span>
+                    <span class="status-badge ${statusClass} ${isAdmin ? 'has-qr-action' : ''}">${statusText}</span>
+                    ${isAdmin ? `<button class="room-qr-icon" type="button" onclick="openRoomQrModal(${room.id})" title="Xem mã QR phòng" aria-label="Xem mã QR phòng ${escapeHtml(room.name)}">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M3 3h8v8H3zM5.5 5.5v3h3v-3zM13 3h8v8h-8zM15.5 5.5v3h3v-3zM3 13h8v8H3zM5.5 15.5v3h3v-3zM13 13h3v3h-3zM18 13h3v3h-3zM13 18h3v3h-3zM18 18h3v3h-3z" />
+                        </svg>
+                    </button>` : ''}
                 </div>
                 <div class="card-body">
                     <h3>${escapeHtml(room.name)}</h3>
@@ -13579,9 +14900,7 @@ function renderRooms(rooms, isAdmin) {
             </div>
         `;
     }).join('');
-
-    if (gridOverview) gridOverview.innerHTML = htmlContent;
-    if (gridRooms) gridRooms.innerHTML = htmlContent;
+    return htmlContent;
 }
 
 function updateStats(rooms) {
@@ -13724,6 +15043,7 @@ function renderOrganizerBookings(meetings) {
             return `<div class="booking-guest ${response === 'accepted' ? '' : 'pending'}"><span>${escapeHtml(person.name || person.email || 'Người tham dự')}</span><span class="booking-guest-status ${response}">${response === 'accepted' ? '✓ ' : ''}${label}</span></div>`;
         }).join('') : '<div class="booking-guest pending">Chưa có người được mời.</div>';
         const cancel = `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`;
+        const qrActions = meetingPresenterQrAction(meeting);
         let joinLink = '';
         try {
             const url = new URL(String(meeting.meeting_link || meeting.online_link || ''));
@@ -13736,7 +15056,7 @@ function renderOrganizerBookings(meetings) {
         return `<article class="booking-list-card"><div class="booking-list-row">
             <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span></div>
             <div class="booking-list-time">${escapeHtml(time)}</div>
-            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${cancel}</div>
+            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${qrActions}${cancel}</div>
         </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
 }
@@ -13758,12 +15078,313 @@ function renderInvitedBookings(meetings) {
         const adminCancel = String(localStorage.getItem('role') || '').trim().toLowerCase() === 'admin'
             ? `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`
             : '';
+        const qrActions = meetingQrActions(meeting, response === 'accepted');
         return `<article class="booking-list-card"><div class="booking-list-row">
             <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span><span>Chủ trì: ${escapeHtml(meeting.organizer_name || 'Người tổ chức')}</span></div>
             <div class="booking-list-time">${escapeHtml(time)}<br>${escapeHtml(status)}</div>
-            <div class="booking-list-actions"><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'accepted')" ${response === 'accepted' ? 'disabled' : ''}>Xác nhận</button><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'declined')" ${response === 'declined' ? 'disabled' : ''}>Từ chối</button>${adminCancel}</div>
+            <div class="booking-list-actions"><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'accepted')" ${response === 'accepted' ? 'disabled' : ''}>Xác nhận</button><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'declined')" ${response === 'declined' ? 'disabled' : ''}>Từ chối</button>${qrActions}${adminCancel}</div>
         </div></article>`;
     }).join('');
+}
+
+function meetingQrActions(meeting, isEligible) {
+    if (!isEligible || !meeting.room_id || String(meeting.meeting_type || 'offline').toLowerCase() === 'online') return '';
+    const state = String(meeting.status || '').toUpperCase();
+    if (state === 'SCHEDULED') {
+        const start = bookingDate(meeting.start_time);
+        const now = Date.now();
+        if (!start || now < start.getTime() - 15 * 60 * 1000 || now > start.getTime() + 15 * 60 * 1000) return '';
+        return `<button class="booking-qr-button" type="button" onclick="openQrCheckModal(${meeting.id}, 'check-in')">Check-in QR</button>`;
+    }
+    if (state === 'IN_PROGRESS') {
+        return `<button class="booking-qr-button" type="button" onclick="openQrCheckModal(${meeting.id}, 'check-out')">Check-out QR</button>`;
+    }
+    return '';
+}
+
+function meetingPresenterQrAction(meeting) {
+    if (!meeting.room_id || String(meeting.meeting_type || 'offline').toLowerCase() === 'online') return '';
+    const state = String(meeting.status || '').toUpperCase();
+    if (!['SCHEDULED', 'IN_PROGRESS'].includes(state)) return '';
+    return `<button class="booking-qr-button" type="button" onclick="openPresenterQrModal(${meeting.id})"><span aria-hidden="true">▦</span> Mã QR Check-in</button>`;
+}
+
+function showQrToast(message, isError = false) {
+    const toast = document.getElementById('qrToast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.toggle('is-error', isError);
+    toast.classList.add('is-visible');
+    if (qrToastTimer) clearTimeout(qrToastTimer);
+    qrToastTimer = setTimeout(() => toast.classList.remove('is-visible'), 3500);
+}
+
+function buildQrCode(container, token, size) {
+    if (typeof QRCode === 'undefined') {
+        throw new Error('Không tải được thư viện tạo mã QR. Vui lòng tải lại trang.');
+    }
+    container.replaceChildren();
+    new QRCode(container, {
+        text: token,
+        width: size,
+        height: size,
+        colorDark: '#0f172a',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H,
+    });
+}
+
+async function fetchRoomQrToken(roomId, meetingId = null) {
+    const meetingQuery = meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : '';
+    const response = await fetch(`${API_BASE}/rooms/${roomId}/qr-code${meetingQuery}`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.detail || 'Không thể tải mã QR phòng họp.');
+    }
+    return result;
+}
+
+async function openRoomQrModal(roomId) {
+    const room = allRooms.find(item => item.id === roomId);
+    const modal = document.getElementById('roomQrModal');
+    const qrTarget = document.getElementById('roomQrImage');
+    if (!room || !modal || !qrTarget) return;
+
+    document.getElementById('roomQrName').textContent = room.name || 'Phòng họp';
+    document.getElementById('roomQrLocation').textContent = room.location || 'Chưa cập nhật vị trí';
+    qrTarget.replaceChildren();
+    modal.style.display = 'flex';
+    try {
+        const data = await fetchRoomQrToken(roomId);
+        activeRoomQrToken = data.qr_token;
+        buildQrCode(qrTarget, activeRoomQrToken, 320);
+    } catch (error) {
+        modal.style.display = 'none';
+        showQrToast(error.message || 'Không thể tải mã QR phòng.', true);
+    }
+}
+
+function closeRoomQrModal() {
+    const modal = document.getElementById('roomQrModal');
+    if (modal) modal.style.display = 'none';
+    activeRoomQrToken = '';
+}
+
+async function openPresenterQrModal(meetingId) {
+    const meeting = myBookings.find(item => item.id === meetingId);
+    const modal = document.getElementById('presenterQRModal');
+    const qrTarget = document.getElementById('presenterQRImage');
+    if (!meeting || !modal || !qrTarget) return;
+
+    document.getElementById('presenterQRTitle').textContent = meeting.title || 'Cuộc họp';
+    document.getElementById('presenterQRRoom').textContent = bookingRoomName(meeting);
+    const start = bookingDate(meeting.start_time);
+    const end = bookingDate(meeting.end_time);
+    document.getElementById('presenterQRTime').textContent = start && end
+        ? `${start.toLocaleDateString('vi-VN')} · ${bookingTime(start)} – ${bookingTime(end)}`
+        : 'Chưa có thời gian';
+    qrTarget.replaceChildren();
+    modal.style.display = 'flex';
+    try {
+        const data = await fetchRoomQrToken(meeting.room_id, meeting.id);
+        activePresenterQrToken = data.qr_token;
+        buildQrCode(qrTarget, activePresenterQrToken, 560);
+    } catch (error) {
+        modal.style.display = 'none';
+        showQrToast(error.message || 'Không thể tải mã QR check-in.', true);
+    }
+}
+
+async function closePresenterQrModal() {
+    const modal = document.getElementById('presenterQRModal');
+    if (document.fullscreenElement === modal) {
+        await document.exitFullscreen();
+    }
+    if (modal) modal.style.display = 'none';
+    activePresenterQrToken = '';
+}
+
+async function togglePresenterQrFullscreen() {
+    const modal = document.getElementById('presenterQRModal');
+    if (!modal) return;
+    try {
+        if (document.fullscreenElement === modal) {
+            await document.exitFullscreen();
+        } else {
+            await modal.requestFullscreen();
+        }
+    } catch (error) {
+        showQrToast('Trình duyệt không cho phép mở chế độ toàn màn hình.', true);
+    }
+}
+
+function syncPresenterFullscreenButton() {
+    const button = document.getElementById('presenterQRFullscreenButton');
+    const modal = document.getElementById('presenterQRModal');
+    if (button) {
+        button.textContent = document.fullscreenElement === modal ? 'Thoát toàn màn hình' : 'Phóng to / Fullscreen';
+    }
+}
+
+async function copyQrToken(token) {
+    if (!token) {
+        showQrToast('Không có mã QR để sao chép.', true);
+        return;
+    }
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(token);
+        } else {
+            const input = document.createElement('textarea');
+            input.value = token;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            input.remove();
+            if (!copied) throw new Error('Trình duyệt không thể sao chép mã QR.');
+        }
+        showQrToast('Đã sao chép token QR.');
+    } catch (error) {
+        showQrToast(error.message || 'Không thể sao chép token QR.', true);
+    }
+}
+
+function downloadQrImage(containerId, fileName) {
+    const canvas = document.querySelector(`#${containerId} canvas`);
+    if (!canvas) {
+        showQrToast('Ảnh QR chưa sẵn sàng để tải.', true);
+        return;
+    }
+    try {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = fileName;
+        link.click();
+        showQrToast('Đã tải ảnh QR PNG.');
+    } catch (error) {
+        showQrToast(error.message || 'Không thể tải ảnh QR.', true);
+    }
+}
+
+function copyRoomQrToken() {
+    return copyQrToken(activeRoomQrToken);
+}
+
+function downloadRoomQrImage() {
+    const roomName = document.getElementById('roomQrName')?.textContent || 'phong-hop';
+    const safeName = roomName.replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'phong-hop';
+    downloadQrImage('roomQrImage', `QR-${safeName}.png`);
+}
+
+function copyPresenterQrToken() {
+    return copyQrToken(activePresenterQrToken);
+}
+
+document.addEventListener('fullscreenchange', syncPresenterFullscreenButton);
+
+async function openQrCheckModal(meetingId, action) {
+    activeQrMeetingId = meetingId;
+    activeQrAction = action;
+    qrSubmissionInProgress = false;
+    const modal = document.getElementById('qrCheckModal');
+    const input = document.getElementById('qrTokenInput');
+    const description = document.getElementById('qrCheckDescription');
+    if (!modal || !input) return;
+    input.value = '';
+    if (description) {
+        description.textContent = action === 'check-in'
+            ? 'Quét mã QR của phòng họp để check-in.'
+            : 'Quét mã QR của phòng họp để check-out.';
+    }
+    modal.style.display = 'flex';
+    if (typeof Html5Qrcode === 'undefined') {
+        showQrToast('Không tải được trình quét QR. Bạn có thể nhập mã thủ công.', true);
+        return;
+    }
+    try {
+        activeQrScanner = new Html5Qrcode('qrReader');
+        await activeQrScanner.start(
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            async (decodedText) => {
+                input.value = decodedText;
+                await stopQrScanner();
+                await submitQrCheck();
+            },
+            () => {}
+        );
+    } catch (error) {
+        console.warn('Không thể khởi động camera quét QR:', error);
+        showQrToast('Không thể mở camera. Hãy nhập mã QR thủ công.', true);
+    }
+}
+
+async function stopQrScanner() {
+    if (!activeQrScanner) return;
+    const scanner = activeQrScanner;
+    activeQrScanner = null;
+    try {
+        if (scanner.isScanning) await scanner.stop();
+        scanner.clear();
+    } catch (error) {
+        console.warn('Không thể dừng trình quét QR:', error);
+    }
+}
+
+async function closeQrCheckModal() {
+    await stopQrScanner();
+    const modal = document.getElementById('qrCheckModal');
+    if (modal) modal.style.display = 'none';
+    activeQrMeetingId = null;
+    activeQrAction = null;
+    qrSubmissionInProgress = false;
+}
+
+async function submitQrCheck() {
+    if (qrSubmissionInProgress || !activeQrMeetingId || !activeQrAction) return;
+    const input = document.getElementById('qrTokenInput');
+    const scannedValue = (input?.value || '').trim();
+    if (!scannedValue) {
+        showQrToast('Vui lòng quét hoặc nhập mã QR phòng họp.', true);
+        return;
+    }
+    let qrToken = scannedValue;
+    try {
+        const parsed = JSON.parse(scannedValue);
+        qrToken = parsed.qr_token || scannedValue;
+    } catch (error) {
+        // QR labels generated by RoomSync contain the token as plain text.
+    }
+    qrSubmissionInProgress = true;
+    try {
+        const response = await fetch(
+            `${API_BASE}/v1/meetings/${activeQrMeetingId}/${activeQrAction}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${getAuthToken()}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ qr_token: qrToken }),
+            }
+        );
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || 'Không thể cập nhật trạng thái check-in.');
+        const successMessage = activeQrAction === 'check-in'
+            ? 'Check-in thành công.'
+            : 'Check-out thành công.';
+        await closeQrCheckModal();
+        showQrToast(successMessage);
+        await fetchMyBookings();
+    } catch (error) {
+        qrSubmissionInProgress = false;
+        showQrToast(error.message || 'Không thể gửi mã QR.', true);
+    }
 }
 
 function toggleBookingGuests(meetingId, button) {
@@ -14365,6 +15986,17 @@ window.scrollToRooms = scrollToRooms;
 window.toggleNotificationPopup = toggleNotificationPopup;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
+window.openQrCheckModal = openQrCheckModal;
+window.closeQrCheckModal = closeQrCheckModal;
+window.submitQrCheck = submitQrCheck;
+window.openRoomQrModal = openRoomQrModal;
+window.closeRoomQrModal = closeRoomQrModal;
+window.copyRoomQrToken = copyRoomQrToken;
+window.downloadRoomQrImage = downloadRoomQrImage;
+window.openPresenterQrModal = openPresenterQrModal;
+window.closePresenterQrModal = closePresenterQrModal;
+window.togglePresenterQrFullscreen = togglePresenterQrFullscreen;
+window.copyPresenterQrToken = copyPresenterQrToken;
 window.cancelBooking = cancelBooking;
 window.handleSearch = handleSearch;
 window.filterToday = filterToday;

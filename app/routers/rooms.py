@@ -1,19 +1,55 @@
 import json
 from datetime import datetime
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 
 from app.core.database import get_db
-from app.core.security import require_role
+from app.core.security import get_current_user, require_role
 from app.models.room import Room
 from app.models.meeting import Meeting
-from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse
+from app.models.user import User
+from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse, RoomQRResponse
 from app.services import room_service
 # Khởi tạo APIRouter (KHÔNG thêm prefix ở đây vì đã có prefix="/api/rooms" ở main.py)
 router = APIRouter()
+
+
+@router.get("/{room_id}/qr-code", response_model=RoomQRResponse, summary="Lấy mã QR phòng họp")
+def get_room_qr_code(
+    room_id: int,
+    meeting_id: Optional[int] = Query(None, description="Cuộc họp do người tổ chức hiện tại chủ trì"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    role = str(current_user.role or "").strip().casefold()
+    room = db.query(Room).filter(Room.id == room_id).first()
+    if room is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng họp")
+    if role not in {"admin", "manager"}:
+        if meeting_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Chỉ Admin, Manager hoặc chủ trì cuộc họp mới được lấy mã QR phòng.",
+            )
+        meeting = db.query(Meeting).filter(
+            Meeting.id == meeting_id,
+            Meeting.room_id == room_id,
+            Meeting.organizer_id == current_user.id,
+            func.upper(Meeting.status).in_(["SCHEDULED", "IN_PROGRESS"]),
+        ).first()
+        if meeting is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Bạn không có quyền lấy mã QR cho cuộc họp này.",
+            )
+    if not room.qr_token:
+        room.generate_qr_token()
+        db.commit()
+        db.refresh(room)
+    return RoomQRResponse(room_id=room.id, room_name=room.name, qr_token=room.qr_token)
 
 # GET /api/rooms/: Lấy danh sách tất cả phòng
 @router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
@@ -38,7 +74,10 @@ def get_available_rooms(
 
     # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
     busy_rooms_query = db.query(Meeting.room_id).filter(
-        Meeting.status.notin_(["CANCELLED", "canceled"]),
+        func.upper(Meeting.status).notin_(
+            ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+        ),
+        Meeting.check_out_time.is_(None),
         and_(
             Meeting.start_time < end_time,
             Meeting.end_time > start_time

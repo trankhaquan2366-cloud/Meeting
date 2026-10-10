@@ -252,7 +252,7 @@ def sync_user_meetings_to_google(user_id: int) -> None:
             .filter(
                 (Meeting.organizer_id == user_id)
                 | (MeetingParticipant.user_id == user_id),
-                Meeting.status.notin_(["CANCELLED", "canceled"]),
+                Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
             )
             .distinct()
             .order_by(Meeting.start_time)

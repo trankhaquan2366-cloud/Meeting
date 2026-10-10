@@ -1,3 +1,6 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from fastapi import FastAPI, Depends
 from fastapi.responses import FileResponse
@@ -8,20 +11,26 @@ from sqlalchemy import inspect
 
 # 1. DB & Models
 from app.db.session import Base
-from app.core.database import engine, get_db
+from app.core.database import engine, get_db, SessionLocal
 from app.models.user import User
+from app.models.department import Department
 from app.models.room import Room
 from app.models.meeting import Meeting
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
 from app.models.google_calendar_event import GoogleCalendarEvent
 
 # 2. Routers & Security
-from app.routers import auth, equipment, meetings, notifications, rooms, users
+from app.routers import admin_analytics, auth, equipment, meetings, notifications, rooms, users
 from app.core.security import authenticate_user
 from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
 from app.routers import auth, equipment, meetings, notifications, rooms, users
 from app.routers import reports
+from app.services.scheduler import (
+    process_auto_checkouts,
+    process_meeting_reminders,
+    process_no_show_meetings,
+)
 # 3. Khởi tạo Mapper & Tạo bảng Database
 try:
     configure_mappers()
@@ -75,8 +84,45 @@ def _auto_migrate_schema():
 
 _auto_migrate_schema()
 
+
+logger = logging.getLogger(__name__)
+
+
+def _run_meeting_scheduler_cycle() -> None:
+    for job in (
+        process_meeting_reminders,
+        process_no_show_meetings,
+        process_auto_checkouts,
+    ):
+        db = SessionLocal()
+        try:
+            job(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Meeting scheduler job failed: %s", job.__name__)
+        finally:
+            db.close()
+
+
+async def _meeting_scheduler_loop() -> None:
+    while True:
+        await asyncio.sleep(60)
+        await asyncio.to_thread(_run_meeting_scheduler_cycle)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
+    try:
+        yield
+    finally:
+        scheduler_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler_task
+
+
 # 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
-app = FastAPI(title="Meeting Management System API", version="1.0.0")
+app = FastAPI(title="Meeting Management System API", version="1.0.0", lifespan=lifespan)
 
 # 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
 app.add_middleware(
@@ -101,6 +147,14 @@ if FRONTEND_DIR.exists():
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
 app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
+# Versioned aliases for the QR check-in API.
+app.include_router(rooms.router, prefix="/api/v1/rooms", tags=["rooms-v1"])
+app.include_router(meetings.router, prefix="/api/v1/meetings", tags=["meetings-v1"])
+app.include_router(
+    admin_analytics.router,
+    prefix="/api/v1/admin/analytics",
+    tags=["admin-analytics"],
+)
 app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
 app.include_router(notifications.router, prefix="/api", tags=["notifications"])
 app.include_router(users.router, prefix="/api", tags=["users"])

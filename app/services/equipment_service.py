@@ -22,7 +22,9 @@ def get_equipment_availability(
         )
         .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
         .filter(
-            func.upper(Meeting.status) != "CANCELLED",
+            func.upper(Meeting.status).notin_(
+                ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+            ),
             Meeting.start_time < end_time,
             Meeting.end_time > start_time,
         )
@@ -91,7 +93,9 @@ def check_equipment_availability(
             .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
             .filter(
                 MeetingEquipment.equipment_id == item.equipment_id,
-                Meeting.status != "CANCELLED",  # Bỏ qua cuộc họp đã hủy
+                func.upper(Meeting.status).notin_(
+                    ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+                ),
                 Meeting.start_time < end_time,
                 Meeting.end_time > start_time
             )

@@ -54,3 +54,9 @@ class RoomResponse(RoomBase):
 
     class Config:
         from_attributes = True
+
+
+class RoomQRResponse(BaseModel):
+    room_id: int
+    room_name: str
+    qr_token: str

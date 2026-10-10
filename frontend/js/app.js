@@ -10,6 +10,14 @@ let bookingSelectedDate = new Date();
 let selectedRoomId = null;
 let equipmentAvailabilityTimer = null;
 let googleCalendarOAuthError = null;
+let activeQrScanner = null;
+let activeQrMeetingId = null;
+let activeQrAction = null;
+let qrSubmissionInProgress = false;
+let qrToastTimer = null;
+let activeRoomQrToken = '';
+let activePresenterQrToken = '';
+let pendingCancelMeetingId = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -108,17 +116,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         const btn2 = document.getElementById('addRoomBtnRooms');
         const addEqBtn = document.getElementById('addEquipmentBtn');
         const adminEqSection = document.getElementById('adminEquipmentSection');
+        const cancellationNav = document.getElementById('navCancellationAnalytics');
         if (btn1) btn1.style.display = 'block';
         if (btn2) btn2.style.display = 'block';
         if (addEqBtn) addEqBtn.style.display = 'block';
         if (adminEqSection) adminEqSection.style.display = 'block';
+        if (cancellationNav) cancellationNav.style.display = 'flex';
     } else {
         const navReport = document.getElementById('navReport');
+        const cancellationNav = document.getElementById('navCancellationAnalytics');
         if (navReport) navReport.style.display = 'none';
+        if (cancellationNav) cancellationNav.style.display = 'none';
     }
 
     // Tải dữ liệu ban đầu
-    fetchRooms(isAdmin).then(fetchMyBookings);
+    fetchRooms(isAdmin).then(() => {
+        fetchMyBookings();
+        if (isAdmin) populateCancellationRoomFilter();
+    });
     setDefaultEquipmentAvailabilityTimes();
     if (isAdmin) {
         fetchAdminEquipments();
@@ -132,6 +147,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         reportEnd.value = now.toISOString().slice(0, 16);
         reportStart.value = thirtyDaysAgo.toISOString().slice(0, 16);
         loadRoomsForReportFilter();
+    }
+    const cancellationStartDate = document.getElementById('cancellationStartDate');
+    const cancellationEndDate = document.getElementById('cancellationEndDate');
+    if (cancellationStartDate && cancellationEndDate) {
+        const localDateValue = value => {
+            const year = value.getFullYear();
+            const month = String(value.getMonth() + 1).padStart(2, '0');
+            const day = String(value.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+        const monthStart = localDateValue(new Date(now.getFullYear(), now.getMonth(), 1));
+        const todayValue = localDateValue(now);
+        cancellationStartDate.value = monthStart;
+        cancellationEndDate.value = todayValue;
+        const executiveStartDate = document.getElementById('executiveStartDate');
+        const executiveEndDate = document.getElementById('executiveEndDate');
+        if (executiveStartDate) executiveStartDate.value = monthStart;
+        if (executiveEndDate) executiveEndDate.value = todayValue;
     }
 
     const callbackQuery = new URLSearchParams(window.location.search);
@@ -193,6 +226,12 @@ function switchMainTab(tabName, el) {
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         fetchRoomUsageReport();
+    } else if (tabName === 'cancellations') {
+        if (String(localStorage.getItem('role') || '').trim().toLowerCase() !== 'admin') return;
+        const view = document.getElementById('viewCancellationAnalytics');
+        if (view) view.style.display = 'block';
+        if (searchContainer) searchContainer.style.display = 'none';
+        fetchCancellationAnalytics();
     } else if (tabName === 'settings') {
         const view = document.getElementById('viewSettings');
         if (view) view.style.display = 'block';
@@ -649,16 +688,30 @@ async function fetchRooms(isAdmin) {
 }
 
 function renderRooms(rooms, isAdmin) {
-    const gridOverview = document.getElementById('roomGridOverview');
     const gridRooms = document.getElementById('roomGridRooms');
-
+    renderDashboardRooms(rooms, isAdmin);
     if (!rooms || rooms.length === 0) {
-        const emptyHTML = '<p class="text-muted" style="padding: 16px;">Chưa có phòng họp nào trong hệ thống.</p>';
-        if (gridOverview) gridOverview.innerHTML = emptyHTML;
-        if (gridRooms) gridRooms.innerHTML = emptyHTML;
+        if (gridRooms) gridRooms.innerHTML = emptyRoomsMessage();
         return;
     }
+    if (gridRooms) gridRooms.innerHTML = buildRoomCards(rooms, isAdmin);
+}
 
+function renderDashboardRooms(rooms, isAdmin) {
+    const gridOverview = document.getElementById('roomGridOverview');
+    if (!gridOverview) return;
+    if (!rooms || rooms.length === 0) {
+        gridOverview.innerHTML = emptyRoomsMessage();
+        return;
+    }
+    gridOverview.innerHTML = buildRoomCards(rooms, isAdmin);
+}
+
+function emptyRoomsMessage() {
+    return '<p class="text-muted" style="padding: 16px;">Chưa có phòng họp nào trong hệ thống.</p>';
+}
+
+function buildRoomCards(rooms, isAdmin) {
     const htmlContent = rooms.map(room => {
         const isAvailable = room.is_available !== false && room.is_active !== false;
         const statusClass = isAvailable ? 'status-green' : 'status-red';
@@ -688,7 +741,12 @@ function renderRooms(rooms, isAdmin) {
             <div class="room-card">
                 <div class="card-image">
                     <img src="${room.image_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c'}" alt="${escapeHtml(room.name)}">
-                    <span class="status-badge ${statusClass}">${statusText}</span>
+                    <span class="status-badge ${statusClass} ${isAdmin ? 'has-qr-action' : ''}">${statusText}</span>
+                    ${isAdmin ? `<button class="room-qr-icon" type="button" onclick="openRoomQrModal(${room.id})" title="Xem mã QR phòng" aria-label="Xem mã QR phòng ${escapeHtml(room.name)}">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M3 3h8v8H3zM5.5 5.5v3h3v-3zM13 3h8v8h-8zM15.5 5.5v3h3v-3zM3 13h8v8H3zM5.5 15.5v3h3v-3zM13 13h3v3h-3zM18 13h3v3h-3zM13 18h3v3h-3zM18 18h3v3h-3z" />
+                        </svg>
+                    </button>` : ''}
                 </div>
                 <div class="card-body">
                     <h3>${escapeHtml(room.name)}</h3>
@@ -705,9 +763,7 @@ function renderRooms(rooms, isAdmin) {
             </div>
         `;
     }).join('');
-
-    if (gridOverview) gridOverview.innerHTML = htmlContent;
-    if (gridRooms) gridRooms.innerHTML = htmlContent;
+    return htmlContent;
 }
 
 function updateStats(rooms) {
@@ -770,22 +826,49 @@ function closeScheduleModal() {
 /* ==========================================================================
    MY BOOKINGS MANAGEMENT
    ========================================================================== */
-async function cancelBooking(meetingId) {
-    if (!confirm('Bạn có chắc chắn muốn hủy lịch họp này?')) return;
+function cancelBooking(meetingId) {
+    pendingCancelMeetingId = meetingId;
+    const reasonInput = document.getElementById('cancellationReasonInput');
+    const modal = document.getElementById('cancelMeetingModal');
+    if (reasonInput) reasonInput.value = '';
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeCancelMeetingModal() {
+    const modal = document.getElementById('cancelMeetingModal');
+    if (modal) modal.style.display = 'none';
+    pendingCancelMeetingId = null;
+}
+
+async function submitCancelBooking() {
+    if (pendingCancelMeetingId === null) return;
+    const meetingId = pendingCancelMeetingId;
+    const reasonInput = document.getElementById('cancellationReasonInput');
+    const submitButton = document.querySelector('.cancellation-confirm-button');
+    if (submitButton) submitButton.disabled = true;
     try {
-        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': 'Bearer ' + getAuthToken() }
+        const res = await fetch(`${API_BASE}/meetings/${meetingId}/cancel`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': 'Bearer ' + getAuthToken(),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                cancellation_reason: reasonInput ? reasonInput.value.trim() || null : null,
+            }),
         });
         if (!res.ok) {
             const err = await res.json();
             throw new Error(err.detail || 'Không thể hủy lịch họp!');
         }
+        closeCancelMeetingModal();
         alert('Đã hủy lịch họp!');
         await fetchMyBookings();
         fetchRooms(localStorage.getItem('role') === 'admin');
     } catch (err) {
-        alert(`Lỗi: ${err.message}`);
+        alert(`Lỗi: ${err.message || 'Không thể hủy lịch họp.'}`);
+    } finally {
+        if (submitButton) submitButton.disabled = false;
     }
 }
 async function fetchMyBookings() {
@@ -850,6 +933,7 @@ function renderOrganizerBookings(meetings) {
             return `<div class="booking-guest ${response === 'accepted' ? '' : 'pending'}"><span>${escapeHtml(person.name || person.email || 'Người tham dự')}</span><span class="booking-guest-status ${response}">${response === 'accepted' ? '✓ ' : ''}${label}</span></div>`;
         }).join('') : '<div class="booking-guest pending">Chưa có người được mời.</div>';
         const cancel = `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`;
+        const qrActions = meetingPresenterQrAction(meeting);
         let joinLink = '';
         try {
             const url = new URL(String(meeting.meeting_link || meeting.online_link || ''));
@@ -862,7 +946,7 @@ function renderOrganizerBookings(meetings) {
         return `<article class="booking-list-card"><div class="booking-list-row">
             <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span></div>
             <div class="booking-list-time">${escapeHtml(time)}</div>
-            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${cancel}</div>
+            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${qrActions}${cancel}</div>
         </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
 }
@@ -884,12 +968,313 @@ function renderInvitedBookings(meetings) {
         const adminCancel = String(localStorage.getItem('role') || '').trim().toLowerCase() === 'admin'
             ? `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`
             : '';
+        const qrActions = meetingQrActions(meeting, response === 'accepted');
         return `<article class="booking-list-card"><div class="booking-list-row">
             <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span><span>Chủ trì: ${escapeHtml(meeting.organizer_name || 'Người tổ chức')}</span></div>
             <div class="booking-list-time">${escapeHtml(time)}<br>${escapeHtml(status)}</div>
-            <div class="booking-list-actions"><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'accepted')" ${response === 'accepted' ? 'disabled' : ''}>Xác nhận</button><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'declined')" ${response === 'declined' ? 'disabled' : ''}>Từ chối</button>${adminCancel}</div>
+            <div class="booking-list-actions"><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'accepted')" ${response === 'accepted' ? 'disabled' : ''}>Xác nhận</button><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'declined')" ${response === 'declined' ? 'disabled' : ''}>Từ chối</button>${qrActions}${adminCancel}</div>
         </div></article>`;
     }).join('');
+}
+
+function meetingQrActions(meeting, isEligible) {
+    if (!isEligible || !meeting.room_id || String(meeting.meeting_type || 'offline').toLowerCase() === 'online') return '';
+    const state = String(meeting.status || '').toUpperCase();
+    if (state === 'SCHEDULED') {
+        const start = bookingDate(meeting.start_time);
+        const now = Date.now();
+        if (!start || now < start.getTime() - 15 * 60 * 1000 || now > start.getTime() + 15 * 60 * 1000) return '';
+        return `<button class="booking-qr-button" type="button" onclick="openQrCheckModal(${meeting.id}, 'check-in')">Check-in QR</button>`;
+    }
+    if (state === 'IN_PROGRESS') {
+        return `<button class="booking-qr-button" type="button" onclick="openQrCheckModal(${meeting.id}, 'check-out')">Check-out QR</button>`;
+    }
+    return '';
+}
+
+function meetingPresenterQrAction(meeting) {
+    if (!meeting.room_id || String(meeting.meeting_type || 'offline').toLowerCase() === 'online') return '';
+    const state = String(meeting.status || '').toUpperCase();
+    if (!['SCHEDULED', 'IN_PROGRESS'].includes(state)) return '';
+    return `<button class="booking-qr-button" type="button" onclick="openPresenterQrModal(${meeting.id})"><span aria-hidden="true">▦</span> Mã QR Check-in</button>`;
+}
+
+function showQrToast(message, isError = false) {
+    const toast = document.getElementById('qrToast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.toggle('is-error', isError);
+    toast.classList.add('is-visible');
+    if (qrToastTimer) clearTimeout(qrToastTimer);
+    qrToastTimer = setTimeout(() => toast.classList.remove('is-visible'), 3500);
+}
+
+function buildQrCode(container, token, size) {
+    if (typeof QRCode === 'undefined') {
+        throw new Error('Không tải được thư viện tạo mã QR. Vui lòng tải lại trang.');
+    }
+    container.replaceChildren();
+    new QRCode(container, {
+        text: token,
+        width: size,
+        height: size,
+        colorDark: '#0f172a',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H,
+    });
+}
+
+async function fetchRoomQrToken(roomId, meetingId = null) {
+    const meetingQuery = meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : '';
+    const response = await fetch(`${API_BASE}/rooms/${roomId}/qr-code${meetingQuery}`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.detail || 'Không thể tải mã QR phòng họp.');
+    }
+    return result;
+}
+
+async function openRoomQrModal(roomId) {
+    const room = allRooms.find(item => item.id === roomId);
+    const modal = document.getElementById('roomQrModal');
+    const qrTarget = document.getElementById('roomQrImage');
+    if (!room || !modal || !qrTarget) return;
+
+    document.getElementById('roomQrName').textContent = room.name || 'Phòng họp';
+    document.getElementById('roomQrLocation').textContent = room.location || 'Chưa cập nhật vị trí';
+    qrTarget.replaceChildren();
+    modal.style.display = 'flex';
+    try {
+        const data = await fetchRoomQrToken(roomId);
+        activeRoomQrToken = data.qr_token;
+        buildQrCode(qrTarget, activeRoomQrToken, 320);
+    } catch (error) {
+        modal.style.display = 'none';
+        showQrToast(error.message || 'Không thể tải mã QR phòng.', true);
+    }
+}
+
+function closeRoomQrModal() {
+    const modal = document.getElementById('roomQrModal');
+    if (modal) modal.style.display = 'none';
+    activeRoomQrToken = '';
+}
+
+async function openPresenterQrModal(meetingId) {
+    const meeting = myBookings.find(item => item.id === meetingId);
+    const modal = document.getElementById('presenterQRModal');
+    const qrTarget = document.getElementById('presenterQRImage');
+    if (!meeting || !modal || !qrTarget) return;
+
+    document.getElementById('presenterQRTitle').textContent = meeting.title || 'Cuộc họp';
+    document.getElementById('presenterQRRoom').textContent = bookingRoomName(meeting);
+    const start = bookingDate(meeting.start_time);
+    const end = bookingDate(meeting.end_time);
+    document.getElementById('presenterQRTime').textContent = start && end
+        ? `${start.toLocaleDateString('vi-VN')} · ${bookingTime(start)} – ${bookingTime(end)}`
+        : 'Chưa có thời gian';
+    qrTarget.replaceChildren();
+    modal.style.display = 'flex';
+    try {
+        const data = await fetchRoomQrToken(meeting.room_id, meeting.id);
+        activePresenterQrToken = data.qr_token;
+        buildQrCode(qrTarget, activePresenterQrToken, 560);
+    } catch (error) {
+        modal.style.display = 'none';
+        showQrToast(error.message || 'Không thể tải mã QR check-in.', true);
+    }
+}
+
+async function closePresenterQrModal() {
+    const modal = document.getElementById('presenterQRModal');
+    if (document.fullscreenElement === modal) {
+        await document.exitFullscreen();
+    }
+    if (modal) modal.style.display = 'none';
+    activePresenterQrToken = '';
+}
+
+async function togglePresenterQrFullscreen() {
+    const modal = document.getElementById('presenterQRModal');
+    if (!modal) return;
+    try {
+        if (document.fullscreenElement === modal) {
+            await document.exitFullscreen();
+        } else {
+            await modal.requestFullscreen();
+        }
+    } catch (error) {
+        showQrToast('Trình duyệt không cho phép mở chế độ toàn màn hình.', true);
+    }
+}
+
+function syncPresenterFullscreenButton() {
+    const button = document.getElementById('presenterQRFullscreenButton');
+    const modal = document.getElementById('presenterQRModal');
+    if (button) {
+        button.textContent = document.fullscreenElement === modal ? 'Thoát toàn màn hình' : 'Phóng to / Fullscreen';
+    }
+}
+
+async function copyQrToken(token) {
+    if (!token) {
+        showQrToast('Không có mã QR để sao chép.', true);
+        return;
+    }
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(token);
+        } else {
+            const input = document.createElement('textarea');
+            input.value = token;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            input.remove();
+            if (!copied) throw new Error('Trình duyệt không thể sao chép mã QR.');
+        }
+        showQrToast('Đã sao chép token QR.');
+    } catch (error) {
+        showQrToast(error.message || 'Không thể sao chép token QR.', true);
+    }
+}
+
+function downloadQrImage(containerId, fileName) {
+    const canvas = document.querySelector(`#${containerId} canvas`);
+    if (!canvas) {
+        showQrToast('Ảnh QR chưa sẵn sàng để tải.', true);
+        return;
+    }
+    try {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = fileName;
+        link.click();
+        showQrToast('Đã tải ảnh QR PNG.');
+    } catch (error) {
+        showQrToast(error.message || 'Không thể tải ảnh QR.', true);
+    }
+}
+
+function copyRoomQrToken() {
+    return copyQrToken(activeRoomQrToken);
+}
+
+function downloadRoomQrImage() {
+    const roomName = document.getElementById('roomQrName')?.textContent || 'phong-hop';
+    const safeName = roomName.replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'phong-hop';
+    downloadQrImage('roomQrImage', `QR-${safeName}.png`);
+}
+
+function copyPresenterQrToken() {
+    return copyQrToken(activePresenterQrToken);
+}
+
+document.addEventListener('fullscreenchange', syncPresenterFullscreenButton);
+
+async function openQrCheckModal(meetingId, action) {
+    activeQrMeetingId = meetingId;
+    activeQrAction = action;
+    qrSubmissionInProgress = false;
+    const modal = document.getElementById('qrCheckModal');
+    const input = document.getElementById('qrTokenInput');
+    const description = document.getElementById('qrCheckDescription');
+    if (!modal || !input) return;
+    input.value = '';
+    if (description) {
+        description.textContent = action === 'check-in'
+            ? 'Quét mã QR của phòng họp để check-in.'
+            : 'Quét mã QR của phòng họp để check-out.';
+    }
+    modal.style.display = 'flex';
+    if (typeof Html5Qrcode === 'undefined') {
+        showQrToast('Không tải được trình quét QR. Bạn có thể nhập mã thủ công.', true);
+        return;
+    }
+    try {
+        activeQrScanner = new Html5Qrcode('qrReader');
+        await activeQrScanner.start(
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            async (decodedText) => {
+                input.value = decodedText;
+                await stopQrScanner();
+                await submitQrCheck();
+            },
+            () => {}
+        );
+    } catch (error) {
+        console.warn('Không thể khởi động camera quét QR:', error);
+        showQrToast('Không thể mở camera. Hãy nhập mã QR thủ công.', true);
+    }
+}
+
+async function stopQrScanner() {
+    if (!activeQrScanner) return;
+    const scanner = activeQrScanner;
+    activeQrScanner = null;
+    try {
+        if (scanner.isScanning) await scanner.stop();
+        scanner.clear();
+    } catch (error) {
+        console.warn('Không thể dừng trình quét QR:', error);
+    }
+}
+
+async function closeQrCheckModal() {
+    await stopQrScanner();
+    const modal = document.getElementById('qrCheckModal');
+    if (modal) modal.style.display = 'none';
+    activeQrMeetingId = null;
+    activeQrAction = null;
+    qrSubmissionInProgress = false;
+}
+
+async function submitQrCheck() {
+    if (qrSubmissionInProgress || !activeQrMeetingId || !activeQrAction) return;
+    const input = document.getElementById('qrTokenInput');
+    const scannedValue = (input?.value || '').trim();
+    if (!scannedValue) {
+        showQrToast('Vui lòng quét hoặc nhập mã QR phòng họp.', true);
+        return;
+    }
+    let qrToken = scannedValue;
+    try {
+        const parsed = JSON.parse(scannedValue);
+        qrToken = parsed.qr_token || scannedValue;
+    } catch (error) {
+        // QR labels generated by RoomSync contain the token as plain text.
+    }
+    qrSubmissionInProgress = true;
+    try {
+        const response = await fetch(
+            `${API_BASE}/v1/meetings/${activeQrMeetingId}/${activeQrAction}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${getAuthToken()}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ qr_token: qrToken }),
+            }
+        );
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || 'Không thể cập nhật trạng thái check-in.');
+        const successMessage = activeQrAction === 'check-in'
+            ? 'Check-in thành công.'
+            : 'Check-out thành công.';
+        await closeQrCheckModal();
+        showQrToast(successMessage);
+        await fetchMyBookings();
+    } catch (error) {
+        qrSubmissionInProgress = false;
+        showQrToast(error.message || 'Không thể gửi mã QR.', true);
+    }
 }
 
 function toggleBookingGuests(meetingId, button) {
@@ -1480,9 +1865,229 @@ function renderReportDataToDashboard(data) {
     });
 }
 
-/* ==========================================================================
-   GLOBAL EXPORTS (GẮN VÀO WINDOW CHO EVENT HANDLER)
-   ========================================================================== */
+function populateCancellationRoomFilter() {
+    const select = document.getElementById('cancellationRoomId');
+    if (!select) return;
+    const selectedRoomId = select.value;
+    select.replaceChildren(new Option('Tất cả phòng', ''));
+    allRooms.forEach(room => {
+        select.add(new Option(room.name, String(room.id)));
+    });
+    if (selectedRoomId) select.value = selectedRoomId;
+}
+
+async function fetchCancellationAnalytics(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const msgDiv = document.getElementById('cancellationAnalyticsMessage');
+    const button = document.getElementById('btnFilterCancellation');
+    const startDate = document.getElementById('cancellationStartDate')?.value;
+    const endDate = document.getElementById('cancellationEndDate')?.value;
+    const roomId = document.getElementById('cancellationRoomId')?.value;
+    msgDiv?.classList.add('hidden');
+    if (msgDiv) msgDiv.textContent = '';
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Đang tải...';
+    }
+
+    const params = new URLSearchParams();
+    if (startDate) params.set('start_date', startDate.slice(0, 10));
+    if (endDate) params.set('end_date', endDate.slice(0, 10));
+    if (roomId) params.set('room_id', roomId);
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/v1/admin/analytics/cancellations?${params.toString()}`,
+            { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
+        );
+        if (!response.ok) {
+            let detail = response.statusText;
+            try {
+                const error = await response.json();
+                detail = error?.detail || error?.message || detail;
+            } catch {
+                // Fall back to the HTTP status text when the error response is not JSON.
+            }
+            throw new Error(`Lỗi server (${response.status}): ${detail || 'Không rõ lỗi'}`);
+        }
+        const data = await response.json();
+        renderCancellationAnalytics(data);
+    } catch (err) {
+        console.error('Cancellation Analytics Error:', err);
+        if (msgDiv) {
+            msgDiv.textContent = `Lỗi tải thống kê: ${err instanceof Error ? err.message : String(err)}`;
+            msgDiv.classList.remove('hidden');
+        }
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Xem thống kê';
+        }
+    }
+}
+
+async function exportCancellationAnalytics(format) {
+    const msgDiv = document.getElementById('cancellationAnalyticsMessage');
+    msgDiv?.classList.add('hidden');
+    if (msgDiv) msgDiv.textContent = '';
+
+    const params = new URLSearchParams({ format });
+    const startDate = document.getElementById('cancellationStartDate')?.value;
+    const endDate = document.getElementById('cancellationEndDate')?.value;
+    const roomId = document.getElementById('cancellationRoomId')?.value;
+    if (startDate) params.set('start_date', startDate.slice(0, 10));
+    if (endDate) params.set('end_date', endDate.slice(0, 10));
+    if (roomId) params.set('room_id', roomId);
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/v1/admin/analytics/cancellations/export?${params.toString()}`,
+            { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
+        );
+        if (!response.ok) {
+            let detail = response.statusText;
+            try {
+                const error = await response.json();
+                detail = error?.detail || error?.message || detail;
+            } catch {
+                // Use the HTTP status text if the error body is not JSON.
+            }
+            throw new Error(`Lỗi server (${response.status}): ${detail || 'Không rõ lỗi'}`);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const extension = format === 'excel' ? 'xlsx' : 'pdf';
+        link.href = url;
+        link.download = `Bao_Cao_Huy_Phong_${new Date().toISOString().slice(0, 10)}.${extension}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+    } catch (err) {
+        console.error('Cancellation Analytics Export Error:', err);
+        if (msgDiv) {
+            msgDiv.textContent = `Lỗi xuất báo cáo: ${err instanceof Error ? err.message : String(err)}`;
+            msgDiv.classList.remove('hidden');
+        }
+    }
+}
+
+async function exportExecutiveReport(format) {
+    const message = document.getElementById('cancellationAnalyticsMessage');
+    message?.classList.add('hidden');
+    if (message) message.textContent = '';
+
+    const params = new URLSearchParams({ format });
+    const startDate = document.getElementById('executiveStartDate')?.value;
+    const endDate = document.getElementById('executiveEndDate')?.value;
+    const departmentId = document.getElementById('executiveDepartmentId')?.value;
+    if (startDate) params.set('start_date', startDate.slice(0, 10));
+    if (endDate) params.set('end_date', endDate.slice(0, 10));
+    if (departmentId) params.set('department_id', departmentId);
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/v1/admin/analytics/executive-report/export?${params.toString()}`,
+            { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
+        );
+        if (!response.ok) {
+            let detail = response.statusText;
+            try {
+                const error = await response.json();
+                detail = error?.detail || error?.message || detail;
+            } catch {
+                // Fall back to the HTTP status text for non-JSON error bodies.
+            }
+            throw new Error(`Lỗi server (${response.status}): ${detail || 'Không rõ lỗi'}`);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `RoomSync_Executive_Report_${new Date().toISOString().slice(0, 10)}.${format === 'excel' ? 'xlsx' : 'pdf'}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+    } catch (err) {
+        console.error('Executive Report Export Error:', err);
+        if (message) {
+            message.textContent = `Lỗi xuất báo cáo: ${err instanceof Error ? err.message : String(err)}`;
+            message.classList.remove('hidden');
+        }
+    }
+}
+
+function renderCancellationAnalytics(data) {
+    const summary = data?.summary ?? {};
+    const parsedTotal = Number(summary.total_cancelled ?? 0);
+    const totalCancelled = Number.isFinite(parsedTotal) ? parsedTotal : 0;
+    const parsedNoShow = Number(summary.cancelled_no_show ?? 0);
+    const noShow = Number.isFinite(parsedNoShow) ? parsedNoShow : 0;
+    const totalElement = document.getElementById('cancelledTotal');
+    const hoursElement = document.getElementById('cancelledWastedHours');
+    const noShowElement = document.getElementById('cancelledNoShowRate');
+    if (totalElement) totalElement.textContent = String(totalCancelled);
+    const wastedHours = Number(summary.total_wasted_hours ?? 0);
+    if (hoursElement) {
+        hoursElement.textContent = `${(Number.isFinite(wastedHours) ? wastedHours : 0).toFixed(2)} giờ`;
+    }
+    if (noShowElement) noShowElement.textContent =
+        `${totalCancelled > 0 ? ((noShow / totalCancelled) * 100).toFixed(1) : '0.0'}%`;
+
+    const renderRows = (elementId, rows, emptyMessage, valueKeys) => {
+        const tbody = document.getElementById(elementId);
+        if (!tbody) return;
+        tbody.replaceChildren();
+        if (!Array.isArray(rows) || rows.length === 0) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = valueKeys.length + 1;
+            cell.className = 'cancellation-empty';
+            cell.textContent = emptyMessage;
+            row.appendChild(cell);
+            tbody.appendChild(row);
+            return;
+        }
+        rows.forEach(item => {
+            const row = document.createElement('tr');
+            valueKeys.forEach(key => {
+                const cell = document.createElement('td');
+                const value = item?.[key];
+                cell.textContent = value == null ? '—' : String(value);
+                row.appendChild(cell);
+            });
+            const countCell = document.createElement('td');
+            countCell.textContent = String(Number(item?.cancel_count ?? 0));
+            row.appendChild(countCell);
+            tbody.appendChild(row);
+        });
+    };
+
+    renderRows(
+        'cancellationRoomsBody',
+        data?.top_cancelled_rooms,
+        'Không có dữ liệu trong khoảng thời gian này',
+        ['room_name'],
+    );
+    renderRows(
+        'cancellationReasonsBody',
+        data?.breakdown_by_reason,
+        'Không có dữ liệu trong khoảng thời gian này',
+        ['reason'],
+    );
+    renderRows(
+        'cancellationOffendersBody',
+        data?.top_offenders,
+        'Không có dữ liệu trong khoảng thời gian này',
+        ['user_name'],
+    );
+}
+
+/* GLOBAL EXPORTS (GẮN VÀO WINDOW CHO EVENT HANDLER) */
 window.toggleSidebar = toggleSidebar;
 window.switchToOverview = switchToOverview;
 window.switchMainTab = switchMainTab;
@@ -1491,7 +2096,20 @@ window.scrollToRooms = scrollToRooms;
 window.toggleNotificationPopup = toggleNotificationPopup;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
+window.openQrCheckModal = openQrCheckModal;
+window.closeQrCheckModal = closeQrCheckModal;
+window.submitQrCheck = submitQrCheck;
+window.openRoomQrModal = openRoomQrModal;
+window.closeRoomQrModal = closeRoomQrModal;
+window.copyRoomQrToken = copyRoomQrToken;
+window.downloadRoomQrImage = downloadRoomQrImage;
+window.openPresenterQrModal = openPresenterQrModal;
+window.closePresenterQrModal = closePresenterQrModal;
+window.togglePresenterQrFullscreen = togglePresenterQrFullscreen;
+window.copyPresenterQrToken = copyPresenterQrToken;
 window.cancelBooking = cancelBooking;
+window.closeCancelMeetingModal = closeCancelMeetingModal;
+window.submitCancelBooking = submitCancelBooking;
 window.handleSearch = handleSearch;
 window.filterToday = filterToday;
 window.applyFilters = applyFilters;
@@ -1512,5 +2130,6 @@ window.closeEquipmentModal = closeEquipmentModal;
 window.handleEquipmentFormSubmit = handleEquipmentFormSubmit;
 window.deleteEquipment = deleteEquipment;
 window.fetchRoomUsageReport = fetchRoomUsageReport;
+window.fetchCancellationAnalytics = fetchCancellationAnalytics;
 window.loadRoomsForReportFilter = loadRoomsForReportFilter;
 window.updateUserSettings = updateUserSettings;
