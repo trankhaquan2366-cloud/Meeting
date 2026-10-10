@@ -1,4 +1,4 @@
-const AUTH_API_BASE = window.AUTH_API_BASE || 'http://localhost:8000/api';
+const AUTH_API_BASE = window.AUTH_API_BASE || window.API_URL || 'http://localhost:8000/api';
 
 function handleGoogleAuthCallback() {
     const callbackValues = new URLSearchParams(window.location.hash.slice(1));

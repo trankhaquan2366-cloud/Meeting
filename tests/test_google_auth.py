@@ -6,7 +6,12 @@ from cryptography.fernet import Fernet
 from app.models.user import User
 from app.routers import auth as auth_router
 from app.core.security import hash_password
-from app.services.google_calendar_service import decrypt_refresh_token, make_calendar_consent_url
+from app.services.google_calendar_service import (
+    decrypt_refresh_token,
+    encrypt_refresh_token,
+    make_calendar_consent_url,
+)
+from tests.helpers import _auth_header, _create_user, _make_token
 
 
 class MockGoogleResponse:
@@ -71,6 +76,99 @@ def test_google_login_redirect_requests_openid_email_profile(client, monkeypatch
     assert query["scope"] == ["openid email profile"]
     assert query["response_type"] == ["code"]
     assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].startswith(query["state"][0] + "|")
+
+
+def test_calendar_settings_authorization_returns_url_and_state_cookie(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    user = _create_user(db_session, "settings-calendar-owner")
+
+    response = client.get(
+        "/api/auth/google/calendar/authorize",
+        headers=_auth_header(_make_token(user)),
+    )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    query = parse_qs(urlsplit(authorization_url).query)
+    assert query["scope"] == [
+        "openid email profile https://www.googleapis.com/auth/calendar.events"
+    ]
+    assert query["access_type"] == ["offline"]
+    assert query["prompt"] == ["consent"]
+    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|")[1] == "calendar_settings"
+
+
+def test_calendar_settings_can_connect_a_different_google_account(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = _create_user(db_session, "settings-calendar-different-google")
+    user.google_refresh_token = encrypt_refresh_token("old-refresh-token")
+    db_session.commit()
+    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
+    authorization = client.get(
+        "/api/auth/google/calendar/authorize",
+        headers=_auth_header(_make_token(user)),
+    )
+    state = authorization.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "personal.calendar@example.test",
+            "email_verified": True,
+            "name": "Personal Calendar",
+        },
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert callback.headers["location"].startswith(
+        "http://localhost:8000/static/dashboard.html?calendar_connected=1"
+    )
+    db_session.refresh(user)
+    assert decrypt_refresh_token(user.google_refresh_token) != "old-refresh-token"
+    assert decrypt_refresh_token(user.google_refresh_token) == "private-refresh-token"
+
+
+def test_calendar_status_and_disconnect(client, db_session, monkeypatch):
+    user = _create_user(db_session, "settings-calendar-disconnect")
+    headers = _auth_header(_make_token(user))
+    revoke_calls = []
+    monkeypatch.setattr(
+        auth_router,
+        "revoke_google_refresh_token",
+        revoke_calls.append,
+    )
+
+    disconnected = client.get("/api/auth/google/calendar/status", headers=headers)
+    assert disconnected.status_code == 200
+    assert disconnected.json() == {"connected": False, "connected_at": None}
+
+    user.google_refresh_token = "encrypted-refresh-token"
+    user.google_calendar_connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_session.commit()
+    connected = client.get("/api/auth/google/calendar/status", headers=headers)
+    assert connected.json()["connected"] is True
+
+    response = client.delete(
+        "/api/auth/google/calendar/disconnect",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False}
+    assert revoke_calls == ["encrypted-refresh-token"]
+    db_session.refresh(user)
+    assert user.google_refresh_token is None
+    assert user.google_calendar_connected_at is None
 
 
 def test_google_callback_registers_new_user_and_redirects_with_token(

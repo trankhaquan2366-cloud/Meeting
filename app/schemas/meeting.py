@@ -1,8 +1,12 @@
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentItemOutput
+
+
+class MeetingParticipationResponse(BaseModel):
+    response_status: Literal["accepted", "declined"]
 
 
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)

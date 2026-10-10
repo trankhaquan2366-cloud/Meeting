@@ -322,21 +322,54 @@
                     <div class="page-header">
                         <h2>Lịch họp đã đặt của tôi</h2>
                     </div>
-                    <div class="table-card">
-                        <div class="table-scroll my-bookings-scroll">
-                            <table class="data-table my-bookings-table">
-                                <thead>
-                                    <tr>
-                                        <th>Địa điểm / cuộc họp</th>
-                                        <th>Thời gian</th>
-                                        <th>Trạng thái</th>
-                                        <th>Hành động</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="myBookingsTableBody"></tbody>
-                            </table>
-                        </div>
+                    <div class="booking-tabs" role="tablist" aria-label="Các lịch họp của tôi">
+                        <button class="booking-tab active" id="bookingTabCalendar" type="button" role="tab"
+                            aria-selected="true" aria-controls="bookingPanelCalendar"
+                            onclick="switchBookingTab('calendar')">Lịch họp</button>
+                        <button class="booking-tab" id="bookingTabMine" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelMine"
+                            onclick="switchBookingTab('mine')">Của tôi</button>
+                        <button class="booking-tab" id="bookingTabInvited" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelInvited"
+                            onclick="switchBookingTab('invited')">Được mời</button>
                     </div>
+
+                    <section id="bookingPanelCalendar" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabCalendar">
+                        <div class="booking-calendar-toolbar">
+                            <div class="booking-calendar-nav">
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(-1)"
+                                    aria-label="Khoảng thời gian trước">‹</button>
+                                <button type="button" class="booking-calendar-button" onclick="goToBookingCalendarToday()">Hôm nay</button>
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(1)"
+                                    aria-label="Khoảng thời gian sau">›</button>
+                                <h3 id="bookingCalendarTitle" class="booking-calendar-title"></h3>
+                            </div>
+                            <div class="booking-calendar-views" role="group" aria-label="Chế độ xem lịch">
+                                <button type="button" data-calendar-view="month" class="active"
+                                    onclick="setBookingCalendarView('month')">Tháng</button>
+                                <button type="button" data-calendar-view="week"
+                                    onclick="setBookingCalendarView('week')">Tuần</button>
+                                <button type="button" data-calendar-view="day"
+                                    onclick="setBookingCalendarView('day')">Ngày</button>
+                            </div>
+                        </div>
+                        <div id="bookingCalendarGrid" class="booking-calendar-grid"></div>
+                        <div class="booking-day-agenda">
+                            <h3 id="bookingAgendaTitle">Lịch trong ngày</h3>
+                            <div id="bookingDayAgenda"></div>
+                        </div>
+                    </section>
+
+                    <section id="bookingPanelMine" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabMine" hidden>
+                        <div id="myBookingsTableBody" class="booking-list"></div>
+                    </section>
+
+                    <section id="bookingPanelInvited" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabInvited" hidden>
+                        <div id="invitedBookingsList" class="booking-list"></div>
+                    </section>
                 </div>
 
                 <!-- VIEW 5: BÁO CÁO SỬ DỤNG PHÒNG HỌP (TAB BÁO CÁO CHÍNH THỨC) -->
@@ -477,6 +510,22 @@
                                         Lưu thay đổi
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Google Calendar</h3>
+                            <p class="text-sm text-gray-500 mb-4">
+                                Kết nối tài khoản Google để tự động đồng bộ cuộc họp và gửi lời mời cho người tham dự.
+                            </p>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span id="googleCalendarStatus" class="text-sm text-gray-600" role="status"
+                                    aria-live="polite">Đang kiểm tra kết nối...</span>
+                                <button id="googleCalendarAction" type="button"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#004CFF] hover:bg-[#0038CC] transition-colors"
+                                    onclick="handleGoogleCalendarAction()" disabled>
+                                    Kết nối ngay
+                                </button>
                             </div>
                         </div>
 
@@ -745,7 +794,7 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=12"></script>
+    <script src="js/app.js?v=13"></script>
     <script src="js/create-meeting.js?v=3"></script>
 </body>
 

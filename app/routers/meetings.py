@@ -1,8 +1,10 @@
 # app/routers/meetings.py
+import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -11,6 +13,7 @@ from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import (
     MeetingCreateRequest,
+    MeetingParticipationResponse,
     MeetingResponse,
     SuggestTimeRequest,
     SuggestTimeResponse,
@@ -19,9 +22,13 @@ from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
 from app.services.notification_service import send_meeting_invitation_notifications
 from app.services.calendar_email_service import request_calendar_access_for_invitees
-from app.services.google_calendar_service import delete_google_events_for_meeting
+from app.services.google_calendar_service import (
+    delete_google_events_for_meeting,
+    sync_user_meetings_to_google,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -53,6 +60,9 @@ def create_meeting(
         payload=payload,
         organizer_id=current_user.id,
     )
+
+    if current_user.google_refresh_token and created_meetings:
+        background_tasks.add_task(sync_user_meetings_to_google, current_user.id)
 
     # 2. Gửi thông báo ngầm cho những người được mời tham dự
     # Filter organizer khỏi danh sách — organizer không nhận invitation notification
@@ -112,7 +122,121 @@ def get_meetings(
     if end_date:
         query = query.filter(Meeting.end_time <= end_date)
 
-    return query.all()
+    try:
+        return query.all()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while listing meetings")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể tải danh sách cuộc họp do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration.",
+        ) from exc
+
+
+@router.get(
+    "/mine",
+    summary="Lịch họp của người dùng hiện tại",
+    description="Trả về cuộc họp do người dùng chủ trì hoặc được mời, kèm trạng thái phản hồi của từng khách mời.",
+)
+def get_my_meetings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        meetings = (
+            db.query(Meeting)
+            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .filter(
+                (Meeting.organizer_id == current_user.id)
+                | (MeetingParticipant.user_id == current_user.id)
+            )
+            .filter(Meeting.status.notin_(["CANCELLED", "canceled", "cancelled"]))
+            .distinct()
+            .order_by(Meeting.start_time)
+            .all()
+        )
+
+        results = []
+        for meeting in meetings:
+            item = MeetingResponse.model_validate(meeting).model_dump(mode="json")
+            item["is_organizer"] = meeting.organizer_id == current_user.id
+            item["organizer_name"] = (
+                meeting.organizer.full_name or meeting.organizer.username
+                if meeting.organizer
+                else "Người tổ chức"
+            )
+            item["room_name"] = meeting.room.name if meeting.room else None
+            item["my_response_status"] = next(
+                (
+                    participant.response_status
+                    for participant in meeting.participants
+                    if participant.user_id == current_user.id
+                ),
+                None,
+            )
+            item["participants"] = [
+                {
+                    "user_id": participant.user_id,
+                    "name": (
+                        participant.user.full_name or participant.user.username
+                        if participant.user
+                        else "Người tham dự"
+                    ),
+                    "email": participant.user.email if participant.user else None,
+                    "response_status": participant.response_status,
+                }
+                for participant in meeting.participants
+            ]
+            results.append(item)
+        return results
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while loading meetings for user_id=%s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể tải lịch họp do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration của meeting_participants.",
+        ) from exc
+
+
+@router.patch(
+    "/{meeting_id}/response",
+    summary="Phản hồi lời mời họp",
+    description="Cho phép người được mời xác nhận tham gia hoặc từ chối; không cấp quyền hủy cuộc họp.",
+)
+def respond_to_meeting_invitation(
+    meeting_id: int,
+    payload: MeetingParticipationResponse,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        participant = (
+            db.query(MeetingParticipant)
+            .filter(
+                MeetingParticipant.meeting_id == meeting_id,
+                MeetingParticipant.user_id == current_user.id,
+            )
+            .first()
+        )
+        if participant is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy lời mời họp.")
+        participant.response_status = payload.response_status
+        db.commit()
+        return {"meeting_id": meeting_id, "response_status": participant.response_status}
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Database error while saving RSVP for meeting_id=%s user_id=%s",
+            meeting_id,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể lưu phản hồi do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration của meeting_participants.",
+        ) from exc
 
 
 @router.get(
@@ -147,7 +271,16 @@ def get_meeting_history(
         .order_by(Meeting.end_time.desc())
     )
 
-    return query.all()
+    try:
+        return query.all()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while loading meeting history for user_id=%s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể tải lịch sử cuộc họp do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration.",
+        ) from exc
 
 
 @router.patch(

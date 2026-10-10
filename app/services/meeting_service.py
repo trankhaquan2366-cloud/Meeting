@@ -1,13 +1,16 @@
 from datetime import datetime, timedelta
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
+
+logger = logging.getLogger(__name__)
 
 class MeetingService:
 
@@ -21,7 +24,7 @@ class MeetingService:
                 detail="Kh?ng t?m th?y cu?c h?p.",
             )
 
-        is_admin = current_user.role == "admin"
+        is_admin = str(current_user.role or "").strip().casefold() == "admin"
         if meeting.organizer_id != current_user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -31,8 +34,21 @@ class MeetingService:
         # Idempotent: repeating the operation is a successful no-op.
         if meeting.status != "CANCELLED":
             meeting.status = "CANCELLED"
-            db.commit()
-            db.refresh(meeting)
+            try:
+                db.commit()
+                db.refresh(meeting)
+            except SQLAlchemyError as exc:
+                db.rollback()
+                logger.exception(
+                    "Failed to cancel meeting_id=%s for user_id=%s",
+                    meeting_id,
+                    current_user.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Không thể hủy cuộc họp do lỗi cơ sở dữ liệu. "
+                    "Vui lòng kiểm tra migration schema và thử lại.",
+                ) from exc
 
         return meeting
 

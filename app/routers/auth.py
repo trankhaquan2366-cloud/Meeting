@@ -6,7 +6,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -22,7 +22,9 @@ from app.core.security import (
 from app.models.user import User
 from app.schemas.auth import LoginRequest, TokenResponse, UserResponse
 from app.services.google_calendar_service import (
+    GOOGLE_CALENDAR_EVENTS_SCOPE,
     encrypt_refresh_token,
+    revoke_google_refresh_token,
     sync_user_meetings_to_google,
     verify_calendar_consent_signature,
 )
@@ -75,7 +77,12 @@ def _unique_google_username(db: Session, email: str) -> str:
     return username
 
 
-def _google_authorization_redirect(flow: str, user_id: int | None = None):
+def _google_authorization_redirect(
+    flow: str,
+    user_id: int | None = None,
+    *,
+    return_authorization_url: bool = False,
+):
     client_id, _, redirect_uri, _ = _google_oauth_config()
     state = secrets.token_urlsafe(32)
     cookie_value = f"{state}|{flow}|{user_id or ''}"
@@ -87,12 +94,17 @@ def _google_authorization_redirect(flow: str, user_id: int | None = None):
         "state": state,
         "prompt": "select_account",
     }
-    if flow == "calendar":
-        query["scope"] += " https://www.googleapis.com/auth/calendar.events"
+    if flow.startswith("calendar"):
+        query["scope"] += f" {GOOGLE_CALENDAR_EVENTS_SCOPE}"
         query["access_type"] = "offline"
-        query["prompt"] = "consent select_account"
-    redirect = RedirectResponse(f"{GOOGLE_AUTHORIZATION_URL}?{urlencode(query)}")
-    redirect.set_cookie(
+        query["prompt"] = "consent"
+    authorization_url = f"{GOOGLE_AUTHORIZATION_URL}?{urlencode(query)}"
+    response = (
+        JSONResponse({"authorization_url": authorization_url})
+        if return_authorization_url
+        else RedirectResponse(authorization_url)
+    )
+    response.set_cookie(
         GOOGLE_STATE_COOKIE,
         cookie_value,
         max_age=600,
@@ -101,7 +113,19 @@ def _google_authorization_redirect(flow: str, user_id: int | None = None):
         httponly=True,
         samesite="lax",
     )
-    return redirect
+    return response
+
+
+def _frontend_dashboard_url(frontend_login_url: str) -> str:
+    configured_url = os.getenv("FRONTEND_DASHBOARD_URL")
+    if configured_url:
+        return configured_url
+    parts = urlsplit(frontend_login_url)
+    if parts.path.endswith("/login.html"):
+        path = f"{parts.path[:-len('login.html')]}dashboard.html"
+    else:
+        path = "/static/dashboard.html"
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def issue_token(user: User) -> TokenResponse:
@@ -138,6 +162,15 @@ def google_calendar_connect(
     return _google_authorization_redirect("calendar", user.id)
 
 
+@router.get("/google/calendar/authorize", summary="Kết nối Google Calendar cá nhân")
+def google_calendar_authorize(current_user: User = Depends(get_current_user)):
+    return _google_authorization_redirect(
+        "calendar_settings",
+        current_user.id,
+        return_authorization_url=True,
+    )
+
+
 @router.get("/google/callback", summary="Hoàn tất đăng nhập Google")
 def google_callback(
     request: Request,
@@ -154,16 +187,21 @@ def google_callback(
     expected_state, flow, flow_user_text = cookie_parts
     if not state or not expected_state or not secrets.compare_digest(state, expected_state):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
-    if flow not in {"login", "calendar"}:
+    if flow not in {"login", "calendar", "calendar_settings"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth flow")
     if error:
         error_code = (
             "calendar_permission_denied"
-            if flow == "calendar" and error == "access_denied"
+            if flow in {"calendar", "calendar_settings"} and error == "access_denied"
             else "access_denied" if error == "access_denied" else "oauth_failed"
         )
+        redirect_url = (
+            _frontend_dashboard_url(frontend_login_url)
+            if flow == "calendar_settings"
+            else frontend_login_url
+        )
         return RedirectResponse(
-            _frontend_redirect(frontend_login_url, {"google_error": error_code}, fragment=False),
+            _frontend_redirect(redirect_url, {"google_error": error_code}, fragment=False),
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if not code:
@@ -206,13 +244,20 @@ def google_callback(
     if not email or profile.get("email_verified") is not True:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google account email is not verified")
 
-    if flow == "calendar":
+    if flow in {"calendar", "calendar_settings"}:
         try:
             calendar_user_id = int(flow_user_text)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid calendar account") from exc
         user = db.query(User).filter(User.id == calendar_user_id, User.is_active.is_(True)).first()
-        if not user or not user.email or user.email.strip().lower() != email:
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Calendar account is not available",
+            )
+        if flow == "calendar" and (
+            not user.email or user.email.strip().lower() != email
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Google email must match the invited RoomSync account",
@@ -232,7 +277,11 @@ def google_callback(
         background_tasks.add_task(sync_user_meetings_to_google, user.id)
         _, _, redirect_uri, frontend_login_url = _google_oauth_config()
         redirect = RedirectResponse(
-            _frontend_redirect(frontend_login_url, {"calendar_connected": "1"}, fragment=False),
+            _frontend_redirect(
+                _frontend_dashboard_url(frontend_login_url),
+                {"calendar_connected": "1"},
+                fragment=False,
+            ),
             status_code=status.HTTP_303_SEE_OTHER,
         )
         redirect.delete_cookie(
@@ -294,6 +343,29 @@ def google_callback(
 @router.get("/me", response_model=UserResponse, summary="Lấy thông tin cá nhân")
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.get("/google/calendar/status", summary="Trạng thái kết nối Google Calendar")
+def google_calendar_status(current_user: User = Depends(get_current_user)):
+    return {
+        "connected": bool(current_user.google_refresh_token),
+        "connected_at": current_user.google_calendar_connected_at,
+    }
+
+
+@router.delete("/google/calendar/disconnect", summary="Ngắt kết nối Google Calendar")
+def google_calendar_disconnect(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    encrypted_refresh_token = current_user.google_refresh_token
+    current_user.google_refresh_token = None
+    current_user.google_calendar_connected_at = None
+    db.commit()
+    if encrypted_refresh_token:
+        background_tasks.add_task(revoke_google_refresh_token, encrypted_refresh_token)
+    return {"connected": False}
 
 
 @router.get("/admin-only", summary="Kiểm tra quyền Admin")

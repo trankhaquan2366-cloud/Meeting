@@ -1,3 +1,5 @@
+const API_URL = window.API_URL || 'http://localhost:8000/api';
+
 document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('loginForm');
     const errorAlert = document.getElementById('errorAlert');
@@ -21,8 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const password = passwordInput.value;
 
         try {
-            // Thay vì dùng URLSearchParams, hãy gửi dạng JSON chuẩn
-            const res = await fetch('http://localhost:8000/api/auth/login', {
+            const res = await fetch(`${API_URL}/auth/login`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'

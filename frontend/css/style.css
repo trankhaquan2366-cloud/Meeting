@@ -394,8 +394,6 @@ body {
 .booking-meeting-title { margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.45; }
 .booking-meeting-link { display: inline-block; margin-top: 6px; color: #1d4ed8; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .booking-meeting-link:hover { color: #1e40af; }
-.booking-calendar-link { display: inline-block; margin: 6px 0 0 10px; color: #475569; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
-.booking-calendar-link:hover { color: #1d4ed8; }
 .booking-equipment-summary { margin-top: 7px; color: #64748b; font-size: 11px; line-height: 1.5; }
 .booking-datetime { display: flex; flex-direction: column; gap: 4px; }
 .booking-date { color: #64748b; font-size: 12px; }
@@ -409,6 +407,50 @@ body {
 .booking-cancel-button:hover { background: #fef2f2; border-color: #f87171; }
 .table-empty-state { padding: 28px 14px !important; color: #64748b; text-align: center; }
 
+.booking-tabs { display: flex; gap: 8px; margin: 0 0 18px; padding: 5px; width: fit-content; border-radius: 10px; background: #f1f5f9; }
+.booking-tab { padding: 9px 16px; color: #64748b; background: transparent; border: 0; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.booking-tab.active { color: #1d4ed8; background: #fff; box-shadow: 0 1px 3px #0f172a1a; }
+.booking-panel[hidden] { display: none; }
+.booking-calendar-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.booking-calendar-nav, .booking-calendar-views { display: flex; align-items: center; gap: 8px; }
+.booking-calendar-title { min-width: 180px; margin: 0 0 0 8px; color: #0f172a; font-size: 18px; font-weight: 700; }
+.booking-calendar-button, .booking-calendar-views button { min-height: 36px; padding: 7px 11px; color: #475569; background: #fff; border: 1px solid #e2e8f0; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.booking-calendar-views button.active { color: #1d4ed8; border-color: #93c5fd; background: #eff6ff; }
+.booking-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.booking-calendar-weekday { padding: 10px 6px; color: #64748b; background: #f8fafc; text-align: center; font-size: 11px; font-weight: 700; }
+.booking-calendar-day { min-height: 100px; padding: 8px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; cursor: pointer; }
+.booking-calendar-day:nth-child(7n) { border-right: 0; }
+.booking-calendar-day.outside { background: #f8fafc; color: #94a3b8; }
+.booking-calendar-day.selected { outline: 2px solid #2563eb; outline-offset: -2px; background: #eff6ff; }
+.booking-calendar-day.today .booking-calendar-day-number { color: #1d4ed8; font-weight: 800; }
+.booking-calendar-day-number { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; }
+.booking-calendar-event { display: block; overflow: hidden; margin-top: 5px; padding: 4px 5px; color: #1e40af; background: #dbeafe; border-radius: 4px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.booking-calendar-more { margin-top: 4px; color: #64748b; font-size: 10px; }
+.booking-day-agenda { margin-top: 18px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.booking-day-agenda h3 { margin: 0 0 12px; color: #0f172a; font-size: 15px; font-weight: 700; }
+.booking-agenda-item { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid #f1f5f9; }
+.booking-agenda-time { color: #1d4ed8; font-size: 12px; font-weight: 700; }
+.booking-agenda-details strong, .booking-agenda-details span { display: block; }
+.booking-agenda-details strong { color: #0f172a; font-size: 13px; }
+.booking-agenda-details span { margin-top: 3px; color: #64748b; font-size: 12px; }
+.booking-list { display: grid; gap: 10px; }
+.booking-list-card { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+.booking-list-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) auto auto; align-items: center; gap: 14px; padding: 14px 16px; }
+.booking-list-main { min-width: 0; }
+.booking-list-main strong, .booking-list-main span { display: block; }
+.booking-list-main strong { overflow: hidden; color: #0f172a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.booking-list-main span, .booking-list-time { margin-top: 4px; color: #64748b; font-size: 12px; }
+.booking-list-actions { display: flex; gap: 7px; justify-content: flex-end; }
+.booking-guest-toggle, .booking-rsvp-button { padding: 7px 10px; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.booking-guest-toggle:hover, .booking-rsvp-button:hover { background: #f8fafc; }
+.booking-guest-list { padding: 12px 16px; border-top: 1px solid #f1f5f9; background: #f8fafc; }
+.booking-guest { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; color: #334155; font-size: 12px; }
+.booking-guest.pending { color: #94a3b8; }
+.booking-guest-status.accepted { color: #15803d; font-weight: 700; }
+.booking-guest-status.declined { color: #b91c1c; }
+.booking-guest-status.pending { color: #94a3b8; }
+.booking-list-empty { padding: 28px 16px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 10px; text-align: center; font-size: 13px; }
+
 .equipment-availability-filters { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
 .equipment-filter-field { display: flex; flex-direction: column; gap: 6px; color: #475569; font-size: 12px; font-weight: 600; }
 .equipment-filter-field input { min-width: 0; height: 38px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
@@ -417,6 +459,17 @@ body {
 .equipment-status-badge.available { background: #dcfce7; color: #166534; }
 .equipment-status-badge.booked-out { background: #fee2e2; color: #991b1b; }
 .equipment-status-badge.maintenance { background: #fef3c7; color: #854d0e; }
+
+@media (max-width: 768px) {
+    .booking-tabs { width: 100%; }
+    .booking-tab { flex: 1; padding-right: 8px; padding-left: 8px; }
+    .booking-calendar-day { min-height: 72px; padding: 4px; }
+    .booking-calendar-event { font-size: 9px; }
+    .booking-list-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+    .booking-list-time { grid-column: 1; }
+    .booking-list-actions { grid-column: 2; grid-row: 1 / span 2; flex-direction: column; align-items: stretch; }
+    .booking-agenda-item { grid-template-columns: 82px minmax(0, 1fr); }
+}
 
 /* ==========================================
    4. MODALS BASE & FIGMA BOOKING MODAL

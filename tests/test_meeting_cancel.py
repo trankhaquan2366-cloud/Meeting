@@ -57,6 +57,71 @@ def test_admin_can_cancel(client: TestClient, db_session: Session):
     assert response.json()["status"] == "CANCELLED"
 
 
+def test_organizer_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-organizer")
+    room = _create_room(db_session, "Delete Organizer Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_admin_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-admin-target")
+    admin = _create_user(db_session, "delete-admin", role="admin")
+    room = _create_room(db_session, "Delete Admin Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_admin_role_is_case_insensitive(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "upper-admin-target")
+    admin = _create_user(db_session, "upper-case-admin", role="ADMIN")
+    room = _create_room(db_session, "Upper Admin Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_invitee_cannot_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-protected-organizer")
+    invitee = _create_user(db_session, "delete-protected-invitee")
+    room = _create_room(db_session, "Delete Protected Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, invitee)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(invitee)),
+    )
+
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+
+
 def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
     organizer = _create_user(db_session, "protected-organizer")
     outsider = _create_user(db_session, "cancel-outsider")

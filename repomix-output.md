@@ -39,11 +39,15 @@ The content is organized as follows:
   tasks/
     plan.md
 alembic/
+  versions/
+    33c26788d6a2_fix_missing_meeting_link_column.py
+    cf70acc36382_add_google_refresh_token_to_users.py
   env.py
   README
   script.py.mako
 app/
   core/
+    config.py
     database.py
     security.py
   db/
@@ -51,6 +55,7 @@ app/
   models/
     __init__.py
     equipment.py
+    google_calendar_event.py
     meeting.py
     notification.py
     room.py
@@ -61,6 +66,7 @@ app/
     equipment.py
     meetings.py
     notifications.py
+    reports.py
     rooms.py
     users.py
   schemas/
@@ -68,11 +74,15 @@ app/
     auth.py
     equipment.py
     meeting.py
+    reports.py
     room.py
   services/
+    calendar_email_service.py
     equipment_service.py
+    google_calendar_service.py
     meeting_service.py
     notification_service.py
+    reports.py
     room_service.py
   main.py
 frontend/
@@ -85,6 +95,7 @@ frontend/
     style.css
   js/
     app.js
+    auth.js
     create-meeting.js
     login.js
   dashboard.html
@@ -96,7 +107,12 @@ migrations/
   002_add_meeting_participants.sql
   003_add_equipment_tables.sql
   004_add_room_amenities.sql
+  005_add_meeting_type_and_link.sql
   005_align_meetings_schema.sql
+  006_reconcile_live_room_meeting_schema.sql
+  007_add_google_calendar_connection.sql
+  007_google_calendar_invitees.sql
+  008_add_meeting_participant_response_status.sql
 scripts/
   patch_db.py
   seed.py
@@ -104,13 +120,24 @@ tests/
   __init__.py
   conftest.py
   helpers.py
+  test_calendar_email.py
   test_equipment_admin.py
   test_equipment_availability.py
+  test_google_auth.py
+  test_google_calendar_delete.py
+  test_google_calendar_service.py
   test_meeting_cancel.py
+  test_meeting_create.py
   test_meetings_history.py
+  test_meetings_mine.py
+  test_room_create.py
+.dockerignore
 .env.example
 .gitignore
 alembic.ini
+docker-compose.yml
+Dockerfile
+FETCH_HEAD
 package.json
 README.md
 requirements-dev.txt
@@ -119,6 +146,363 @@ schema.sql
 ````
 
 # Files
+
+## File: alembic/versions/33c26788d6a2_fix_missing_meeting_link_column.py
+````python
+"""Add the missing meeting_link column to meetings.
+
+Revision ID: 33c26788d6a2
+Revises: cf70acc36382
+Create Date: 2026-10-09 19:15:47.700439
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+revision: str = "33c26788d6a2"
+down_revision: Union[str, Sequence[str], None] = "cf70acc36382"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Add meeting_link if the existing database does not already have it."""
+    inspector = sa.inspect(op.get_bind())
+    if "meetings" not in inspector.get_table_names():
+        raise RuntimeError("The meetings table must exist before applying this migration.")
+
+    columns = {column["name"] for column in inspector.get_columns("meetings")}
+    if "meeting_link" not in columns:
+        op.add_column("meetings", sa.Column("meeting_link", sa.String(length=255), nullable=True))
+
+
+def downgrade() -> None:
+    """Remove meeting_link if present."""
+    inspector = sa.inspect(op.get_bind())
+    if "meetings" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("meetings")}
+    if "meeting_link" in columns:
+        op.drop_column("meetings", "meeting_link")
+````
+
+## File: alembic/versions/cf70acc36382_add_google_refresh_token_to_users.py
+````python
+"""Add google_refresh_token to users
+
+Revision ID: cf70acc36382
+Revises: 
+Create Date: 2026-10-09 17:49:57.088496
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = 'cf70acc36382'
+down_revision: Union[str, Sequence[str], None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Add Google Calendar OAuth columns to users when they are missing."""
+    inspector = sa.inspect(op.get_bind())
+    if "users" not in inspector.get_table_names():
+        raise RuntimeError("The users table must exist before applying this migration.")
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "google_refresh_token" not in existing_columns:
+        op.add_column("users", sa.Column("google_refresh_token", sa.Text(), nullable=True))
+    if "google_calendar_connected_at" not in existing_columns:
+        op.add_column("users", sa.Column("google_calendar_connected_at", sa.DateTime(), nullable=True))
+
+
+def downgrade() -> None:
+    """Remove the Google Calendar OAuth columns when present."""
+    inspector = sa.inspect(op.get_bind())
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "google_calendar_connected_at" in existing_columns:
+        op.drop_column("users", "google_calendar_connected_at")
+    if "google_refresh_token" in existing_columns:
+        op.drop_column("users", "google_refresh_token")
+````
+
+## File: app/core/config.py
+````python
+import logging
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+def load_environment() -> None:
+    """Load project environment variables without overriding process settings."""
+    load_dotenv(dotenv_path=ENV_FILE, override=False)
+
+
+def get_google_oauth_credentials() -> tuple[str, str] | None:
+    load_environment()
+    credentials = {
+        "GOOGLE_CLIENT_ID": os.getenv("GOOGLE_CLIENT_ID"),
+        "GOOGLE_CLIENT_SECRET": os.getenv("GOOGLE_CLIENT_SECRET"),
+    }
+    invalid_variables = [
+        name
+        for name, value in credentials.items()
+        if (
+            not value
+            or not value.strip()
+            or value.strip().lower().startswith(("your_", "your-", "replace_", "replace-"))
+            or "placeholder" in value.strip().lower()
+        )
+    ]
+    if invalid_variables:
+        logger.error(
+            "Google OAuth is not configured; missing or placeholder environment variable(s): %s",
+            ", ".join(invalid_variables),
+        )
+        return None
+
+    client_id = credentials["GOOGLE_CLIENT_ID"]
+    client_secret = credentials["GOOGLE_CLIENT_SECRET"]
+    assert client_id is not None and client_secret is not None
+    return client_id, client_secret
+
+
+load_environment()
+````
+
+## File: migrations/008_add_meeting_participant_response_status.sql
+````sql
+-- Track invitee RSVP state for the dashboard and meeting organizers.
+SET @has_response_status = (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meeting_participants'
+      AND COLUMN_NAME = 'response_status'
+);
+SET @add_response_status = IF(
+    @has_response_status = 0,
+    'ALTER TABLE meeting_participants ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT ''pending''',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_response_status;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+````
+
+## File: tests/test_meetings_mine.py
+````python
+"""Tests for the personal meeting list and invite responses."""
+
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
+
+from app import main
+from tests.helpers import (
+    _add_participant,
+    _auth_header,
+    _create_meeting,
+    _create_room,
+    _create_user,
+    _make_token,
+)
+
+
+def test_mine_separates_organizer_and_invitee_and_includes_rsvp(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "mine_organizer")
+    invitee = _create_user(db_session, "mine_invitee")
+    outsider = _create_user(db_session, "mine_outsider")
+    room = _create_room(db_session, "Mine Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=1),
+        datetime.utcnow() + timedelta(days=1, hours=1),
+    )
+    canceled_meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=3),
+        datetime.utcnow() + timedelta(days=3, hours=1),
+        status="canceled",
+    )
+    participation = _add_participant(db_session, meeting, invitee)
+    participation.response_status = "accepted"
+    db_session.commit()
+
+    organizer_response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(organizer))
+    )
+    assert organizer_response.status_code == 200
+    organizer_item = organizer_response.json()[0]
+    assert organizer_item["id"] == meeting.id
+    assert organizer_item["is_organizer"] is True
+    assert organizer_item["participants"][0]["response_status"] == "accepted"
+    assert all(item["id"] != canceled_meeting.id for item in organizer_response.json())
+
+    invitee_response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(invitee))
+    )
+    assert invitee_response.status_code == 200
+    invitee_item = invitee_response.json()[0]
+    assert invitee_item["is_organizer"] is False
+    assert invitee_item["my_response_status"] == "accepted"
+
+    outsider_response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(outsider))
+    )
+    assert outsider_response.status_code == 200
+    assert outsider_response.json() == []
+
+
+def test_invitee_can_update_own_response_but_nonparticipant_cannot(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "rsvp_organizer")
+    invitee = _create_user(db_session, "rsvp_invitee")
+    outsider = _create_user(db_session, "rsvp_outsider")
+    room = _create_room(db_session, "RSVP Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=2),
+        datetime.utcnow() + timedelta(days=2, hours=1),
+    )
+    _add_participant(db_session, meeting, invitee)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/response",
+        headers=_auth_header(_make_token(invitee)),
+        json={"response_status": "declined"},
+    )
+    assert response.status_code == 200
+    assert response.json()["response_status"] == "declined"
+
+    outsider_response = client.patch(
+        f"/api/meetings/{meeting.id}/response",
+        headers=_auth_header(_make_token(outsider)),
+        json={"response_status": "accepted"},
+    )
+    assert outsider_response.status_code == 404
+
+    invalid_response = client.patch(
+        f"/api/meetings/{meeting.id}/response",
+        headers=_auth_header(_make_token(invitee)),
+        json={"response_status": "maybe"},
+    )
+    assert invalid_response.status_code == 422
+
+
+def test_mine_handles_missing_organizer_and_room_relationships(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "orphan_organizer")
+    invitee = _create_user(db_session, "orphan_invitee")
+    room = _create_room(db_session, "Orphan Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=2),
+        datetime.utcnow() + timedelta(days=2, hours=1),
+    )
+    _add_participant(db_session, meeting, invitee)
+    meeting.organizer_id = None
+    meeting.room_id = None
+    db_session.commit()
+
+    response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(invitee))
+    )
+
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert item["organizer_name"] == "Người tổ chức"
+    assert item["room_name"] is None
+    assert item["is_organizer"] is False
+
+
+def test_missing_rsvp_column_returns_actionable_service_error(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "schema_organizer")
+    invitee = _create_user(db_session, "schema_invitee")
+    room = _create_room(db_session, "Schema Room")
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() - timedelta(days=4, hours=1),
+        datetime.utcnow() - timedelta(days=4),
+    )
+    _add_participant(db_session, meeting, invitee)
+    meeting_id = meeting.id
+    db_session.execute(text("ALTER TABLE meeting_participants DROP COLUMN response_status"))
+    db_session.commit()
+
+    headers = _auth_header(_make_token(invitee))
+    mine_response = client.get("/api/meetings/mine", headers=headers)
+    assert mine_response.status_code == 503
+    assert "schema/migration" in mine_response.json()["detail"]
+
+    list_response = client.get("/api/meetings/")
+    assert list_response.status_code == 503
+    history_response = client.get("/api/meetings/history", headers=headers)
+    assert history_response.status_code == 503
+
+    rsvp_response = client.patch(
+        f"/api/meetings/{meeting_id}/response",
+        headers=headers,
+        json={"response_status": "accepted"},
+    )
+    assert rsvp_response.status_code == 503
+    assert "schema/migration" in rsvp_response.json()["detail"]
+
+
+def test_startup_migration_adds_missing_rsvp_column(monkeypatch):
+    migration_engine = create_engine("sqlite://")
+    with migration_engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE meeting_participants "
+            "(id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL, user_id INTEGER NOT NULL)"
+        ))
+
+    monkeypatch.setattr(main, "engine", migration_engine)
+    try:
+        main._auto_migrate_schema()
+        columns = {column["name"] for column in inspect(migration_engine).get_columns("meeting_participants")}
+        assert "response_status" in columns
+    finally:
+        migration_engine.dispose()
+````
+
+## File: FETCH_HEAD
+````
+
+````
 
 ## File: .agents/tasks/plan.md
 ````markdown
@@ -759,6 +1143,28 @@ class RoomEquipment(Base):
     __table_args__ = (UniqueConstraint('room_id', 'equipment_id', name='uq_room_equipment'),)
 ````
 
+## File: app/models/google_calendar_event.py
+````python
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+
+from app.core.database import Base
+
+
+class GoogleCalendarEvent(Base):
+    __tablename__ = "google_calendar_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False)
+    google_event_id = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "meeting_id", name="uq_google_event_user_meeting"),
+        UniqueConstraint("user_id", "google_event_id", name="uq_google_event_user_event"),
+    )
+````
+
 ## File: app/routers/__init__.py
 ````python
 
@@ -832,42 +1238,625 @@ def mark_all_notifications_as_read(
     return {"message": "Đã đánh dấu tất cả thông báo là đã đọc"}
 ````
 
-## File: app/routers/users.py
+## File: app/routers/reports.py
 ````python
-# app/routers/users.py
-from typing import List, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from datetime import datetime, timedelta
+from typing import Optional
 
-from app.db.session import get_db
-from app.core.security import get_current_user
-from app.models.user import User
+from app.core.database import get_db
+from app.models.meeting import Meeting
+from app.models.room import Room
 
-router = APIRouter(prefix="/users", tags=["Users"])
+router = APIRouter(prefix="/reports", tags=["reports"])
 
-
-class UserSimpleResponse(BaseModel):
-    id: int
-    full_name: Optional[str] = None
-    email: str
-
-    class Config:
-        from_attributes = True
-
-
-@router.get("/", response_model=List[UserSimpleResponse])
-def get_all_users(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+@router.get("/room-usage")
+def get_room_usage_report(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    room_id: Optional[int] = None,
+    db: Session = Depends(get_db)
 ):
-    """Lấy danh sách người dùng để mời tham dự cuộc họp"""
-    return db.query(User).all()
+    # Thiết lập thời gian mặc định (30 ngày gần nhất)
+    if not end_date:
+        end_date = datetime.utcnow()
+    if not start_date:
+        start_date = end_date - timedelta(days=30)
+
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Thời gian bắt đầu (start_date) không được lớn hơn thời gian kết thúc (end_date)."
+        )
+
+    delta_days = (end_date - start_date).days or 1
+
+    # CHỈ LẤY CÁC PHÒNG CÒN TỒN TẠI VÀ ĐANG HOẠT ĐỘNG TRONG HỆ THỐNG
+    room_query = db.query(Room).filter(Room.is_active == True) if hasattr(Room, 'is_active') else db.query(Room)
+    
+    if room_id:
+        room_query = room_query.filter(Room.id == room_id)
+    
+    rooms = room_query.all()
+    valid_room_ids = {room.id for room in rooms}
+    total_rooms_count = len(rooms)
+
+    room_details = []
+    total_meetings_all = 0
+    total_hours_all = 0.0
+
+    for room in rooms:
+        # Chỉ quét các cuộc họp thuộc đúng phòng hiện có và có trạng thái hợp lệ
+        meetings = db.query(Meeting).filter(
+            Meeting.room_id == room.id,
+            Meeting.status.in_(["CONFIRMED", "COMPLETED", "scheduled"]),
+            Meeting.start_time >= start_date,
+            Meeting.end_time <= end_date
+        ).all()
+
+        room_meeting_count = len(meetings)
+        room_total_hours = 0.0
+
+        for m in meetings:
+            if m.start_time and m.end_time:
+                duration = (m.end_time - m.start_time).total_seconds() / 3600.0
+                room_total_hours += max(0.0, duration)
+
+        max_possible_hours = delta_days * 8.0
+        occupancy_rate = (room_total_hours / max_possible_hours * 100.0) if max_possible_hours > 0 else 0.0
+        occupancy_rate = min(100.0, occupancy_rate)
+
+        total_meetings_all += room_meeting_count
+        total_hours_all += room_total_hours
+
+        room_details.append({
+            "room_id": room.id,
+            "room_name": room.name,
+            "total_meetings": room_meeting_count,
+            "total_hours": round(room_total_hours, 2),
+            "occupancy_rate": round(occupancy_rate, 2)
+        })
+
+    avg_occupancy = (sum(r["occupancy_rate"] for r in room_details) / total_rooms_count) if total_rooms_count > 0 else 0.0
+
+    return {
+        "summary": {
+            "total_rooms": total_rooms_count,
+            "total_meetings": total_meetings_all,
+            "total_hours": round(total_hours_all, 2),
+            "average_occupancy_rate": round(avg_occupancy, 2)
+        },
+        "room_details": room_details
+    }
 ````
 
 ## File: app/schemas/__init__.py
 ````python
 
+````
+
+## File: app/schemas/reports.py
+````python
+from typing import List, Optional
+from pydantic import BaseModel, Field, ConfigDict
+
+
+class RoomReportDetail(BaseModel):
+    room_id: int = Field(..., description="ID của phòng họp")
+    room_name: str = Field(..., description="Tên phòng họp")
+    total_meetings: int = Field(..., description="Tổng số cuộc họp hợp lệ")
+    total_hours: float = Field(..., description="Tổng số giờ họp (đã làm tròn 1 chữ số thập phân)")
+    occupancy_rate: float = Field(..., description="Tỷ lệ lấp đầy (%) (đã làm tròn 1 chữ số thập phân)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoomReportSummary(BaseModel):
+    total_rooms: int = Field(..., description="Tổng số phòng họp trong báo cáo")
+    total_meetings: int = Field(..., description="Tổng số cuộc họp toàn hệ thống")
+    total_hours: float = Field(..., description="Tổng số giờ họp toàn hệ thống")
+    average_occupancy_rate: float = Field(..., description="Trung bình occupancy_rate các phòng")
+
+
+class RoomUsageReportResponse(BaseModel):
+    summary: RoomReportSummary
+    room_details: List[RoomReportDetail]
+````
+
+## File: app/services/calendar_email_service.py
+````python
+import logging
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
+
+from sqlalchemy.orm import Session
+
+from app.core.database import SessionLocal
+from app.models.meeting import Meeting, MeetingParticipant
+from app.models.user import User
+from app.services.google_calendar_service import make_calendar_consent_url, sync_user_meetings_to_google
+
+logger = logging.getLogger(__name__)
+
+
+def _send_calendar_consent_email(user: User, meetings: list[Meeting]) -> None:
+    host = os.getenv("SMTP_HOST")
+    username = os.getenv("SMTP_USERNAME")
+    password = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("SMTP_FROM_EMAIL") or username
+    if not all((host, username, password, from_email)):
+        logger.warning("Calendar permission email skipped: SMTP settings are incomplete")
+        return
+
+    try:
+        consent_url = make_calendar_consent_url(user)
+    except ValueError:
+        logger.warning("Calendar permission email skipped: user_id=%s has no email", user.id)
+        return
+
+    meeting_lines = []
+    for meeting in meetings:
+        start_time = meeting.start_time.strftime("%d/%m/%Y %H:%M")
+        meeting_lines.append(f"- {meeting.title} — {start_time}")
+
+    message = EmailMessage()
+    message["Subject"] = "Kết nối Google Calendar với RoomSync"
+    message["From"] = from_email
+    message["To"] = user.email
+    message.set_content(
+        f"Chào {user.full_name or user.username},\n\n"
+        "Bạn được mời tham dự các cuộc họp sau trong RoomSync:\n"
+        f"{chr(10).join(meeting_lines)}\n\n"
+        "Để các cuộc họp được tự động thêm vào Google Calendar của bạn, hãy mở liên kết dưới đây "
+        "và cấp quyền Calendar cho RoomSync. Google sẽ yêu cầu bạn xác nhận tài khoản trước khi cấp quyền.\n\n"
+        f"{consent_url}\n\n"
+        "Liên kết có hiệu lực trong 7 ngày và chỉ dùng để kết nối tài khoản có email đăng ký trong RoomSync.\n"
+        "Nếu bạn không mong đợi email này, có thể bỏ qua."
+    )
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().lower() in {"1", "true", "yes"}
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as smtp:
+            smtp.ehlo()
+            if use_starttls:
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+            smtp.login(username, password)
+            smtp.send_message(message)
+        logger.info("Calendar permission email sent to user_id=%s", user.id)
+    except (OSError, smtplib.SMTPException):
+        logger.exception("Calendar permission email failed for user_id=%s", user.id)
+
+
+def request_calendar_access_for_invitees(user_ids: list[int], meeting_ids: list[int]) -> None:
+    """Email unconnected invitees or sync their existing invited meetings."""
+    unique_user_ids = list(dict.fromkeys(user_ids))
+    unique_meeting_ids = list(dict.fromkeys(meeting_ids))
+    if not unique_user_ids or not unique_meeting_ids:
+        return
+
+    db: Session = SessionLocal()
+    try:
+        meetings_by_user = {}
+        for user_id in unique_user_ids:
+            user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+            if not user:
+                continue
+            meetings = (
+                db.query(Meeting)
+                .join(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+                .filter(
+                    MeetingParticipant.user_id == user_id,
+                    Meeting.id.in_(unique_meeting_ids),
+                    Meeting.status.notin_(["CANCELLED", "canceled"]),
+                )
+                .order_by(Meeting.start_time)
+                .all()
+            )
+            if meetings:
+                meetings_by_user[user_id] = (user, meetings)
+    finally:
+        db.close()
+
+    for user, meetings in meetings_by_user.values():
+        if user.google_refresh_token:
+            sync_user_meetings_to_google(user.id)
+        else:
+            _send_calendar_consent_email(user, meetings)
+````
+
+## File: app/services/google_calendar_service.py
+````python
+import base64
+import hashlib
+import hmac
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import httpx
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy.orm import Session
+
+from app.core.database import SessionLocal
+from app.core.security import SECRET_KEY
+from app.models.google_calendar_event import GoogleCalendarEvent
+from app.models.meeting import Meeting, MeetingParticipant
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_TOKEN_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+
+
+def _fernet() -> Fernet:
+    key = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY")
+    if not key:
+        raise RuntimeError("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured")
+    try:
+        return Fernet(key.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise RuntimeError("GOOGLE_TOKEN_ENCRYPTION_KEY must be a valid Fernet key") from exc
+
+
+def encrypt_refresh_token(refresh_token: str) -> str:
+    return _fernet().encrypt(refresh_token.encode("utf-8")).decode("ascii")
+
+
+def decrypt_refresh_token(encrypted_token: str) -> str:
+    try:
+        return _fernet().decrypt(encrypted_token.encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeEncodeError) as exc:
+        raise RuntimeError("Stored Google refresh token cannot be decrypted") from exc
+
+
+def make_calendar_consent_url(user: User) -> str:
+    if not user.email:
+        raise ValueError("Calendar consent requires a user email")
+    expires = int(datetime.now(timezone.utc).timestamp()) + 7 * 24 * 60 * 60
+    message = f"{user.id}:{user.email.strip().lower()}:{expires}"
+    signature = hmac.new(
+        SECRET_KEY.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    backend_url = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+    query = urlencode({"user_id": user.id, "expires": expires, "signature": signature})
+    return f"{backend_url}/api/auth/google/calendar/connect?{query}"
+
+
+def verify_calendar_consent_signature(user: User, expires: int, signature: str) -> bool:
+    import time
+
+    if expires < int(time.time()) or not user.email:
+        return False
+    message = f"{user.id}:{user.email.strip().lower()}:{expires}"
+    expected = hmac.new(
+        SECRET_KEY.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _google_config() -> tuple[str, str]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("Google OAuth client credentials are not configured")
+    return client_id, client_secret
+
+
+def _access_token(refresh_token: str) -> str:
+    client_id, client_secret = _google_config()
+    response = httpx.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=15,
+    )
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            error_data = response.json()
+        except ValueError:
+            error_data = {}
+        oauth_error = error_data.get("error") if isinstance(error_data, dict) else None
+        error_description = (
+            error_data.get("error_description")
+            if isinstance(error_data, dict)
+            else None
+        )
+        logger.error(
+            "Google OAuth refresh-token request failed (HTTP %s, error=%s): %s",
+            response.status_code,
+            oauth_error or "unknown",
+            error_description or response.text[:500] or str(exc),
+        )
+        raise
+    access_token = response.json().get("access_token")
+    if not access_token:
+        raise RuntimeError("Google did not return an access token")
+    return access_token
+
+
+def revoke_google_refresh_token(encrypted_refresh_token: str) -> None:
+    """Revoke a stored Google refresh token after the local account is disconnected."""
+    try:
+        refresh_token = decrypt_refresh_token(encrypted_refresh_token)
+        response = httpx.post(
+            GOOGLE_TOKEN_REVOKE_URL,
+            params={"token": refresh_token},
+            timeout=15,
+        )
+        response.raise_for_status()
+    except (RuntimeError, httpx.HTTPError):
+        logger.exception("Could not revoke the disconnected Google Calendar token")
+
+
+def _local_datetime(value: datetime) -> datetime:
+    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        zone = timezone(timedelta(hours=7))
+    if value.tzinfo is None:
+        return value.replace(tzinfo=zone)
+    return value.astimezone(zone)
+
+
+def _timezone_name() -> str:
+    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+    try:
+        ZoneInfo(timezone_name)
+        return timezone_name
+    except ZoneInfoNotFoundError:
+        return "Asia/Ho_Chi_Minh"
+
+
+def _google_event_id(user_id: int, meeting_id: int) -> str:
+    digest = hashlib.sha256(f"{user_id}:{meeting_id}".encode("ascii")).digest()
+    return base64.b32hexencode(digest).decode("ascii").rstrip("=").lower()
+
+
+def _event_payload(user_id: int, meeting: Meeting) -> dict:
+    room = meeting.room
+    if meeting.meeting_type == "online":
+        location = meeting.meeting_link or ""
+    elif room:
+        location = " - ".join(part for part in (room.name, room.location) if part)
+    else:
+        location = ""
+
+    details = [meeting.description or ""]
+    if meeting.meeting_type == "online" and meeting.meeting_link:
+        details.append(f"Meeting link: {meeting.meeting_link}")
+    description = "\n".join(part for part in details if part)
+    start = _local_datetime(meeting.start_time)
+    end = _local_datetime(meeting.end_time)
+    payload = {
+        "id": _google_event_id(user_id, meeting.id),
+        "summary": meeting.title,
+        "description": description,
+        "location": location,
+        "start": {"dateTime": start.isoformat(), "timeZone": _timezone_name()},
+        "end": {"dateTime": end.isoformat(), "timeZone": _timezone_name()},
+    }
+    if meeting.organizer_id == user_id:
+        attendees = [
+            {"email": participant.user.email}
+            for participant in meeting.participants
+            if participant.user and participant.user.email
+        ]
+        if attendees:
+            payload["attendees"] = attendees
+    return payload
+
+
+def _log_calendar_sync_http_error(
+    exc: httpx.HTTPStatusError,
+    *,
+    meeting_id: int,
+    user_id: int,
+) -> None:
+    response = exc.response
+    try:
+        error_data = response.json()
+    except ValueError:
+        error_data = {}
+
+    google_error = error_data.get("error", {}) if isinstance(error_data, dict) else {}
+    errors = google_error.get("errors", []) if isinstance(google_error, dict) else []
+    reason = errors[0].get("reason") if errors and isinstance(errors[0], dict) else None
+    message = google_error.get("message") if isinstance(google_error, dict) else None
+    message = message or response.text[:500] or str(exc)
+
+    if response.status_code == 403:
+        logger.error(
+            "Google Calendar denied sync for meeting_id=%s user_id=%s "
+            "(reason=%s): %s. If this is an insufficientPermissions error, "
+            "disconnect Google Calendar in Settings and connect again to grant "
+            "the calendar.events scope. Also verify Calendar API access and "
+            "the Google account's calendar sharing policy.",
+            meeting_id,
+            user_id,
+            reason or "unknown",
+            message,
+        )
+        return
+
+    logger.exception(
+        "Could not sync meeting_id=%s to Google Calendar for user_id=%s (HTTP %s)",
+        meeting_id,
+        user_id,
+        response.status_code,
+    )
+
+
+def sync_user_meetings_to_google(user_id: int) -> None:
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+        if not user or not user.google_refresh_token:
+            return
+        try:
+            refresh_token = decrypt_refresh_token(user.google_refresh_token)
+            access_token = _access_token(refresh_token)
+        except (RuntimeError, httpx.HTTPError) as exc:
+            logger.warning("Google Calendar authorization unavailable for user_id=%s: %s", user_id, exc)
+            return
+
+        meetings = (
+            db.query(Meeting)
+            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .filter(
+                (Meeting.organizer_id == user_id)
+                | (MeetingParticipant.user_id == user_id),
+                Meeting.status.notin_(["CANCELLED", "canceled"]),
+            )
+            .distinct()
+            .order_by(Meeting.start_time)
+            .all()
+        )
+        existing_meeting_ids = {
+            row[0]
+            for row in db.query(GoogleCalendarEvent.meeting_id)
+            .filter(GoogleCalendarEvent.user_id == user_id)
+            .all()
+        }
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+        for meeting in meetings:
+            if meeting.id in existing_meeting_ids:
+                continue
+            google_event_id = _google_event_id(user_id, meeting.id)
+            try:
+                response = httpx.post(
+                    GOOGLE_EVENTS_URL,
+                    headers=headers,
+                    json=_event_payload(user_id, meeting),
+                    params={"sendUpdates": "all"} if meeting.organizer_id == user_id else None,
+                    timeout=15,
+                )
+                if response.status_code == 409:
+                    pass
+                else:
+                    response.raise_for_status()
+                db.add(
+                    GoogleCalendarEvent(
+                        user_id=user_id,
+                        meeting_id=meeting.id,
+                        google_event_id=google_event_id,
+                    )
+                )
+                db.commit()
+                existing_meeting_ids.add(meeting.id)
+            except httpx.HTTPStatusError as exc:
+                db.rollback()
+                _log_calendar_sync_http_error(
+                    exc,
+                    meeting_id=meeting.id,
+                    user_id=user_id,
+                )
+            except (httpx.HTTPError, RuntimeError):
+                db.rollback()
+                logger.exception(
+                    "Could not sync meeting_id=%s to Google Calendar for user_id=%s",
+                    meeting.id,
+                    user_id,
+                )
+    finally:
+        db.close()
+
+
+def delete_google_calendar_event(user: User, google_event_id: str) -> bool:
+    """Delete one event from the connected user's primary Google Calendar."""
+    if not user.google_refresh_token:
+        logger.warning(
+            "Cannot delete Google event %s: user_id=%s has no refresh token",
+            google_event_id,
+            user.id,
+        )
+        return False
+
+    try:
+        refresh_token = decrypt_refresh_token(user.google_refresh_token)
+        client_id, client_secret = _google_config()
+        credentials = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri=GOOGLE_TOKEN_URL,
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=[GOOGLE_CALENDAR_EVENTS_SCOPE],
+        )
+        credentials.refresh(GoogleAuthRequest())
+        service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
+        service.events().delete(
+            calendarId="primary",
+            eventId=google_event_id,
+        ).execute()
+        return True
+    except HttpError as exc:
+        response_status = getattr(getattr(exc, "resp", None), "status", None)
+        if response_status in {404, 410}:
+            logger.warning(
+                "Google event %s is already deleted (HTTP %s) for user_id=%s",
+                google_event_id,
+                response_status,
+                user.id,
+            )
+            return True
+        logger.exception(
+            "Failed to delete Google event %s for user_id=%s (HTTP %s)",
+            google_event_id,
+            user.id,
+            response_status,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            "Failed to delete Google event %s for user_id=%s",
+            google_event_id,
+            user.id,
+        )
+        return False
+
+
+def delete_google_events_for_meeting(meeting_id: int) -> None:
+    """Delete tracked attendee events and retain mappings if Google is unavailable."""
+    db: Session = SessionLocal()
+    try:
+        event_records = (
+            db.query(GoogleCalendarEvent)
+            .filter(GoogleCalendarEvent.meeting_id == meeting_id)
+            .all()
+        )
+        for event_record in event_records:
+            user = db.query(User).filter(User.id == event_record.user_id).first()
+            if user is None:
+                db.delete(event_record)
+                continue
+            if delete_google_calendar_event(user, event_record.google_event_id):
+                db.delete(event_record)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Could not process Google events for meeting_id=%s", meeting_id)
+    finally:
+        db.close()
 ````
 
 ## File: app/services/notification_service.py
@@ -904,6 +1893,112 @@ def send_meeting_invitation_notifications(
         title = "Lời mời tham dự cuộc họp mới"
         content = f"Bạn được mời tham gia cuộc họp '{meeting_title}' diễn ra vào lúc {start_time_str}."
         create_notification(db, user_id=user_id, title=title, content=content)
+````
+
+## File: app/services/reports.py
+````python
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_, case
+
+from app.models.room import Room
+from app.models.meeting import Meeting
+
+
+class ReportRoomService:
+    @staticmethod
+    async def get_room_usage_report(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        room_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        # 1. Thiết lập giá trị thời gian mặc định nếu không được cung cấp
+        now = datetime.now()
+        if not end_date:
+            end_date = now
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        # 2. Tính toán tham số days: days = max((end_date - start_date).total_seconds()/86400, 1/24)
+        total_seconds = (end_date - start_date).total_seconds()
+        days = max(total_seconds / 86400.0, 1.0 / 24.0)
+
+        # 3. Điều kiện lọc cuộc họp (chỉ CONFIRMED hoặc COMPLETED và thuộc khoảng thời gian)
+        meeting_filter = and_(
+            Meeting.status.in_(["CONFIRMED", "COMPLETED"]),
+            Meeting.start_time >= start_date,
+            Meeting.end_time <= end_date
+        )
+
+        # Tính thời lượng cuộc họp bằng giây qua TIMESTAMPDIFF (tối ưu cho MySQL)
+        meeting_duration_hours = func.timestampdiff(func.SECOND, Meeting.start_time, Meeting.end_time) / 3600.0
+
+        # 4. Truy vấn cơ sở dữ liệu tối ưu với LEFT JOIN và GROUP BY
+        query = (
+            select(
+                Room.id.label("room_id"),
+                Room.name.label("room_name"),
+                func.count(case((meeting_filter, Meeting.id), else_=None)).label("total_meetings"),
+                func.coalesce(
+                    func.sum(case((meeting_filter, meeting_duration_hours), else_=0.0)),
+                    0.0
+                ).label("total_hours")
+            )
+            .select_from(Room)
+            .outerjoin(Meeting, Room.id == Meeting.room_id)
+            .group_by(Room.id, Room.name)
+        )
+
+        if room_id is not None:
+            query = query.where(Room.id == room_id)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        # 5. Duyệt và tính toán các chỉ số cho từng phòng
+        room_details: List[Dict[str, Any]] = []
+        sum_occupancy_rate = 0.0
+        total_system_meetings = 0
+        total_system_hours = 0.0
+
+        for row in rows:
+            r_id = row.room_id
+            r_name = row.room_name
+            t_meetings = int(row.total_meetings)
+            t_hours = round(float(row.total_hours), 1)
+
+            # Công thức: occupancy_rate = (total_hours / (days * 8)) * 100
+            raw_occupancy = (t_hours / (days * 8.0)) * 100.0
+            occ_rate = round(raw_occupancy, 1)
+
+            room_details.append({
+                "room_id": r_id,
+                "room_name": r_name,
+                "total_meetings": t_meetings,
+                "total_hours": t_hours,
+                "occupancy_rate": occ_rate
+            })
+
+            total_system_meetings += t_meetings
+            total_system_hours += t_hours
+            sum_occupancy_rate += occ_rate
+
+        # 6. Tổng hợp dữ liệu summary toàn hệ thống
+        total_rooms = len(room_details)
+        avg_occupancy_rate = round(sum_occupancy_rate / total_rooms, 1) if total_rooms > 0 else 0.0
+        total_system_hours = round(total_system_hours, 1)
+
+        return {
+            "summary": {
+                "total_rooms": total_rooms,
+                "total_meetings": total_system_meetings,
+                "total_hours": total_system_hours,
+                "average_occupancy_rate": avg_occupancy_rate
+            },
+            "room_details": room_details
+        }
 ````
 
 ## File: app/services/room_service.py
@@ -1854,6 +2949,2529 @@ def get_available_rooms(
 }
 ````
 
+## File: frontend/js/auth.js
+````javascript
+const AUTH_API_BASE = window.AUTH_API_BASE || 'http://localhost:8000/api';
+
+function handleGoogleAuthCallback() {
+    const callbackValues = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = callbackValues.get('access_token');
+
+    if (accessToken) {
+        localStorage.setItem('token', accessToken);
+        localStorage.setItem('access_token', accessToken);
+
+        const valuesToStore = {
+            role: callbackValues.get('role'),
+            user_name: callbackValues.get('full_name'),
+            user_email: callbackValues.get('email'),
+            user_id: callbackValues.get('user_id'),
+            user_picture: callbackValues.get('picture'),
+        };
+        Object.entries(valuesToStore).forEach(([key, value]) => {
+            if (value) localStorage.setItem(key, value);
+        });
+
+        const dashboardUrl = new URL('dashboard.html', window.location.href);
+        window.location.replace(dashboardUrl.href);
+        return;
+    }
+
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('calendar_connected') === '1') {
+        const successAlert = document.getElementById('errorAlert');
+        if (successAlert) {
+            successAlert.textContent = 'Đã kết nối Google Calendar. Các cuộc họp được mời sẽ được đồng bộ.';
+            successAlert.classList.remove('hidden', 'bg-red-50', 'border-red-200', 'text-red-600');
+            successAlert.classList.add('bg-green-50', 'border-green-200', 'text-green-700');
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return;
+    }
+    const oauthError = query.get('google_error');
+    if (!oauthError) return;
+
+    const errorAlert = document.getElementById('errorAlert');
+    const messages = {
+        access_denied: 'Bạn đã hủy đăng nhập bằng Google.',
+        calendar_permission_denied: 'Bạn chưa cấp quyền Google Calendar cho RoomSync.',
+        oauth_failed: 'Không thể đăng nhập bằng Google. Vui lòng thử lại.',
+    };
+    if (errorAlert) {
+        errorAlert.textContent = messages[oauthError] || messages.oauth_failed;
+        errorAlert.classList.remove('hidden');
+    }
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const googleButton = document.getElementById('googleLoginButton');
+    googleButton?.addEventListener('click', () => {
+        window.location.assign(`${AUTH_API_BASE}/auth/google/login`);
+    });
+
+    handleGoogleAuthCallback();
+});
+````
+
+## File: migrations/001_add_meeting_recurring_columns.sql
+````sql
+-- Additive migration for existing MySQL databases. Run while using meeting_db.
+-- Safe to re-run: each column is only added if it does not already exist.
+
+USE meeting_db;
+
+-- Check and add is_recurring
+SET @has_is_recurring = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'meetings'
+      AND COLUMN_NAME  = 'is_recurring'
+);
+
+SET @add_is_recurring = IF(
+    @has_is_recurring = 0,
+    'ALTER TABLE meetings ADD COLUMN is_recurring TINYINT(1) NOT NULL DEFAULT 0 AFTER description',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_is_recurring;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Check and add recurring_type
+SET @has_recurring_type = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'meetings'
+      AND COLUMN_NAME  = 'recurring_type'
+);
+
+SET @add_recurring_type = IF(
+    @has_recurring_type = 0,
+    'ALTER TABLE meetings ADD COLUMN recurring_type VARCHAR(20) NULL AFTER is_recurring',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_recurring_type;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+````
+
+## File: migrations/002_add_meeting_participants.sql
+````sql
+-- Additive migration: meeting_participants . Does not drop any database or data.
+USE meeting_db;
+
+CREATE TABLE IF NOT EXISTS meeting_participants (
+    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    meeting_id INT UNSIGNED NOT NULL,
+    user_id    INT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_meeting_participant (meeting_id, user_id),
+    CONSTRAINT fk_meeting_participants_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_meeting_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+````
+
+## File: migrations/003_add_equipment_tables.sql
+````sql
+-- 1. Bảng danh mục thiết bị trong kho
+CREATE TABLE IF NOT EXISTS equipments (
+    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name        VARCHAR(150) NOT NULL,
+    code        VARCHAR(50) DEFAULT NULL,
+    category    VARCHAR(50) DEFAULT NULL,
+    total_qty   INT NOT NULL DEFAULT 1,
+    description TEXT DEFAULT NULL,
+    is_active   TINYINT(1) NOT NULL DEFAULT 1,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_equipments_code (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. Bảng đăng ký mượn thiết bị theo cuộc họp
+CREATE TABLE IF NOT EXISTS meeting_equipments (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    meeting_id   INT UNSIGNED NOT NULL,
+    equipment_id INT UNSIGNED NOT NULL,
+    quantity     INT NOT NULL DEFAULT 1,
+    note         VARCHAR(255) DEFAULT NULL,
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_meeting_equipment (meeting_id, equipment_id),
+    KEY idx_meeting_equipments_meeting (meeting_id),
+    KEY idx_meeting_equipments_equipment (equipment_id),
+    CONSTRAINT fk_me_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_me_equipment FOREIGN KEY (equipment_id) REFERENCES equipments (id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3. Bảng thiết bị cố định đi kèm phòng
+CREATE TABLE IF NOT EXISTS room_equipments (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    room_id      INT UNSIGNED NOT NULL,
+    equipment_id INT UNSIGNED NOT NULL,
+    quantity     INT NOT NULL DEFAULT 1,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_room_equipment (room_id, equipment_id),
+    CONSTRAINT fk_re_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_re_equipment FOREIGN KEY (equipment_id) REFERENCES equipments (id) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+````
+
+## File: migrations/004_add_room_amenities.sql
+````sql
+ALTER TABLE rooms
+    ADD COLUMN amenities TEXT DEFAULT NULL AFTER description;
+````
+
+## File: migrations/005_add_meeting_type_and_link.sql
+````sql
+-- Add meeting mode/link fields and allow room deletion without deleting meetings.
+-- Safe to re-run against databases where some or all changes already exist.
+
+USE meeting_db;
+
+-- Add meeting_type when it is not already present.
+SET @has_meeting_type = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meetings'
+      AND COLUMN_NAME = 'meeting_type'
+);
+
+SET @add_meeting_type = IF(
+    @has_meeting_type = 0,
+    'ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT ''offline''',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_meeting_type;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add meeting_link when it is not already present.
+SET @has_meeting_link = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meetings'
+      AND COLUMN_NAME = 'meeting_link'
+);
+
+SET @add_meeting_link = IF(
+    @has_meeting_link = 0,
+    'ALTER TABLE meetings ADD COLUMN meeting_link VARCHAR(255) NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_meeting_link;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Replace the current room foreign key, regardless of its constraint name.
+SET @room_fk = (
+    SELECT CONSTRAINT_NAME
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meetings'
+      AND COLUMN_NAME = 'room_id'
+      AND REFERENCED_TABLE_NAME = 'rooms'
+    LIMIT 1
+);
+
+SET @drop_room_fk = IF(
+    @room_fk IS NULL,
+    'SELECT 1',
+    CONCAT('ALTER TABLE meetings DROP FOREIGN KEY `', @room_fk, '`')
+);
+PREPARE stmt FROM @drop_room_fk;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+ALTER TABLE meetings MODIFY COLUMN room_id INT UNSIGNED NULL;
+ALTER TABLE meetings
+    ADD CONSTRAINT fk_meetings_room
+    FOREIGN KEY (room_id) REFERENCES rooms (id)
+    ON DELETE SET NULL ON UPDATE CASCADE;
+````
+
+## File: migrations/005_align_meetings_schema.sql
+````sql
+-- ============================================================
+-- Migration 005: Align meetings table với model thực tế
+-- Safe: chỉ modify room_id nullable + update default meeting_type
+-- Không DROP cột nào, không mất dữ liệu
+-- ============================================================
+USE meeting_db;
+
+-- 1. Chuẩn hóa meeting_type: đổi default về lowercase 'offline'
+--    Các row cũ đang có giá trị 'OFFLINE' — cập nhật về lowercase để nhất quán
+UPDATE meetings SET meeting_type = 'offline' WHERE meeting_type = 'OFFLINE';
+UPDATE meetings SET meeting_type = 'online'  WHERE meeting_type = 'ONLINE';
+
+ALTER TABLE meetings
+    MODIFY COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline';
+
+-- 2. Nullable room_id: drop FK cũ, alter column, re-add FK với SET NULL
+ALTER TABLE meetings DROP FOREIGN KEY meetings_ibfk_1;
+ALTER TABLE meetings MODIFY COLUMN room_id INT NULL;
+ALTER TABLE meetings
+    ADD CONSTRAINT fk_meetings_room
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Verify: DESCRIBE meetings;
+````
+
+## File: migrations/006_reconcile_live_room_meeting_schema.sql
+````sql
+-- Reconcile an existing MySQL database with the current room/meeting models.
+-- Additive and repeatable: existing row values are retained.
+
+SET @has_amenities = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'rooms'
+      AND COLUMN_NAME = 'amenities'
+);
+SET @add_amenities = IF(
+    @has_amenities = 0,
+    'ALTER TABLE rooms ADD COLUMN amenities TEXT NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_amenities;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @has_meeting_type = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meetings'
+      AND COLUMN_NAME = 'meeting_type'
+);
+SET @add_meeting_type = IF(
+    @has_meeting_type = 0,
+    'ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT ''offline''',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_meeting_type;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @has_meeting_link = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meetings'
+      AND COLUMN_NAME = 'meeting_link'
+);
+SET @add_meeting_link = IF(
+    @has_meeting_link = 0,
+    'ALTER TABLE meetings ADD COLUMN meeting_link VARCHAR(255) NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_meeting_link;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @room_fk = (
+    SELECT CONSTRAINT_NAME
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'meetings'
+      AND COLUMN_NAME = 'room_id'
+      AND REFERENCED_TABLE_NAME = 'rooms'
+    LIMIT 1
+);
+SET @drop_room_fk = IF(
+    @room_fk IS NULL,
+    'SELECT 1',
+    CONCAT('ALTER TABLE meetings DROP FOREIGN KEY `', @room_fk, '`')
+);
+PREPARE stmt FROM @drop_room_fk;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+ALTER TABLE meetings
+    MODIFY COLUMN room_id INT NULL COMMENT 'Phòng họp';
+
+ALTER TABLE meetings
+    ADD CONSTRAINT fk_meetings_room
+    FOREIGN KEY (room_id) REFERENCES rooms (id)
+    ON DELETE SET NULL ON UPDATE CASCADE;
+````
+
+## File: migrations/007_add_google_calendar_connection.sql
+````sql
+-- Store encrypted Google Calendar refresh tokens for opted-in users.
+-- Run against the application's configured database.
+
+SET @has_google_refresh_token = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'users'
+      AND COLUMN_NAME = 'google_refresh_token'
+);
+SET @add_google_refresh_token = IF(
+    @has_google_refresh_token = 0,
+    'ALTER TABLE users ADD COLUMN google_refresh_token TEXT NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_google_refresh_token;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @has_google_calendar_connected_at = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'users'
+      AND COLUMN_NAME = 'google_calendar_connected_at'
+);
+SET @add_google_calendar_connected_at = IF(
+    @has_google_calendar_connected_at = 0,
+    'ALTER TABLE users ADD COLUMN google_calendar_connected_at DATETIME NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_google_calendar_connected_at;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+````
+
+## File: migrations/007_google_calendar_invitees.sql
+````sql
+-- Calendar refresh tokens are stored encrypted by the application.
+-- Apply this migration to the configured MySQL database before deploying.
+
+SET @has_google_refresh_token = (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'users'
+      AND COLUMN_NAME = 'google_refresh_token'
+);
+SET @add_google_refresh_token = IF(
+    @has_google_refresh_token = 0,
+    'ALTER TABLE users ADD COLUMN google_refresh_token TEXT NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_google_refresh_token;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @has_google_calendar_connected_at = (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'users'
+      AND COLUMN_NAME = 'google_calendar_connected_at'
+);
+SET @add_google_calendar_connected_at = IF(
+    @has_google_calendar_connected_at = 0,
+    'ALTER TABLE users ADD COLUMN google_calendar_connected_at DATETIME NULL',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_google_calendar_connected_at;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS google_calendar_events (
+    id INT NOT NULL AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    meeting_id INT NOT NULL,
+    google_event_id VARCHAR(255) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_google_event_user_meeting (user_id, meeting_id),
+    UNIQUE KEY uq_google_event_user_event (user_id, google_event_id),
+    CONSTRAINT fk_google_calendar_event_user
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_google_calendar_event_meeting
+        FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+````
+
+## File: tests/__init__.py
+````python
+
+````
+
+## File: tests/conftest.py
+````python
+"""Pytest configuration: in-memory SQLite, fixtures, and app setup."""
+
+import os
+import sys
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+
+# Ensure project root is importable and force SQLite BEFORE any app import.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["DATABASE_URL"] = "sqlite:///test.db"
+os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only"
+
+from app.core.database import Base, get_db, engine as app_engine
+from app.main import app
+
+# Release connections opened by create_all at import time.
+app_engine.dispose()
+
+# Test engine with SQLite-friendly settings.
+test_engine = create_engine(
+    "sqlite:///test.db",
+    connect_args={"check_same_thread": False},
+)
+
+
+@event.listens_for(test_engine, "connect")
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+def _override_get_db():
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+app.dependency_overrides[get_db] = _override_get_db
+
+
+@pytest.fixture(autouse=True)
+def _recreate_tables():
+    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.create_all(bind=test_engine)
+    yield
+    Base.metadata.drop_all(bind=test_engine)
+
+
+@pytest.fixture()
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture()
+def db_session():
+    session = TestSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+````
+
+## File: tests/helpers.py
+````python
+"""Shared test helpers."""
+
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+
+from app.models.user import User
+from app.models.room import Room
+from app.models.meeting import Meeting, MeetingParticipant
+from app.core.security import hash_password, create_access_token
+
+
+def _create_user(db: Session, username: str, role: str = "employee", password: str = "password123") -> User:
+    user = User(
+        username=username,
+        email=f"{username}@test.local",
+        full_name=f"Test {username}",
+        hashed_password=hash_password(password),
+        role=role,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _create_room(db: Session, name: str = "Room A") -> Room:
+    room = Room(name=name, capacity=10, location="Floor 1", is_active=True)
+    db.add(room)
+    db.commit()
+    db.refresh(room)
+    return room
+
+
+def _create_meeting(
+    db: Session,
+    room: Room,
+    organizer: User,
+    start: datetime,
+    end: datetime,
+    status: str = "scheduled",
+) -> Meeting:
+    m = Meeting(
+        title="Test meeting",
+        description="desc",
+        room_id=room.id,
+        organizer_id=organizer.id,
+        start_time=start,
+        end_time=end,
+        status=status,
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return m
+
+
+def _add_participant(db: Session, meeting: Meeting, user: User) -> MeetingParticipant:
+    mp = MeetingParticipant(meeting_id=meeting.id, user_id=user.id)
+    db.add(mp)
+    db.commit()
+    db.refresh(mp)
+    return mp
+
+
+def _make_token(user: User) -> str:
+    return create_access_token(
+        data={"sub": user.username, "user_id": user.id, "role": user.role}
+    )
+
+
+def _auth_header(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+````
+
+## File: tests/test_calendar_email.py
+````python
+from datetime import datetime, timedelta
+
+from app.models.meeting import MeetingParticipant
+from app.services import calendar_email_service
+from tests.helpers import _create_meeting, _create_room, _create_user
+
+
+class FakeSMTP:
+    sent_messages = []
+
+    def __init__(self, host, port, timeout):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def ehlo(self):
+        return None
+
+    def starttls(self, context):
+        return None
+
+    def login(self, username, password):
+        return None
+
+    def send_message(self, message):
+        self.sent_messages.append(message)
+
+
+def test_unconnected_invitee_receives_calendar_consent_email(
+    db_session, monkeypatch
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USERNAME", "calendar@example.test")
+    monkeypatch.setenv("SMTP_PASSWORD", "test-smtp-password")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "calendar@example.test")
+    monkeypatch.setenv("SMTP_STARTTLS", "false")
+    monkeypatch.setenv("BACKEND_PUBLIC_URL", "https://roomsync.example.test")
+    FakeSMTP.sent_messages = []
+    monkeypatch.setattr(calendar_email_service.smtplib, "SMTP", FakeSMTP)
+
+    organizer = _create_user(db_session, "email-organizer")
+    invitee = _create_user(db_session, "email-invitee")
+    invitee.email = "invitee@example.test"
+    db_session.commit()
+    room = _create_room(db_session, "Calendar Email Room")
+    start = datetime.now() + timedelta(days=2)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+    db_session.add(MeetingParticipant(meeting_id=meeting.id, user_id=invitee.id))
+    db_session.commit()
+
+    calendar_email_service.request_calendar_access_for_invitees([invitee.id], [meeting.id])
+
+    assert len(FakeSMTP.sent_messages) == 1
+    sent = FakeSMTP.sent_messages[0]
+    assert sent["To"] == "invitee@example.test"
+    assert "Kết nối Google Calendar" in sent["Subject"]
+    assert "/api/auth/google/calendar/connect?" in sent.get_content()
+    assert "Calendar Email Room" not in sent.get_content()
+    assert meeting.title in sent.get_content()
+````
+
+## File: tests/test_equipment_admin.py
+````python
+"""Unit tests for Equipment Admin flow (POST, PUT, GET include_inactive, permission checks)."""
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.equipment import Equipment, MeetingEquipment
+from app.models.user import User
+from tests.helpers import _auth_header, _create_meeting, _create_room, _create_user, _make_token
+
+
+def _create_test_equipment(db: Session, name: str = "Mic Test", total_qty: int = 5, is_active: bool = True) -> Equipment:
+    equip = Equipment(
+        name=name,
+        code="TEST-01",
+        category="Audio",
+        total_qty=total_qty,
+        is_active=is_active,
+    )
+    db.add(equip)
+    db.commit()
+    db.refresh(equip)
+    return equip
+
+
+def test_post_and_put_require_admin_token(client: TestClient, db_session: Session):
+    """Test API POST và PUT: Phải trả về 403 Forbidden hoặc 401 Unauthorized nếu không có token Admin."""
+    employee = _create_user(db_session, username="employee1", role="employee")
+    emp_token = _make_token(employee)
+
+    payload = {
+        "name": "Projector Ultra HD",
+        "code": "PRJ-999",
+        "category": "Visual",
+        "total_qty": 2,
+    }
+
+    # 1. POST without token -> 401 Unauthorized
+    resp_no_auth = client.post("/api/equipments/", json=payload)
+    assert resp_no_auth.status_code in (401, 403)
+
+    # 2. POST with employee token -> 403 Forbidden
+    resp_emp = client.post("/api/equipments/", json=payload, headers=_auth_header(emp_token))
+    assert resp_emp.status_code == 403
+
+    # Create an equipment for testing PUT permission
+    equip = _create_test_equipment(db_session)
+
+    update_payload = {"name": "Mic Test Updated"}
+
+    # 3. PUT without token -> 401/403
+    resp_put_no_auth = client.put(f"/api/equipments/{equip.id}", json=update_payload)
+    assert resp_put_no_auth.status_code in (401, 403)
+
+    # 4. PUT with employee token -> 403 Forbidden
+    resp_put_emp = client.put(f"/api/equipments/{equip.id}", json=update_payload, headers=_auth_header(emp_token))
+    assert resp_put_emp.status_code == 403
+
+
+def test_toggle_is_active_and_include_inactive_query(client: TestClient, db_session: Session):
+    """Tạo 1 thiết bị, sau đó gọi PUT để đổi is_active từ True sang False.
+
+    Gọi GET /?include_inactive=true để kiểm tra thiết bị vừa tắt vẫn hiển thị trong list của Admin.
+    """
+    admin = _create_user(db_session, username="admin1", role="admin")
+    admin_token = _make_token(admin)
+    headers = _auth_header(admin_token)
+
+    # 1. Admin POST to create a new equipment (is_active Defaults to True)
+    create_payload = {
+        "name": "Smart Board 75 inch",
+        "code": "SB-075",
+        "category": "Display",
+        "total_qty": 3,
+        "is_active": True,
+    }
+    create_resp = client.post("/api/equipments/", json=create_payload, headers=headers)
+    assert create_resp.status_code == 201
+    created_id = create_resp.json()["id"]
+    assert create_resp.json()["is_active"] is True
+
+    # 2. Call PUT to change is_active from True to False
+    put_payload = {"is_active": False}
+    put_resp = client.put(f"/api/equipments/{created_id}", json=put_payload, headers=headers)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["is_active"] is False
+
+    # 3. GET /api/equipments/ (default include_inactive=false) -> Should NOT contain the inactive equipment
+    get_active_resp = client.get("/api/equipments/", headers=headers)
+    assert get_active_resp.status_code == 200
+    active_ids = [item["id"] for item in get_active_resp.json()]
+    assert created_id not in active_ids
+
+    # 4. GET /api/equipments/?include_inactive=true -> MUST contain the inactive equipment for Admin
+    get_all_resp = client.get("/api/equipments/?include_inactive=true", headers=headers)
+    assert get_all_resp.status_code == 200
+    all_ids = [item["id"] for item in get_all_resp.json()]
+    assert created_id in all_ids
+
+
+def test_update_total_qty_does_not_corrupt_meeting_equipments(client: TestClient, db_session: Session):
+    """AC 4: Khi Admin sửa total_qty của 1 thiết bị, sự thay đổi lưu thành công mà không làm hỏng dữ liệu meeting_equipments."""
+    admin = _create_user(db_session, username="admin_qty", role="admin")
+    admin_token = _make_token(admin)
+    headers = _auth_header(admin_token)
+
+    equip = _create_test_equipment(db_session, total_qty=5)
+    organizer = _create_user(db_session, username="organizer_qty")
+    room = _create_room(db_session, name="Room Qty")
+    from datetime import datetime
+    meeting = _create_meeting(db_session, room, organizer, datetime.now(), datetime.now())
+
+    # Link meeting to equipment
+    me = MeetingEquipment(meeting_id=meeting.id, equipment_id=equip.id, quantity=2, note="For workshop")
+    db_session.add(me)
+    db_session.commit()
+
+    # Admin updates total_qty from 5 to 12
+    put_resp = client.put(f"/api/equipments/{equip.id}", json={"total_qty": 12}, headers=headers)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["total_qty"] == 12
+
+    # Verify meeting_equipments link is intact
+    me_db = db_session.query(MeetingEquipment).filter_by(meeting_id=meeting.id, equipment_id=equip.id).first()
+    assert me_db is not None
+    assert me_db.quantity == 2
+    assert me_db.equipment.total_qty == 12
+````
+
+## File: tests/test_equipment_availability.py
+````python
+from datetime import datetime
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.equipment import Equipment, MeetingEquipment
+from tests.helpers import _create_meeting, _create_room, _create_user
+
+
+def _create_equipment(db: Session, total_qty: int = 5) -> Equipment:
+    equipment = Equipment(
+        name="Conference microphone",
+        code="MIC-01",
+        category="Audio",
+        total_qty=total_qty,
+        is_active=True,
+    )
+    db.add(equipment)
+    db.commit()
+    db.refresh(equipment)
+    return equipment
+
+
+def _attach_equipment(db: Session, meeting_id: int, equipment_id: int, quantity: int):
+    allocation = MeetingEquipment(
+        meeting_id=meeting_id,
+        equipment_id=equipment_id,
+        quantity=quantity,
+    )
+    db.add(allocation)
+    db.commit()
+    return allocation
+
+
+def test_availability_tracks_overlapping_bookings_and_inactive_status(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "equipment-organizer")
+    room = _create_room(db_session, "Equipment Room")
+    equipment = _create_equipment(db_session)
+
+    first_meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime(2026, 10, 5, 9, 0),
+        datetime(2026, 10, 5, 10, 0),
+    )
+    _attach_equipment(db_session, first_meeting.id, equipment.id, 2)
+
+    params = {
+        "start_time": "2026-10-05T09:30:00",
+        "end_time": "2026-10-05T10:30:00",
+    }
+    response = client.get("/api/equipments/availability", params=params)
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert item["booked_qty"] == 2
+    assert item["available_qty"] == 3
+    assert item["status_label"] == "Có sẵn"
+
+    second_meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime(2026, 10, 5, 9, 45),
+        datetime(2026, 10, 5, 10, 15),
+    )
+    _attach_equipment(db_session, second_meeting.id, equipment.id, 3)
+
+    response = client.get("/api/equipments/availability", params=params)
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert item["booked_qty"] == 5
+    assert item["available_qty"] == 0
+    assert item["status_label"] == "Đã đặt hết"
+
+    equipment.is_active = False
+    db_session.commit()
+    response = client.get("/api/equipments/availability", params=params)
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert item["status_label"] == "Ngừng hoạt động / Bảo trì"
+
+
+def test_availability_ignores_canceled_meetings_and_supports_filters(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "equipment-canceled-organizer")
+    room = _create_room(db_session, "Equipment Canceled Room")
+    equipment = _create_equipment(db_session)
+    canceled_meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime(2026, 10, 5, 9, 0),
+        datetime(2026, 10, 5, 10, 0),
+        status="CANCELLED",
+    )
+    _attach_equipment(db_session, canceled_meeting.id, equipment.id, 5)
+
+    response = client.get(
+        "/api/equipments/availability",
+        params={
+            "start_time": "2026-10-05T09:30:00",
+            "end_time": "2026-10-05T10:30:00",
+            "category": "Audio",
+            "search": "MIC-01",
+        },
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["booked_qty"] == 0
+
+
+def test_availability_defaults_to_current_time(client: TestClient, db_session: Session):
+    _create_equipment(db_session)
+
+    response = client.get("/api/equipments/availability")
+
+    assert response.status_code == 200
+    assert response.json()[0]["available_qty"] == 5
+````
+
+## File: tests/test_google_auth.py
+````python
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlsplit
+
+from cryptography.fernet import Fernet
+
+from app.models.user import User
+from app.routers import auth as auth_router
+from app.core.security import hash_password
+from app.services.google_calendar_service import (
+    decrypt_refresh_token,
+    encrypt_refresh_token,
+    make_calendar_consent_url,
+)
+from tests.helpers import _auth_header, _create_user, _make_token
+
+
+class MockGoogleResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.body
+
+
+def _configure_google_oauth(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-google-secret")
+    monkeypatch.setenv(
+        "GOOGLE_REDIRECT_URI",
+        "http://localhost:8000/api/auth/google/callback",
+    )
+    monkeypatch.setenv(
+        "FRONTEND_LOGIN_URL",
+        "http://localhost:8000/static/login.html",
+    )
+
+
+def _mock_google_profile(monkeypatch, profile, token_data=None):
+    token_data = token_data or {"access_token": "google-access-token"}
+    monkeypatch.setattr(
+        auth_router.httpx,
+        "post",
+        lambda *args, **kwargs: MockGoogleResponse(token_data),
+    )
+    monkeypatch.setattr(
+        auth_router.httpx,
+        "get",
+        lambda *args, **kwargs: MockGoogleResponse(profile),
+    )
+
+
+def _start_google_login(client):
+    response = client.get("/api/auth/google/login", follow_redirects=False)
+    assert response.status_code == 307
+    return response, urlsplit(response.headers["location"])
+
+
+def _complete_google_login(client, login_response, location):
+    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    return client.get(
+        f"/api/auth/google/callback?code=test-code&state={state}",
+        follow_redirects=False,
+    )
+
+
+def test_google_login_redirect_requests_openid_email_profile(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+
+    response, location = _start_google_login(client)
+    query = parse_qs(location.query)
+
+    assert location.hostname == "accounts.google.com"
+    assert query["scope"] == ["openid email profile"]
+    assert query["response_type"] == ["code"]
+    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].startswith(query["state"][0] + "|")
+
+
+def test_calendar_settings_authorization_returns_url_and_state_cookie(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    user = _create_user(db_session, "settings-calendar-owner")
+
+    response = client.get(
+        "/api/auth/google/calendar/authorize",
+        headers=_auth_header(_make_token(user)),
+    )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    query = parse_qs(urlsplit(authorization_url).query)
+    assert query["scope"] == [
+        "openid email profile https://www.googleapis.com/auth/calendar.events"
+    ]
+    assert query["access_type"] == ["offline"]
+    assert query["prompt"] == ["consent"]
+    assert response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|")[1] == "calendar_settings"
+
+
+def test_calendar_settings_can_connect_a_different_google_account(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = _create_user(db_session, "settings-calendar-different-google")
+    user.google_refresh_token = encrypt_refresh_token("old-refresh-token")
+    db_session.commit()
+    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
+    authorization = client.get(
+        "/api/auth/google/calendar/authorize",
+        headers=_auth_header(_make_token(user)),
+    )
+    state = authorization.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "personal.calendar@example.test",
+            "email_verified": True,
+            "name": "Personal Calendar",
+        },
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert callback.headers["location"].startswith(
+        "http://localhost:8000/static/dashboard.html?calendar_connected=1"
+    )
+    db_session.refresh(user)
+    assert decrypt_refresh_token(user.google_refresh_token) != "old-refresh-token"
+    assert decrypt_refresh_token(user.google_refresh_token) == "private-refresh-token"
+
+
+def test_calendar_status_and_disconnect(client, db_session, monkeypatch):
+    user = _create_user(db_session, "settings-calendar-disconnect")
+    headers = _auth_header(_make_token(user))
+    revoke_calls = []
+    monkeypatch.setattr(
+        auth_router,
+        "revoke_google_refresh_token",
+        revoke_calls.append,
+    )
+
+    disconnected = client.get("/api/auth/google/calendar/status", headers=headers)
+    assert disconnected.status_code == 200
+    assert disconnected.json() == {"connected": False, "connected_at": None}
+
+    user.google_refresh_token = "encrypted-refresh-token"
+    user.google_calendar_connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_session.commit()
+    connected = client.get("/api/auth/google/calendar/status", headers=headers)
+    assert connected.json()["connected"] is True
+
+    response = client.delete(
+        "/api/auth/google/calendar/disconnect",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False}
+    assert revoke_calls == ["encrypted-refresh-token"]
+    db_session.refresh(user)
+    assert user.google_refresh_token is None
+    assert user.google_calendar_connected_at is None
+
+
+def test_google_callback_registers_new_user_and_redirects_with_token(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "new.person@example.test",
+            "email_verified": True,
+            "name": "New Person",
+            "picture": "https://images.example.test/person.png",
+        },
+    )
+    login_response, location = _start_google_login(client)
+
+    response = _complete_google_login(client, login_response, location)
+
+    assert response.status_code == 303
+    redirect = urlsplit(response.headers["location"])
+    values = parse_qs(redirect.fragment)
+    user = db_session.query(User).filter_by(email="new.person@example.test").one()
+    assert user.full_name == "New Person"
+    assert user.role == "employee"
+    assert values["access_token"]
+    assert values["email"] == [user.email]
+    assert values["picture"] == ["https://images.example.test/person.png"]
+
+
+def test_google_callback_logs_in_existing_user(client, db_session, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    user = User(
+        username="known-google-user",
+        email="known@example.test",
+        full_name="Existing User",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "known@example.test",
+            "email_verified": True,
+            "name": "Google Display Name",
+            "picture": "https://images.example.test/known.png",
+        },
+    )
+    login_response, location = _start_google_login(client)
+
+    response = _complete_google_login(client, login_response, location)
+
+    assert response.status_code == 303
+    values = parse_qs(urlsplit(response.headers["location"]).fragment)
+    assert values["username"] == ["known-google-user"]
+    assert db_session.query(User).filter_by(email="known@example.test").count() == 1
+
+
+def test_google_callback_rejects_invalid_state(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    _start_google_login(client)
+
+    response = client.get(
+        "/api/auth/google/callback?code=test-code&state=wrong-state",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid OAuth state"
+
+
+def test_invitee_calendar_consent_stores_encrypted_token_and_starts_sync(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = User(
+        username="calendar-invitee",
+        email="invitee@example.test",
+        full_name="Calendar Invitee",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    consent_url = make_calendar_consent_url(user)
+    consent_parts = urlsplit(consent_url)
+
+    consent_response = client.get(
+        f"{consent_parts.path}?{consent_parts.query}",
+        follow_redirects=False,
+    )
+    assert consent_response.status_code == 307
+    consent_query = parse_qs(urlsplit(consent_response.headers["location"]).query)
+    assert "https://www.googleapis.com/auth/calendar.events" in consent_query["scope"][0]
+    assert consent_query["access_type"] == ["offline"]
+
+    _mock_google_profile(
+        monkeypatch,
+        {"email": "invitee@example.test", "email_verified": True, "name": "Calendar Invitee"},
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+    state = consent_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+    monkeypatch.setattr(auth_router, "sync_user_meetings_to_google", lambda user_id: None)
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert "calendar_connected=1" in callback.headers["location"]
+    db_session.expire_all()
+    saved_user = db_session.query(User).filter_by(id=user.id).one()
+    assert saved_user.google_refresh_token != "private-refresh-token"
+    assert decrypt_refresh_token(saved_user.google_refresh_token) == "private-refresh-token"
+    assert saved_user.google_calendar_connected_at is not None
+
+
+def test_calendar_consent_rejects_google_email_mismatch(client, db_session, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = User(
+        username="calendar-owner",
+        email="owner@example.test",
+        full_name="Calendar Owner",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    consent_parts = urlsplit(make_calendar_consent_url(user))
+    consent_response = client.get(
+        f"{consent_parts.path}?{consent_parts.query}",
+        follow_redirects=False,
+    )
+    _mock_google_profile(
+        monkeypatch,
+        {"email": "other@example.test", "email_verified": True, "name": "Different Account"},
+        {"access_token": "google-access-token", "refresh_token": "private-refresh-token"},
+    )
+    state = consent_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+
+    callback = client.get(
+        f"/api/auth/google/callback?code=calendar-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 403
+    db_session.expire_all()
+    saved_user = db_session.query(User).filter_by(id=user.id).one()
+    assert saved_user.google_refresh_token is None
+````
+
+## File: tests/test_google_calendar_delete.py
+````python
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+
+import httplib2
+import pytest
+from cryptography.fernet import Fernet
+from googleapiclient.errors import HttpError
+from sqlalchemy.orm import sessionmaker
+
+from app.models.google_calendar_event import GoogleCalendarEvent
+from app.services import google_calendar_service
+from app.services.google_calendar_service import encrypt_refresh_token
+from app.models.user import User
+from tests.conftest import test_engine
+from tests.helpers import _create_user
+
+
+class FakeDeleteRequest:
+    def __init__(self, error=None):
+        self.error = error
+
+    def execute(self):
+        if self.error:
+            raise self.error
+        return None
+
+
+class FakeCalendarEvents:
+    def __init__(self, error=None):
+        self.error = error
+        self.arguments = None
+
+    def delete(self, **kwargs):
+        self.arguments = kwargs
+        return FakeDeleteRequest(self.error)
+
+
+class FakeCalendarService:
+    def __init__(self, events):
+        self._events = events
+
+    def events(self):
+        return self._events
+
+
+def _http_error(status_code):
+    response = httplib2.Response({"status": str(status_code), "reason": "test"})
+    return HttpError(response, b'{"error":{"message":"test"}}')
+
+
+@pytest.mark.parametrize("status_code", [404, 410])
+def test_delete_calendar_event_treats_missing_google_event_as_success(
+    monkeypatch, status_code
+):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = User(id=42, google_refresh_token=encrypt_refresh_token("refresh-token"))
+    events = FakeCalendarEvents(_http_error(status_code))
+    monkeypatch.setattr(google_calendar_service.Credentials, "refresh", lambda self, request: None)
+    monkeypatch.setattr(
+        google_calendar_service,
+        "build",
+        lambda *args, **kwargs: FakeCalendarService(events),
+    )
+
+    assert google_calendar_service.delete_google_calendar_event(user, "event-42") is True
+    assert events.arguments == {"calendarId": "primary", "eventId": "event-42"}
+
+
+def test_delete_calendar_event_returns_false_for_other_google_errors(monkeypatch):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = User(id=43, google_refresh_token=encrypt_refresh_token("refresh-token"))
+    events = FakeCalendarEvents(_http_error(500))
+    monkeypatch.setattr(google_calendar_service.Credentials, "refresh", lambda self, request: None)
+    monkeypatch.setattr(
+        google_calendar_service,
+        "build",
+        lambda *args, **kwargs: FakeCalendarService(events),
+    )
+
+    assert google_calendar_service.delete_google_calendar_event(user, "event-43") is False
+
+
+def test_cancel_worker_removes_mapping_only_after_success(db_session, monkeypatch):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    user = _create_user(db_session, "calendar-delete-user")
+    user.google_refresh_token = encrypt_refresh_token("refresh-token")
+    db_session.commit()
+
+    from app.models.meeting import Meeting
+
+    meeting = Meeting(
+        title="Delete calendar event",
+        room_id=None,
+        organizer_id=user.id,
+        start_time=datetime.now() + timedelta(days=2),
+        end_time=datetime.now() + timedelta(days=2, hours=1),
+        status="CANCELLED",
+    )
+    db_session.add(meeting)
+    db_session.commit()
+    db_session.add(
+        GoogleCalendarEvent(
+            user_id=user.id,
+            meeting_id=meeting.id,
+            google_event_id="event-to-delete",
+        )
+    )
+    db_session.commit()
+
+    session_factory = sessionmaker(bind=test_engine)
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", session_factory)
+    deleted = []
+    monkeypatch.setattr(
+        google_calendar_service,
+        "delete_google_calendar_event",
+        lambda event_user, event_id: deleted.append((event_user.id, event_id)) or True,
+    )
+
+    google_calendar_service.delete_google_events_for_meeting(meeting.id)
+
+    assert deleted == [(user.id, "event-to-delete")]
+    assert db_session.query(GoogleCalendarEvent).filter_by(meeting_id=meeting.id).count() == 0
+````
+
+## File: tests/test_google_calendar_service.py
+````python
+from datetime import datetime, timedelta
+
+from cryptography.fernet import Fernet
+import httpx
+from sqlalchemy.orm import sessionmaker
+
+from app.models.google_calendar_event import GoogleCalendarEvent
+from app.models.meeting import MeetingParticipant
+from app.services import google_calendar_service
+from app.services.google_calendar_service import encrypt_refresh_token
+from tests.conftest import test_engine
+from tests.helpers import _add_participant, _create_meeting, _create_room, _create_user
+
+
+class FakeGoogleResponse:
+    status_code = 200
+
+    def raise_for_status(self):
+        return None
+
+
+
+def test_invitee_meeting_is_inserted_once_in_google_calendar(db_session, monkeypatch):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+    organizer = _create_user(db_session, "calendar-sync-organizer")
+    invitee = _create_user(db_session, "calendar-sync-invitee")
+    invitee.google_refresh_token = encrypt_refresh_token("stored-refresh-token")
+    db_session.commit()
+    room = _create_room(db_session, "Calendar Sync Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+    meeting.title = "Project sync"
+    meeting.description = "Planning session"
+    db_session.add(MeetingParticipant(meeting_id=meeting.id, user_id=invitee.id))
+    db_session.commit()
+
+    session_factory = sessionmaker(bind=test_engine)
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", session_factory)
+    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
+    inserted_events = []
+
+    def fake_insert(url, **kwargs):
+        inserted_events.append((url, kwargs))
+        return FakeGoogleResponse()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
+
+    google_calendar_service.sync_user_meetings_to_google(invitee.id)
+    google_calendar_service.sync_user_meetings_to_google(invitee.id)
+
+    assert len(inserted_events) == 1
+    url, request = inserted_events[0]
+    payload = request["json"]
+    assert url == google_calendar_service.GOOGLE_EVENTS_URL
+    assert request["headers"]["Authorization"] == "Bearer google-access-token"
+    assert payload["summary"] == "Project sync"
+    assert payload["location"] == "Calendar Sync Room - Floor 1"
+    assert payload["start"]["timeZone"] == "Asia/Ho_Chi_Minh"
+    assert db_session.query(GoogleCalendarEvent).filter_by(user_id=invitee.id, meeting_id=meeting.id).count() == 1
+
+
+def test_organizer_meeting_is_inserted_with_invitees(db_session, monkeypatch):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    organizer = _create_user(db_session, "calendar-sync-connected-organizer")
+    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
+    invitee = _create_user(db_session, "calendar-sync-organizer-invitee")
+    db_session.commit()
+    room = _create_room(db_session, "Organizer Calendar Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+    _add_participant(db_session, meeting, invitee)
+
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine))
+    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
+    inserted_events = []
+
+    def fake_insert(url, **kwargs):
+        inserted_events.append((url, kwargs))
+        return FakeGoogleResponse()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
+    google_calendar_service.sync_user_meetings_to_google(organizer.id)
+
+    assert len(inserted_events) == 1
+    url, request = inserted_events[0]
+    assert url == google_calendar_service.GOOGLE_EVENTS_URL
+    assert request["params"] == {"sendUpdates": "all"}
+    assert request["json"]["attendees"] == [{"email": invitee.email}]
+    assert db_session.query(GoogleCalendarEvent).filter_by(
+        user_id=organizer.id,
+        meeting_id=meeting.id,
+    ).count() == 1
+
+
+def test_calendar_permission_403_logs_reconnect_guidance(db_session, monkeypatch, caplog):
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    organizer = _create_user(db_session, "calendar-sync-403-organizer")
+    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
+    db_session.commit()
+    room = _create_room(db_session, "Calendar 403 Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+
+    monkeypatch.setattr(google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine))
+    monkeypatch.setattr(google_calendar_service, "_access_token", lambda token: "google-access-token")
+
+    def forbidden_insert(url, **kwargs):
+        response = httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": 403,
+                    "message": "Insufficient Permission",
+                    "errors": [{"reason": "insufficientPermissions"}],
+                }
+            },
+            request=httpx.Request("POST", url),
+        )
+        response.raise_for_status()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", forbidden_insert)
+
+    google_calendar_service.sync_user_meetings_to_google(organizer.id)
+
+    assert "insufficientPermissions" in caplog.text
+    assert "disconnect Google Calendar in Settings and connect again" in caplog.text
+    assert db_session.query(GoogleCalendarEvent).filter_by(
+        user_id=organizer.id,
+        meeting_id=meeting.id,
+    ).count() == 0
+
+
+def test_access_token_refresh_sends_client_credentials(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "oauth-client-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "oauth-client-secret")
+    requests = []
+
+    class TokenResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"access_token": "fresh-access-token"}
+
+    def fake_post(url, **kwargs):
+        requests.append((url, kwargs))
+        return TokenResponse()
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_post)
+
+    assert google_calendar_service._access_token("refresh-token") == "fresh-access-token"
+    url, request = requests[0]
+    assert url == google_calendar_service.GOOGLE_TOKEN_URL
+    assert request["data"] == {
+        "client_id": "oauth-client-id",
+        "client_secret": "oauth-client-secret",
+        "refresh_token": "refresh-token",
+        "grant_type": "refresh_token",
+    }
+
+
+def test_access_token_refresh_logs_google_oauth_error(monkeypatch, caplog):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "oauth-client-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "oauth-client-secret")
+
+    def failed_refresh(url, **kwargs):
+        response = httpx.Response(
+            400,
+            json={
+                "error": "invalid_grant",
+                "error_description": "Token has been expired or revoked.",
+            },
+            request=httpx.Request("POST", url),
+        )
+        return response
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", failed_refresh)
+
+    try:
+        google_calendar_service._access_token("secret-refresh-token-value")
+    except httpx.HTTPStatusError:
+        pass
+    else:
+        raise AssertionError("Expected the Google token refresh request to fail")
+
+    assert "invalid_grant" in caplog.text
+    assert "Token has been expired or revoked." in caplog.text
+    assert "oauth-client-secret" not in caplog.text
+    assert "secret-refresh-token-value" not in caplog.text
+````
+
+## File: tests/test_meeting_cancel.py
+````python
+from datetime import datetime, timedelta
+
+from sqlalchemy.orm import Session
+from fastapi.testclient import TestClient
+
+from tests.helpers import (
+    _add_participant,
+    _auth_header,
+    _create_meeting,
+    _create_room,
+    _create_user,
+    _make_token,
+)
+from app.models.meeting import MeetingParticipant
+
+
+def _future_window():
+    start = datetime.utcnow() + timedelta(days=2)
+    return start, start + timedelta(hours=1)
+
+
+def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "cancel-organizer")
+    participant = _create_user(db_session, "cancel-participant")
+    room = _create_room(db_session, "Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, participant)
+
+    headers = _auth_header(_make_token(organizer))
+    response = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+    repeated = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "CANCELLED"
+
+    db_session.expire_all()
+    saved = db_session.get(type(meeting), meeting.id)
+    assert saved.status == "CANCELLED"
+    assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
+
+
+def test_admin_can_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "admin-target-organizer")
+    admin = _create_user(db_session, "cancel-admin", role="admin")
+    room = _create_room(db_session, "Admin Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(admin)),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_organizer_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-organizer")
+    room = _create_room(db_session, "Delete Organizer Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_admin_can_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-admin-target")
+    admin = _create_user(db_session, "delete-admin", role="admin")
+    room = _create_room(db_session, "Delete Admin Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_admin_role_is_case_insensitive(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "upper-admin-target")
+    admin = _create_user(db_session, "upper-case-admin", role="ADMIN")
+    room = _create_room(db_session, "Upper Admin Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_invitee_cannot_cancel_with_delete_endpoint(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "delete-protected-organizer")
+    invitee = _create_user(db_session, "delete-protected-invitee")
+    room = _create_room(db_session, "Delete Protected Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, invitee)
+
+    response = client.delete(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(invitee)),
+    )
+
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+
+
+def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "protected-organizer")
+    outsider = _create_user(db_session, "cancel-outsider")
+    room = _create_room(db_session, "Protected Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(outsider)),
+    )
+    assert response.status_code == 403
+    db_session.expire_all()
+    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
+
+
+def test_cancel_requires_authentication(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "auth-cancel-organizer")
+    room = _create_room(db_session, "Auth Cancel Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    response = client.patch(f"/api/meetings/{meeting.id}/cancel")
+    assert response.status_code == 401
+
+
+def test_cancel_missing_meeting_returns_404(client: TestClient, db_session: Session):
+    user = _create_user(db_session, "missing-cancel-user")
+    response = client.patch(
+        "/api/meetings/999999/cancel",
+        headers=_auth_header(_make_token(user)),
+    )
+    assert response.status_code == 404
+
+
+def test_room_can_be_booked_again_after_cancel(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "reuse-organizer")
+    room = _create_room(db_session, "Reusable Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+
+    cancel = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert cancel.status_code == 200
+
+    booking = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Replacement meeting",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert booking.status_code == 201
+    assert len(booking.json()) == 1
+
+    available = client.get(
+        "/api/rooms/available/",
+        params={"start_time": start.isoformat(), "end_time": end.isoformat()},
+    )
+    assert available.status_code == 200
+    assert room.id not in {item["id"] for item in available.json()}
+````
+
+## File: tests/test_meeting_create.py
+````python
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.routers import meetings as meetings_router
+from tests.helpers import _auth_header, _create_room, _create_user, _make_token
+
+
+def _future_window():
+    start = datetime.utcnow() + timedelta(days=2)
+    return start, start + timedelta(hours=1)
+
+
+def test_create_offline_meeting_with_room(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "create-offline-organizer")
+    room = _create_room(db_session, "Create Offline Room")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Offline meeting",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    meeting = response.json()[0]
+    assert meeting["meeting_type"] == "offline"
+    assert meeting["room_id"] == room.id
+
+
+def test_create_offline_meeting_without_room_returns_400(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-offline-no-room")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Offline meeting without room",
+            "meeting_type": "offline",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Offline meetings require a room_id"
+
+
+def test_create_online_meeting_with_link(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "create-online-organizer")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Online meeting",
+            "meeting_type": "online",
+            "meeting_link": "https://meet.test/room",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    meeting = response.json()[0]
+    assert meeting["meeting_type"] == "online"
+    assert meeting["meeting_link"] == "https://meet.test/room"
+    assert meeting["room_id"] is None
+
+
+def test_create_online_meeting_without_link_returns_400(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-online-no-link")
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Online meeting without link",
+            "meeting_type": "online",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Online meetings require a meeting_link"
+
+
+def test_create_meeting_schedules_google_sync_for_connected_organizer(
+    client: TestClient, db_session: Session, monkeypatch
+):
+    organizer = _create_user(db_session, "create-connected-organizer")
+    organizer.google_refresh_token = "encrypted-refresh-token"
+    db_session.commit()
+    room = _create_room(db_session, "Connected Organizer Room")
+    start, end = _future_window()
+    synced_user_ids = []
+    monkeypatch.setattr(
+        meetings_router,
+        "sync_user_meetings_to_google",
+        synced_user_ids.append,
+    )
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Automatically synced meeting",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    assert synced_user_ids == [organizer.id]
+````
+
+## File: tests/test_room_create.py
+````python
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from tests.helpers import _auth_header, _create_user, _make_token
+
+
+def test_admin_can_create_room_with_amenities(client: TestClient, db_session: Session):
+    admin = _create_user(db_session, "room-create-admin", role="admin")
+
+    response = client.post(
+        "/api/rooms/",
+        json={
+            "name": "API-created room",
+            "location": "Floor 3",
+            "capacity": 10,
+            "amenities": ["Screen", "Wi-Fi"],
+            "is_active": True,
+        },
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "API-created room"
+    assert response.json()["amenities"] == ["Screen", "Wi-Fi"]
+````
+
+## File: alembic.ini
+````ini
+# A generic, single database configuration.
+
+[alembic]
+# path to migration scripts.
+# this is typically a path given in POSIX (e.g. forward slashes)
+# format, relative to the token %(here)s which refers to the location of this
+# ini file
+script_location = %(here)s/alembic
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
+# for all available tokens
+# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
+# Or organize into date-based subdirectories (requires recursive_version_locations = true)
+# file_template = %%(year)d/%%(month).2d/%%(day).2d_%%(hour).2d%%(minute).2d_%%(second).2d_%%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present.
+# defaults to the current working directory.  for multiple paths, the path separator
+# is defined by "path_separator" below.
+prepend_sys_path = .
+
+
+# timezone to use when rendering the date within the migration file
+# as well as the filename.
+# If specified, requires the tzdata library which can be installed by adding
+# `alembic[tz]` to the pip requirements.
+# string value is passed to ZoneInfo()
+# leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the "slug" field
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# version location specification; This defaults
+# to <script_location>/versions.  When using multiple version
+# directories, initial revisions must be specified with --version-path.
+# The path separator used here should be the separator specified by "path_separator"
+# below.
+# version_locations = %(here)s/bar:%(here)s/bat:%(here)s/alembic/versions
+
+# path_separator; This indicates what character is used to split lists of file
+# paths, including version_locations and prepend_sys_path within configparser
+# files such as alembic.ini.
+# The default rendered in new alembic.ini files is "os", which uses os.pathsep
+# to provide os-dependent path splitting.
+#
+# Note that in order to support legacy alembic.ini files, this default does NOT
+# take place if path_separator is not present in alembic.ini.  If this
+# option is omitted entirely, fallback logic is as follows:
+#
+# 1. Parsing of the version_locations option falls back to using the legacy
+#    "version_path_separator" key, which if absent then falls back to the legacy
+#    behavior of splitting on spaces and/or commas.
+# 2. Parsing of the prepend_sys_path option falls back to the legacy
+#    behavior of splitting on spaces, commas, or colons.
+#
+# Valid values for path_separator are:
+#
+# path_separator = :
+# path_separator = ;
+# path_separator = space
+# path_separator = newline
+#
+# Use os.pathsep. Default configuration used for new projects.
+path_separator = os
+
+# set to 'true' to search source files recursively
+# in each "version_locations" directory
+# new in Alembic version 1.10
+# recursive_version_locations = false
+
+# the output encoding used when revision files
+# are written from script.py.mako
+# output_encoding = utf-8
+
+# database URL.  This is consumed by the user-maintained env.py script only.
+# other means of configuring database URLs may be customized within the env.py
+# file.
+sqlalchemy.url = driver://user:pass@localhost/dbname
+
+
+[post_write_hooks]
+# post_write_hooks defines scripts or Python functions that are run
+# on newly generated revision scripts.  See the documentation for further
+# detail and examples
+
+# format using "black" - use the console_scripts runner, against the "black" entrypoint
+# hooks = black
+# black.type = console_scripts
+# black.entrypoint = black
+# black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+# lint with attempts to fix using "ruff" - use the module runner, against the "ruff" module
+# hooks = ruff
+# ruff.type = module
+# ruff.module = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Alternatively, use the exec runner to execute a binary found on your PATH
+# hooks = ruff
+# ruff.type = exec
+# ruff.executable = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Logging configuration.  This is also consumed by the user-maintained
+# env.py script only.
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARNING
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+````
+
+## File: requirements-dev.txt
+````
+-r requirements.txt
+pytest
+httpx
+````
+
+## File: app/models/notification.py
+````python
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey
+from datetime import datetime
+from app.core.database import Base
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+````
+
+## File: app/routers/equipment.py
+````python
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+from typing import List
+from app.db.session import get_db
+from app.models.equipment import Equipment
+from app.schemas.equipment import EquipmentCreate, EquipmentUpdate, EquipmentResponse, EquipmentStatusResponse
+from app.services.equipment_service import get_equipment_availability
+from app.core.security import require_role
+
+router = APIRouter()
+
+# 🟢 Dấu "/" ở cuối để khớp với yêu cầu GET /api/equipments/?include_inactive=true từ Frontend
+@router.get("/", response_model=List[EquipmentResponse])
+def get_equipments(
+    skip: int = 0,
+    limit: int = 100,
+    include_inactive: bool = Query(False, description="Nếu True, trả về cả các thiết bị đã ngưng hoạt động/vô hiệu hóa"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Equipment)
+    if not include_inactive:
+        query = query.filter(Equipment.is_active == True)
+    return query.offset(skip).limit(limit).all()
+
+
+@router.get("/availability", response_model=List[EquipmentStatusResponse])
+def get_equipment_availability_list(
+    start_time: datetime | None = Query(None, description="Thời gian bắt đầu"),
+    end_time: datetime | None = Query(None, description="Thời gian kết thúc"),
+    category: str | None = Query(None),
+    search: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    if start_time is None and end_time is None:
+        start_time = end_time = datetime.now()
+    elif start_time is None:
+        start_time = end_time
+    elif end_time is None:
+        end_time = start_time
+
+    if start_time > end_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Thời gian bắt đầu phải nhỏ hơn hoặc bằng thời gian kết thúc.",
+        )
+
+    return get_equipment_availability(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        category=category,
+        search=search,
+    )
+
+
+@router.post("/", response_model=EquipmentResponse, status_code=status.HTTP_201_CREATED)
+def create_equipment(
+    payload: EquipmentCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role("admin")),
+):
+    equip = Equipment(**payload.model_dump())
+    db.add(equip)
+    db.commit()
+    db.refresh(equip)
+    return equip
+
+
+@router.put("/{equipment_id}", response_model=EquipmentResponse)
+def update_equipment(
+    equipment_id: int,
+    payload: EquipmentUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role("admin")),
+):
+    equip = db.query(Equipment).filter(Equipment.id == equipment_id).first()
+    if not equip:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(equip, field, value)
+
+    db.commit()
+    db.refresh(equip)
+    return equip
+
+
+@router.delete("/{equipment_id}", status_code=status.HTTP_200_OK)
+def delete_equipment(
+    equipment_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role("admin")),
+):
+    equip = db.query(Equipment).filter(Equipment.id == equipment_id).first()
+    if not equip:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
+
+    equip.is_active = False
+    db.commit()
+    return {"status": "success", "message": f"Đã chuyển trạng thái thiết bị '{equip.name}' thành ngừng hoạt động."}
+````
+
+## File: app/routers/users.py
+````python
+# app/routers/users.py
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
+from app.db.session import get_db
+from app.core.security import get_current_user
+from app.models.user import User
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+
+class UserSimpleResponse(BaseModel):
+    id: int
+    full_name: Optional[str] = None
+    email: str
+
+    class Config:
+        from_attributes = True
+
+
+class UserUpdateProfile(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+
+
+@router.get("/", response_model=List[UserSimpleResponse])
+def get_all_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Lấy danh sách người dùng để mời tham dự cuộc họp"""
+    return db.query(User).all()
+
+
+@router.get("/me", response_model=UserSimpleResponse)
+def get_my_profile(
+    current_user: User = Depends(get_current_user)
+):
+    """Lấy thông tin chi tiết của tài khoản đang đăng nhập"""
+    return current_user
+
+
+@router.put("/me", response_model=UserSimpleResponse)
+def update_my_profile(
+    payload: UserUpdateProfile,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Cập nhật thông tin cá nhân (Tên, Email) của người dùng hiện tại xuống DB"""
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name
+    if payload.email is not None:
+        # Kiểm tra xem email mới có bị trùng với tài khoản khác không
+        existing_user = db.query(User).filter(User.email == payload.email, User.id != current_user.id).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email này đã được sử dụng bởi tài khoản khác."
+            )
+        current_user.email = payload.email
+
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+````
+
+## File: app/schemas/auth.py
+````python
+from pydantic import BaseModel, Field
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=50, description="Tên đăng nhập")
+    password: str = Field(..., min_length=1, max_length=128, description="Mật khẩu")
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str | None
+    full_name: str | None
+    role: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": 1,
+                "username": "admin",
+                "email": "admin@meeting.local",
+                "full_name": "Quản trị viên",
+                "role": "admin",
+                "is_active": True,
+            }
+        }
+
+
+class TokenResponse(BaseModel):
+    """Schema phản hồi JWT Token sau khi đăng nhập thành công."""
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    username: str
+    full_name: str | None = None
+
+
+class LoginResponse(BaseModel):
+    status: str = "success"
+    message: str = "Đăng nhập thành công"
+    user: UserResponse
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "message": "Đăng nhập thành công",
+                "user": {
+                    "id": 1,
+                    "username": "admin",
+                    "email": "admin@meeting.local",
+                    "full_name": "Quản trị viên",
+                    "role": "admin",
+                    "is_active": True,
+                },
+            }
+        }
+````
+
+## File: app/schemas/equipment.py
+````python
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
+
+# --- Equipment Base & CRUD ---
+class EquipmentBase(BaseModel):
+    name: str = Field(..., max_length=150)
+    code: Optional[str] = Field(None, max_length=50)
+    category: Optional[str] = Field(None, max_length=50)
+    total_qty: int = Field(1, ge=1)
+    description: Optional[str] = None
+    is_active: bool = True
+
+class EquipmentCreate(EquipmentBase):
+    pass
+
+class EquipmentUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    category: Optional[str] = None
+    total_qty: Optional[int] = Field(None, ge=1)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class EquipmentResponse(EquipmentBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class EquipmentStatusResponse(EquipmentResponse):
+    booked_qty: int
+    available_qty: int
+    status_label: str
+
+# --- Meeting Equipment Request/Response ---
+class MeetingEquipmentItemInput(BaseModel):
+    equipment_id: int
+    quantity: int = Field(1, ge=1)
+    note: Optional[str] = None
+
+class MeetingEquipmentItemOutput(BaseModel):
+    equipment_id: int
+    equipment_name: str
+    quantity: int
+    note: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+````
+
+## File: app/services/equipment_service.py
+````python
+from datetime import datetime
+from typing import List, Dict, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from fastapi import HTTPException, status
+from app.models.equipment import Equipment, MeetingEquipment
+from app.models.meeting import Meeting
+from app.schemas.equipment import EquipmentResponse, EquipmentStatusResponse, MeetingEquipmentItemInput
+
+
+def get_equipment_availability(
+    db: Session,
+    start_time: datetime,
+    end_time: datetime,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+) -> List[EquipmentStatusResponse]:
+    booked_quantities = (
+        db.query(
+            MeetingEquipment.equipment_id.label("equipment_id"),
+            func.sum(MeetingEquipment.quantity).label("booked_qty"),
+        )
+        .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
+        .filter(
+            func.upper(Meeting.status) != "CANCELLED",
+            Meeting.start_time < end_time,
+            Meeting.end_time > start_time,
+        )
+        .group_by(MeetingEquipment.equipment_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(Equipment, func.coalesce(booked_quantities.c.booked_qty, 0))
+        .outerjoin(booked_quantities, Equipment.id == booked_quantities.c.equipment_id)
+    )
+    if category:
+        query = query.filter(Equipment.category == category)
+    if search:
+        search_term = f"%{search.strip()}%"
+        query = query.filter(
+            Equipment.name.ilike(search_term) | Equipment.code.ilike(search_term)
+        )
+
+    results = []
+    for equipment, booked_qty in query.order_by(Equipment.name).all():
+        booked_qty = int(booked_qty)
+        available_qty = equipment.total_qty - booked_qty
+        if not equipment.is_active:
+            status_label = "Ngừng hoạt động / Bảo trì"
+        elif available_qty <= 0:
+            status_label = "Đã đặt hết"
+        else:
+            status_label = "Có sẵn"
+
+        response_data = EquipmentResponse.model_validate(equipment).model_dump()
+        response_data.update(
+            {
+                "booked_qty": booked_qty,
+                "available_qty": available_qty,
+                "status_label": status_label,
+            }
+        )
+        results.append(EquipmentStatusResponse.model_validate(response_data))
+    return results
+
+def check_equipment_availability(
+    db: Session,
+    start_time: datetime,
+    end_time: datetime,
+    requested_items: List[MeetingEquipmentItemInput],
+    exclude_meeting_id: Optional[int] = None
+):
+
+    """
+    Tính toán số lượng khả dụng = Tổng tồn kho - Số lượng đã đặt trong các cuộc họp trùng khung giờ
+    """
+    for item in requested_items:
+        # 1. Lấy thông tin thiết bị
+        equip = db.query(Equipment).filter(Equipment.id == item.equipment_id, Equipment.is_active == True).first()
+        if not equip:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Thiết bị với ID {item.equipment_id} không tồn tại hoặc đã bị vô hiệu hóa."
+            )
+
+        # 2. Truy vấn tổng số lượng thiết bị này đã được đặt ở các cuộc họp khác trùng thời gian
+        # Điều kiện trùng giờ: (Meeting.start_time < end_time) AND (Meeting.end_time > start_time)
+        query = (
+            db.query(func.coalesce(func.sum(MeetingEquipment.quantity), 0))
+            .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
+            .filter(
+                MeetingEquipment.equipment_id == item.equipment_id,
+                Meeting.status != "CANCELLED",  # Bỏ qua cuộc họp đã hủy
+                Meeting.start_time < end_time,
+                Meeting.end_time > start_time
+            )
+        )
+
+        if exclude_meeting_id:
+            query = query.filter(Meeting.id != exclude_meeting_id)
+
+        booked_qty = query.scalar() or 0
+        available_qty = equip.total_qty - booked_qty
+
+        if item.quantity > available_qty:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Thiết bị '{equip.name}' không đủ số lượng trong khung giờ này. "
+                       f"Yêu cầu: {item.quantity}, Khả dụng: {available_qty} (Tổng: {equip.total_qty}, Đã đặt: {booked_qty})."
+            )
+````
+
 ## File: frontend/js/create-meeting.js
 ````javascript
 /* Create Meeting flow — meeting-first, resources second */
@@ -2243,15 +5861,19 @@ function setCreateMeetingMode(mode) {
     const roomSection = cmEl('cmResources');
     if (onlineBox) onlineBox.classList.toggle('is-open', mode === 'online');
     if (roomSection) roomSection.classList.toggle('is-open', mode === 'offline');
+    onlineBox?.setAttribute('aria-hidden', String(mode !== 'online'));
+    roomSection?.setAttribute('aria-hidden', String(mode !== 'offline'));
 
     const roomSearchBtn = document.getElementById('cmSearchRoomsBtn');
     if (roomSearchBtn) roomSearchBtn.disabled = mode !== 'offline';
 
+    const onlineLink = cmEl('cmMeetingLink');
     if (mode === 'online') {
-        const onlineLink = cmEl('cmMeetingLink');
-        if (onlineLink && !onlineLink.value.trim()) {
-            onlineLink.value = '';
-        }
+        if (onlineLink) onlineLink.required = true;
+    } else if (onlineLink) {
+        onlineLink.value = '';
+        onlineLink.required = false;
+        onlineLink.classList.remove('is-invalid');
     }
 
     renderRoomResults();
@@ -2885,7 +6507,7 @@ async function handleCreateMeetingSubmit(event) {
         title,
         description: descriptionParts.join('\n') || null,
         meeting_type: cmState.mode,
-        online_link: cmState.mode === 'online'
+        meeting_link: cmState.mode === 'online'
             ? (cmEl('cmMeetingLink')?.value.trim() || null)
             : null,
         room_id: cmState.mode === 'offline'
@@ -3020,147 +6642,6 @@ window.handleCreateMeetingSubmit = handleCreateMeetingSubmit;
 window.showCreateMeetingSuccess = showCreateMeetingSuccess;
 ````
 
-## File: migrations/001_add_meeting_recurring_columns.sql
-````sql
--- Additive migration for existing MySQL databases. Run while using meeting_db.
--- Safe to re-run: each column is only added if it does not already exist.
-
-USE meeting_db;
-
--- Check and add is_recurring
-SET @has_is_recurring = (
-    SELECT COUNT(*)
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME   = 'meetings'
-      AND COLUMN_NAME  = 'is_recurring'
-);
-
-SET @add_is_recurring = IF(
-    @has_is_recurring = 0,
-    'ALTER TABLE meetings ADD COLUMN is_recurring TINYINT(1) NOT NULL DEFAULT 0 AFTER description',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_is_recurring;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
--- Check and add recurring_type
-SET @has_recurring_type = (
-    SELECT COUNT(*)
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME   = 'meetings'
-      AND COLUMN_NAME  = 'recurring_type'
-);
-
-SET @add_recurring_type = IF(
-    @has_recurring_type = 0,
-    'ALTER TABLE meetings ADD COLUMN recurring_type VARCHAR(20) NULL AFTER is_recurring',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_recurring_type;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-````
-
-## File: migrations/002_add_meeting_participants.sql
-````sql
--- Additive migration: meeting_participants . Does not drop any database or data.
-USE meeting_db;
-
-CREATE TABLE IF NOT EXISTS meeting_participants (
-    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    meeting_id INT UNSIGNED NOT NULL,
-    user_id    INT UNSIGNED NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_meeting_participant (meeting_id, user_id),
-    CONSTRAINT fk_meeting_participants_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_meeting_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-````
-
-## File: migrations/003_add_equipment_tables.sql
-````sql
--- 1. Bảng danh mục thiết bị trong kho
-CREATE TABLE IF NOT EXISTS equipments (
-    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    name        VARCHAR(150) NOT NULL,
-    code        VARCHAR(50) DEFAULT NULL,
-    category    VARCHAR(50) DEFAULT NULL,
-    total_qty   INT NOT NULL DEFAULT 1,
-    description TEXT DEFAULT NULL,
-    is_active   TINYINT(1) NOT NULL DEFAULT 1,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_equipments_code (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 2. Bảng đăng ký mượn thiết bị theo cuộc họp
-CREATE TABLE IF NOT EXISTS meeting_equipments (
-    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    meeting_id   INT UNSIGNED NOT NULL,
-    equipment_id INT UNSIGNED NOT NULL,
-    quantity     INT NOT NULL DEFAULT 1,
-    note         VARCHAR(255) DEFAULT NULL,
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_meeting_equipment (meeting_id, equipment_id),
-    KEY idx_meeting_equipments_meeting (meeting_id),
-    KEY idx_meeting_equipments_equipment (equipment_id),
-    CONSTRAINT fk_me_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_me_equipment FOREIGN KEY (equipment_id) REFERENCES equipments (id) ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 3. Bảng thiết bị cố định đi kèm phòng
-CREATE TABLE IF NOT EXISTS room_equipments (
-    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    room_id      INT UNSIGNED NOT NULL,
-    equipment_id INT UNSIGNED NOT NULL,
-    quantity     INT NOT NULL DEFAULT 1,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_room_equipment (room_id, equipment_id),
-    CONSTRAINT fk_re_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_re_equipment FOREIGN KEY (equipment_id) REFERENCES equipments (id) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-````
-
-## File: migrations/004_add_room_amenities.sql
-````sql
-ALTER TABLE rooms
-    ADD COLUMN amenities TEXT DEFAULT NULL AFTER description;
-````
-
-## File: migrations/005_align_meetings_schema.sql
-````sql
--- ============================================================
--- Migration 005: Align meetings table với model thực tế
--- Safe: chỉ modify room_id nullable + update default meeting_type
--- Không DROP cột nào, không mất dữ liệu
--- ============================================================
-USE meeting_db;
-
--- 1. Chuẩn hóa meeting_type: đổi default về lowercase 'offline'
---    Các row cũ đang có giá trị 'OFFLINE' — cập nhật về lowercase để nhất quán
-UPDATE meetings SET meeting_type = 'offline' WHERE meeting_type = 'OFFLINE';
-UPDATE meetings SET meeting_type = 'online'  WHERE meeting_type = 'ONLINE';
-
-ALTER TABLE meetings
-    MODIFY COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline';
-
--- 2. Nullable room_id: drop FK cũ, alter column, re-add FK với SET NULL
-ALTER TABLE meetings DROP FOREIGN KEY meetings_ibfk_1;
-ALTER TABLE meetings MODIFY COLUMN room_id INT NULL;
-ALTER TABLE meetings
-    ADD CONSTRAINT fk_meetings_room
-    FOREIGN KEY (room_id) REFERENCES rooms(id)
-    ON DELETE SET NULL ON UPDATE CASCADE;
-
--- Verify: DESCRIBE meetings;
-````
-
 ## File: scripts/patch_db.py
 ````python
 import os
@@ -3184,6 +6665,26 @@ with engine.connect() as conn:
         print("Column 'amenities' added to rooms table.")
     else:
         print("Column 'amenities' already exists in rooms table.")
+
+    # 1.1 Kiểm tra và thêm cột meeting_type, online_link vào bảng meetings nếu chưa có
+    cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
+    if 'meeting_type' not in cols_meetings:
+        print("Adding meeting_type column to meetings table...")
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
+        conn.commit()
+        print("Column 'meeting_type' added to meetings table.")
+    if 'online_link' not in cols_meetings:
+        print("Adding online_link column to meetings table...")
+        conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
+        conn.commit()
+        print("Column 'online_link' added to meetings table.")
+    
+    room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
+    if room_id_col and room_id_col[2] == 'NO':
+        col_type = room_id_col[1]
+        conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
+        conn.commit()
+        print("Column 'room_id' modified to allow NULL.")
 
     # 2. Cập nhật dữ liệu tiện ích cho các phòng hiện tại
     # Đặc biệt phòng vip viyyyy (id 10) từ ảnh của người dùng
@@ -3249,1061 +6750,38 @@ with engine.connect() as conn:
 print("Patch DB completed successfully!")
 ````
 
-## File: tests/__init__.py
-````python
-
+## File: .dockerignore
+````
+__pycache__
+*.pyc
+.venv
+venv
+.git
+.gitignore
+.env
 ````
 
-## File: tests/conftest.py
-````python
-"""Pytest configuration: in-memory SQLite, fixtures, and app setup."""
+## File: Dockerfile
+````dockerfile
+FROM python:3.11-slim
 
-import os
-import sys
+WORKDIR /app
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc \
+        default-libmysqlclient-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# Ensure project root is importable and force SQLite BEFORE any app import.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ["DATABASE_URL"] = "sqlite:///test.db"
-os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only"
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-from app.core.database import Base, get_db, engine as app_engine
-from app.main import app
+COPY . .
 
-# Release connections opened by create_all at import time.
-app_engine.dispose()
+EXPOSE 8000
 
-# Test engine with SQLite-friendly settings.
-test_engine = create_engine(
-    "sqlite:///test.db",
-    connect_args={"check_same_thread": False},
-)
-
-
-@event.listens_for(test_engine, "connect")
-def _set_sqlite_pragma(dbapi_conn, connection_record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
-
-
-TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-
-def _override_get_db():
-    db = TestSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = _override_get_db
-
-
-@pytest.fixture(autouse=True)
-def _recreate_tables():
-    Base.metadata.drop_all(bind=test_engine)
-    Base.metadata.create_all(bind=test_engine)
-    yield
-    Base.metadata.drop_all(bind=test_engine)
-
-
-@pytest.fixture()
-def client():
-    with TestClient(app) as c:
-        yield c
-
-
-@pytest.fixture()
-def db_session():
-    session = TestSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-````
-
-## File: tests/helpers.py
-````python
-"""Shared test helpers."""
-
-from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
-
-from app.models.user import User
-from app.models.room import Room
-from app.models.meeting import Meeting, MeetingParticipant
-from app.core.security import hash_password, create_access_token
-
-
-def _create_user(db: Session, username: str, role: str = "employee", password: str = "password123") -> User:
-    user = User(
-        username=username,
-        email=f"{username}@test.local",
-        full_name=f"Test {username}",
-        hashed_password=hash_password(password),
-        role=role,
-        is_active=True,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-
-def _create_room(db: Session, name: str = "Room A") -> Room:
-    room = Room(name=name, capacity=10, location="Floor 1", is_active=True)
-    db.add(room)
-    db.commit()
-    db.refresh(room)
-    return room
-
-
-def _create_meeting(
-    db: Session,
-    room: Room,
-    organizer: User,
-    start: datetime,
-    end: datetime,
-    status: str = "scheduled",
-) -> Meeting:
-    m = Meeting(
-        title="Test meeting",
-        description="desc",
-        room_id=room.id,
-        organizer_id=organizer.id,
-        start_time=start,
-        end_time=end,
-        status=status,
-    )
-    db.add(m)
-    db.commit()
-    db.refresh(m)
-    return m
-
-
-def _add_participant(db: Session, meeting: Meeting, user: User) -> MeetingParticipant:
-    mp = MeetingParticipant(meeting_id=meeting.id, user_id=user.id)
-    db.add(mp)
-    db.commit()
-    db.refresh(mp)
-    return mp
-
-
-def _make_token(user: User) -> str:
-    return create_access_token(
-        data={"sub": user.username, "user_id": user.id, "role": user.role}
-    )
-
-
-def _auth_header(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
-````
-
-## File: tests/test_equipment_admin.py
-````python
-"""Unit tests for Equipment Admin flow (POST, PUT, GET include_inactive, permission checks)."""
-
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from app.models.equipment import Equipment, MeetingEquipment
-from app.models.user import User
-from tests.helpers import _auth_header, _create_meeting, _create_room, _create_user, _make_token
-
-
-def _create_test_equipment(db: Session, name: str = "Mic Test", total_qty: int = 5, is_active: bool = True) -> Equipment:
-    equip = Equipment(
-        name=name,
-        code="TEST-01",
-        category="Audio",
-        total_qty=total_qty,
-        is_active=is_active,
-    )
-    db.add(equip)
-    db.commit()
-    db.refresh(equip)
-    return equip
-
-
-def test_post_and_put_require_admin_token(client: TestClient, db_session: Session):
-    """Test API POST và PUT: Phải trả về 403 Forbidden hoặc 401 Unauthorized nếu không có token Admin."""
-    employee = _create_user(db_session, username="employee1", role="employee")
-    emp_token = _make_token(employee)
-
-    payload = {
-        "name": "Projector Ultra HD",
-        "code": "PRJ-999",
-        "category": "Visual",
-        "total_qty": 2,
-    }
-
-    # 1. POST without token -> 401 Unauthorized
-    resp_no_auth = client.post("/api/equipments/", json=payload)
-    assert resp_no_auth.status_code in (401, 403)
-
-    # 2. POST with employee token -> 403 Forbidden
-    resp_emp = client.post("/api/equipments/", json=payload, headers=_auth_header(emp_token))
-    assert resp_emp.status_code == 403
-
-    # Create an equipment for testing PUT permission
-    equip = _create_test_equipment(db_session)
-
-    update_payload = {"name": "Mic Test Updated"}
-
-    # 3. PUT without token -> 401/403
-    resp_put_no_auth = client.put(f"/api/equipments/{equip.id}", json=update_payload)
-    assert resp_put_no_auth.status_code in (401, 403)
-
-    # 4. PUT with employee token -> 403 Forbidden
-    resp_put_emp = client.put(f"/api/equipments/{equip.id}", json=update_payload, headers=_auth_header(emp_token))
-    assert resp_put_emp.status_code == 403
-
-
-def test_toggle_is_active_and_include_inactive_query(client: TestClient, db_session: Session):
-    """Tạo 1 thiết bị, sau đó gọi PUT để đổi is_active từ True sang False.
-
-    Gọi GET /?include_inactive=true để kiểm tra thiết bị vừa tắt vẫn hiển thị trong list của Admin.
-    """
-    admin = _create_user(db_session, username="admin1", role="admin")
-    admin_token = _make_token(admin)
-    headers = _auth_header(admin_token)
-
-    # 1. Admin POST to create a new equipment (is_active Defaults to True)
-    create_payload = {
-        "name": "Smart Board 75 inch",
-        "code": "SB-075",
-        "category": "Display",
-        "total_qty": 3,
-        "is_active": True,
-    }
-    create_resp = client.post("/api/equipments/", json=create_payload, headers=headers)
-    assert create_resp.status_code == 201
-    created_id = create_resp.json()["id"]
-    assert create_resp.json()["is_active"] is True
-
-    # 2. Call PUT to change is_active from True to False
-    put_payload = {"is_active": False}
-    put_resp = client.put(f"/api/equipments/{created_id}", json=put_payload, headers=headers)
-    assert put_resp.status_code == 200
-    assert put_resp.json()["is_active"] is False
-
-    # 3. GET /api/equipments/ (default include_inactive=false) -> Should NOT contain the inactive equipment
-    get_active_resp = client.get("/api/equipments/", headers=headers)
-    assert get_active_resp.status_code == 200
-    active_ids = [item["id"] for item in get_active_resp.json()]
-    assert created_id not in active_ids
-
-    # 4. GET /api/equipments/?include_inactive=true -> MUST contain the inactive equipment for Admin
-    get_all_resp = client.get("/api/equipments/?include_inactive=true", headers=headers)
-    assert get_all_resp.status_code == 200
-    all_ids = [item["id"] for item in get_all_resp.json()]
-    assert created_id in all_ids
-
-
-def test_update_total_qty_does_not_corrupt_meeting_equipments(client: TestClient, db_session: Session):
-    """AC 4: Khi Admin sửa total_qty của 1 thiết bị, sự thay đổi lưu thành công mà không làm hỏng dữ liệu meeting_equipments."""
-    admin = _create_user(db_session, username="admin_qty", role="admin")
-    admin_token = _make_token(admin)
-    headers = _auth_header(admin_token)
-
-    equip = _create_test_equipment(db_session, total_qty=5)
-    organizer = _create_user(db_session, username="organizer_qty")
-    room = _create_room(db_session, name="Room Qty")
-    from datetime import datetime
-    meeting = _create_meeting(db_session, room, organizer, datetime.now(), datetime.now())
-
-    # Link meeting to equipment
-    me = MeetingEquipment(meeting_id=meeting.id, equipment_id=equip.id, quantity=2, note="For workshop")
-    db_session.add(me)
-    db_session.commit()
-
-    # Admin updates total_qty from 5 to 12
-    put_resp = client.put(f"/api/equipments/{equip.id}", json={"total_qty": 12}, headers=headers)
-    assert put_resp.status_code == 200
-    assert put_resp.json()["total_qty"] == 12
-
-    # Verify meeting_equipments link is intact
-    me_db = db_session.query(MeetingEquipment).filter_by(meeting_id=meeting.id, equipment_id=equip.id).first()
-    assert me_db is not None
-    assert me_db.quantity == 2
-    assert me_db.equipment.total_qty == 12
-````
-
-## File: tests/test_equipment_availability.py
-````python
-from datetime import datetime
-
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from app.models.equipment import Equipment, MeetingEquipment
-from tests.helpers import _create_meeting, _create_room, _create_user
-
-
-def _create_equipment(db: Session, total_qty: int = 5) -> Equipment:
-    equipment = Equipment(
-        name="Conference microphone",
-        code="MIC-01",
-        category="Audio",
-        total_qty=total_qty,
-        is_active=True,
-    )
-    db.add(equipment)
-    db.commit()
-    db.refresh(equipment)
-    return equipment
-
-
-def _attach_equipment(db: Session, meeting_id: int, equipment_id: int, quantity: int):
-    allocation = MeetingEquipment(
-        meeting_id=meeting_id,
-        equipment_id=equipment_id,
-        quantity=quantity,
-    )
-    db.add(allocation)
-    db.commit()
-    return allocation
-
-
-def test_availability_tracks_overlapping_bookings_and_inactive_status(
-    client: TestClient, db_session: Session
-):
-    organizer = _create_user(db_session, "equipment-organizer")
-    room = _create_room(db_session, "Equipment Room")
-    equipment = _create_equipment(db_session)
-
-    first_meeting = _create_meeting(
-        db_session,
-        room,
-        organizer,
-        datetime(2026, 10, 5, 9, 0),
-        datetime(2026, 10, 5, 10, 0),
-    )
-    _attach_equipment(db_session, first_meeting.id, equipment.id, 2)
-
-    params = {
-        "start_time": "2026-10-05T09:30:00",
-        "end_time": "2026-10-05T10:30:00",
-    }
-    response = client.get("/api/equipments/availability", params=params)
-    assert response.status_code == 200
-    item = response.json()[0]
-    assert item["booked_qty"] == 2
-    assert item["available_qty"] == 3
-    assert item["status_label"] == "Có sẵn"
-
-    second_meeting = _create_meeting(
-        db_session,
-        room,
-        organizer,
-        datetime(2026, 10, 5, 9, 45),
-        datetime(2026, 10, 5, 10, 15),
-    )
-    _attach_equipment(db_session, second_meeting.id, equipment.id, 3)
-
-    response = client.get("/api/equipments/availability", params=params)
-    assert response.status_code == 200
-    item = response.json()[0]
-    assert item["booked_qty"] == 5
-    assert item["available_qty"] == 0
-    assert item["status_label"] == "Đã đặt hết"
-
-    equipment.is_active = False
-    db_session.commit()
-    response = client.get("/api/equipments/availability", params=params)
-    assert response.status_code == 200
-    item = response.json()[0]
-    assert item["status_label"] == "Ngừng hoạt động / Bảo trì"
-
-
-def test_availability_ignores_canceled_meetings_and_supports_filters(
-    client: TestClient, db_session: Session
-):
-    organizer = _create_user(db_session, "equipment-canceled-organizer")
-    room = _create_room(db_session, "Equipment Canceled Room")
-    equipment = _create_equipment(db_session)
-    canceled_meeting = _create_meeting(
-        db_session,
-        room,
-        organizer,
-        datetime(2026, 10, 5, 9, 0),
-        datetime(2026, 10, 5, 10, 0),
-        status="CANCELLED",
-    )
-    _attach_equipment(db_session, canceled_meeting.id, equipment.id, 5)
-
-    response = client.get(
-        "/api/equipments/availability",
-        params={
-            "start_time": "2026-10-05T09:30:00",
-            "end_time": "2026-10-05T10:30:00",
-            "category": "Audio",
-            "search": "MIC-01",
-        },
-    )
-    assert response.status_code == 200
-    assert len(response.json()) == 1
-    assert response.json()[0]["booked_qty"] == 0
-
-
-def test_availability_defaults_to_current_time(client: TestClient, db_session: Session):
-    _create_equipment(db_session)
-
-    response = client.get("/api/equipments/availability")
-
-    assert response.status_code == 200
-    assert response.json()[0]["available_qty"] == 5
-````
-
-## File: tests/test_meeting_cancel.py
-````python
-from datetime import datetime, timedelta
-
-from sqlalchemy.orm import Session
-from fastapi.testclient import TestClient
-
-from tests.helpers import (
-    _add_participant,
-    _auth_header,
-    _create_meeting,
-    _create_room,
-    _create_user,
-    _make_token,
-)
-from app.models.meeting import MeetingParticipant
-
-
-def _future_window():
-    start = datetime.utcnow() + timedelta(days=2)
-    return start, start + timedelta(hours=1)
-
-
-def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "cancel-organizer")
-    participant = _create_user(db_session, "cancel-participant")
-    room = _create_room(db_session, "Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-    _add_participant(db_session, meeting, participant)
-
-    headers = _auth_header(_make_token(organizer))
-    response = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-    repeated = client.patch(f"/api/meetings/{meeting.id}/cancel", headers=headers)
-    assert repeated.status_code == 200
-    assert repeated.json()["status"] == "CANCELLED"
-
-    db_session.expire_all()
-    saved = db_session.get(type(meeting), meeting.id)
-    assert saved.status == "CANCELLED"
-    assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
-
-
-def test_admin_can_cancel(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "admin-target-organizer")
-    admin = _create_user(db_session, "cancel-admin", role="admin")
-    room = _create_room(db_session, "Admin Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.patch(
-        f"/api/meetings/{meeting.id}/cancel",
-        headers=_auth_header(_make_token(admin)),
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "CANCELLED"
-
-
-def test_non_organizer_cannot_cancel(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "protected-organizer")
-    outsider = _create_user(db_session, "cancel-outsider")
-    room = _create_room(db_session, "Protected Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.patch(
-        f"/api/meetings/{meeting.id}/cancel",
-        headers=_auth_header(_make_token(outsider)),
-    )
-    assert response.status_code == 403
-    db_session.expire_all()
-    assert db_session.get(type(meeting), meeting.id).status == "scheduled"
-
-
-def test_cancel_requires_authentication(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "auth-cancel-organizer")
-    room = _create_room(db_session, "Auth Cancel Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    response = client.patch(f"/api/meetings/{meeting.id}/cancel")
-    assert response.status_code == 401
-
-
-def test_cancel_missing_meeting_returns_404(client: TestClient, db_session: Session):
-    user = _create_user(db_session, "missing-cancel-user")
-    response = client.patch(
-        "/api/meetings/999999/cancel",
-        headers=_auth_header(_make_token(user)),
-    )
-    assert response.status_code == 404
-
-
-def test_room_can_be_booked_again_after_cancel(client: TestClient, db_session: Session):
-    organizer = _create_user(db_session, "reuse-organizer")
-    room = _create_room(db_session, "Reusable Room")
-    start, end = _future_window()
-    meeting = _create_meeting(db_session, room, organizer, start, end)
-
-    cancel = client.patch(
-        f"/api/meetings/{meeting.id}/cancel",
-        headers=_auth_header(_make_token(organizer)),
-    )
-    assert cancel.status_code == 200
-
-    booking = client.post(
-        "/api/meetings/book",
-        json={
-            "title": "Replacement meeting",
-            "room_id": room.id,
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        headers=_auth_header(_make_token(organizer)),
-    )
-    assert booking.status_code == 201
-    assert len(booking.json()) == 1
-
-    available = client.get(
-        "/api/rooms/available/",
-        params={"start_time": start.isoformat(), "end_time": end.isoformat()},
-    )
-    assert available.status_code == 200
-    assert room.id not in {item["id"] for item in available.json()}
-````
-
-## File: alembic.ini
-````ini
-# A generic, single database configuration.
-
-[alembic]
-# path to migration scripts.
-# this is typically a path given in POSIX (e.g. forward slashes)
-# format, relative to the token %(here)s which refers to the location of this
-# ini file
-script_location = %(here)s/alembic
-
-# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
-# Uncomment the line below if you want the files to be prepended with date and time
-# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
-# for all available tokens
-# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
-# Or organize into date-based subdirectories (requires recursive_version_locations = true)
-# file_template = %%(year)d/%%(month).2d/%%(day).2d_%%(hour).2d%%(minute).2d_%%(second).2d_%%(rev)s_%%(slug)s
-
-# sys.path path, will be prepended to sys.path if present.
-# defaults to the current working directory.  for multiple paths, the path separator
-# is defined by "path_separator" below.
-prepend_sys_path = .
-
-
-# timezone to use when rendering the date within the migration file
-# as well as the filename.
-# If specified, requires the tzdata library which can be installed by adding
-# `alembic[tz]` to the pip requirements.
-# string value is passed to ZoneInfo()
-# leave blank for localtime
-# timezone =
-
-# max length of characters to apply to the "slug" field
-# truncate_slug_length = 40
-
-# set to 'true' to run the environment during
-# the 'revision' command, regardless of autogenerate
-# revision_environment = false
-
-# set to 'true' to allow .pyc and .pyo files without
-# a source .py file to be detected as revisions in the
-# versions/ directory
-# sourceless = false
-
-# version location specification; This defaults
-# to <script_location>/versions.  When using multiple version
-# directories, initial revisions must be specified with --version-path.
-# The path separator used here should be the separator specified by "path_separator"
-# below.
-# version_locations = %(here)s/bar:%(here)s/bat:%(here)s/alembic/versions
-
-# path_separator; This indicates what character is used to split lists of file
-# paths, including version_locations and prepend_sys_path within configparser
-# files such as alembic.ini.
-# The default rendered in new alembic.ini files is "os", which uses os.pathsep
-# to provide os-dependent path splitting.
-#
-# Note that in order to support legacy alembic.ini files, this default does NOT
-# take place if path_separator is not present in alembic.ini.  If this
-# option is omitted entirely, fallback logic is as follows:
-#
-# 1. Parsing of the version_locations option falls back to using the legacy
-#    "version_path_separator" key, which if absent then falls back to the legacy
-#    behavior of splitting on spaces and/or commas.
-# 2. Parsing of the prepend_sys_path option falls back to the legacy
-#    behavior of splitting on spaces, commas, or colons.
-#
-# Valid values for path_separator are:
-#
-# path_separator = :
-# path_separator = ;
-# path_separator = space
-# path_separator = newline
-#
-# Use os.pathsep. Default configuration used for new projects.
-path_separator = os
-
-# set to 'true' to search source files recursively
-# in each "version_locations" directory
-# new in Alembic version 1.10
-# recursive_version_locations = false
-
-# the output encoding used when revision files
-# are written from script.py.mako
-# output_encoding = utf-8
-
-# database URL.  This is consumed by the user-maintained env.py script only.
-# other means of configuring database URLs may be customized within the env.py
-# file.
-sqlalchemy.url = driver://user:pass@localhost/dbname
-
-
-[post_write_hooks]
-# post_write_hooks defines scripts or Python functions that are run
-# on newly generated revision scripts.  See the documentation for further
-# detail and examples
-
-# format using "black" - use the console_scripts runner, against the "black" entrypoint
-# hooks = black
-# black.type = console_scripts
-# black.entrypoint = black
-# black.options = -l 79 REVISION_SCRIPT_FILENAME
-
-# lint with attempts to fix using "ruff" - use the module runner, against the "ruff" module
-# hooks = ruff
-# ruff.type = module
-# ruff.module = ruff
-# ruff.options = check --fix REVISION_SCRIPT_FILENAME
-
-# Alternatively, use the exec runner to execute a binary found on your PATH
-# hooks = ruff
-# ruff.type = exec
-# ruff.executable = ruff
-# ruff.options = check --fix REVISION_SCRIPT_FILENAME
-
-# Logging configuration.  This is also consumed by the user-maintained
-# env.py script only.
-[loggers]
-keys = root,sqlalchemy,alembic
-
-[handlers]
-keys = console
-
-[formatters]
-keys = generic
-
-[logger_root]
-level = WARNING
-handlers = console
-qualname =
-
-[logger_sqlalchemy]
-level = WARNING
-handlers =
-qualname = sqlalchemy.engine
-
-[logger_alembic]
-level = INFO
-handlers =
-qualname = alembic
-
-[handler_console]
-class = StreamHandler
-args = (sys.stderr,)
-level = NOTSET
-formatter = generic
-
-[formatter_generic]
-format = %(levelname)-5.5s [%(name)s] %(message)s
-datefmt = %H:%M:%S
-````
-
-## File: requirements-dev.txt
-````
--r requirements.txt
-pytest
-httpx
-````
-
-## File: app/models/notification.py
-````python
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey
-from datetime import datetime
-from app.core.database import Base
-
-class Notification(Base):
-    __tablename__ = "notifications"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    title = Column(String(200), nullable=False)
-    content = Column(Text, nullable=False)
-    is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-````
-
-## File: app/routers/equipment.py
-````python
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-from typing import List
-from app.db.session import get_db
-from app.models.equipment import Equipment
-from app.schemas.equipment import EquipmentCreate, EquipmentUpdate, EquipmentResponse, EquipmentStatusResponse
-from app.services.equipment_service import get_equipment_availability
-from app.core.security import require_role
-
-router = APIRouter()
-
-# 🟢 Dấu "/" ở cuối để khớp với yêu cầu GET /api/equipments/?include_inactive=true từ Frontend
-@router.get("/", response_model=List[EquipmentResponse])
-def get_equipments(
-    skip: int = 0,
-    limit: int = 100,
-    include_inactive: bool = Query(False, description="Nếu True, trả về cả các thiết bị đã ngưng hoạt động/vô hiệu hóa"),
-    db: Session = Depends(get_db),
-):
-    query = db.query(Equipment)
-    if not include_inactive:
-        query = query.filter(Equipment.is_active == True)
-    return query.offset(skip).limit(limit).all()
-
-
-@router.get("/availability", response_model=List[EquipmentStatusResponse])
-def get_equipment_availability_list(
-    start_time: datetime | None = Query(None, description="Thời gian bắt đầu"),
-    end_time: datetime | None = Query(None, description="Thời gian kết thúc"),
-    category: str | None = Query(None),
-    search: str | None = Query(None),
-    db: Session = Depends(get_db),
-):
-    if start_time is None and end_time is None:
-        start_time = end_time = datetime.now()
-    elif start_time is None:
-        start_time = end_time
-    elif end_time is None:
-        end_time = start_time
-
-    if start_time > end_time:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Thời gian bắt đầu phải nhỏ hơn hoặc bằng thời gian kết thúc.",
-        )
-
-    return get_equipment_availability(
-        db=db,
-        start_time=start_time,
-        end_time=end_time,
-        category=category,
-        search=search,
-    )
-
-
-@router.post("/", response_model=EquipmentResponse, status_code=status.HTTP_201_CREATED)
-def create_equipment(
-    payload: EquipmentCreate,
-    db: Session = Depends(get_db),
-    current_user = Depends(require_role("admin")),
-):
-    equip = Equipment(**payload.model_dump())
-    db.add(equip)
-    db.commit()
-    db.refresh(equip)
-    return equip
-
-
-@router.put("/{equipment_id}", response_model=EquipmentResponse)
-def update_equipment(
-    equipment_id: int,
-    payload: EquipmentUpdate,
-    db: Session = Depends(get_db),
-    current_user = Depends(require_role("admin")),
-):
-    equip = db.query(Equipment).filter(Equipment.id == equipment_id).first()
-    if not equip:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(equip, field, value)
-
-    db.commit()
-    db.refresh(equip)
-    return equip
-
-
-@router.delete("/{equipment_id}", status_code=status.HTTP_200_OK)
-def delete_equipment(
-    equipment_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(require_role("admin")),
-):
-    equip = db.query(Equipment).filter(Equipment.id == equipment_id).first()
-    if not equip:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thiết bị")
-
-    equip.is_active = False
-    db.commit()
-    return {"status": "success", "message": f"Đã chuyển trạng thái thiết bị '{equip.name}' thành ngừng hoạt động."}
-````
-
-## File: app/schemas/auth.py
-````python
-from pydantic import BaseModel, Field
-
-
-class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=50, description="Tên đăng nhập")
-    password: str = Field(..., min_length=1, max_length=128, description="Mật khẩu")
-
-
-class UserResponse(BaseModel):
-    id: int
-    username: str
-    email: str | None
-    full_name: str | None
-    role: str
-    is_active: bool
-
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
-            "example": {
-                "id": 1,
-                "username": "admin",
-                "email": "admin@meeting.local",
-                "full_name": "Quản trị viên",
-                "role": "admin",
-                "is_active": True,
-            }
-        }
-
-
-class TokenResponse(BaseModel):
-    """Schema phản hồi JWT Token sau khi đăng nhập thành công."""
-    access_token: str
-    token_type: str = "bearer"
-    role: str
-    username: str
-    full_name: str | None = None
-
-
-class LoginResponse(BaseModel):
-    status: str = "success"
-    message: str = "Đăng nhập thành công"
-    user: UserResponse
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "status": "success",
-                "message": "Đăng nhập thành công",
-                "user": {
-                    "id": 1,
-                    "username": "admin",
-                    "email": "admin@meeting.local",
-                    "full_name": "Quản trị viên",
-                    "role": "admin",
-                    "is_active": True,
-                },
-            }
-        }
-````
-
-## File: app/schemas/equipment.py
-````python
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from datetime import datetime
-
-# --- Equipment Base & CRUD ---
-class EquipmentBase(BaseModel):
-    name: str = Field(..., max_length=150)
-    code: Optional[str] = Field(None, max_length=50)
-    category: Optional[str] = Field(None, max_length=50)
-    total_qty: int = Field(1, ge=1)
-    description: Optional[str] = None
-    is_active: bool = True
-
-class EquipmentCreate(EquipmentBase):
-    pass
-
-class EquipmentUpdate(BaseModel):
-    name: Optional[str] = None
-    code: Optional[str] = None
-    category: Optional[str] = None
-    total_qty: Optional[int] = Field(None, ge=1)
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
-
-class EquipmentResponse(EquipmentBase):
-    id: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-class EquipmentStatusResponse(EquipmentResponse):
-    booked_qty: int
-    available_qty: int
-    status_label: str
-
-# --- Meeting Equipment Request/Response ---
-class MeetingEquipmentItemInput(BaseModel):
-    equipment_id: int
-    quantity: int = Field(1, ge=1)
-    note: Optional[str] = None
-
-class MeetingEquipmentItemOutput(BaseModel):
-    equipment_id: int
-    equipment_name: str
-    quantity: int
-    note: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-````
-
-## File: app/services/equipment_service.py
-````python
-from datetime import datetime
-from typing import List, Dict, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from fastapi import HTTPException, status
-from app.models.equipment import Equipment, MeetingEquipment
-from app.models.meeting import Meeting
-from app.schemas.equipment import EquipmentResponse, EquipmentStatusResponse, MeetingEquipmentItemInput
-
-
-def get_equipment_availability(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    category: Optional[str] = None,
-    search: Optional[str] = None,
-) -> List[EquipmentStatusResponse]:
-    booked_quantities = (
-        db.query(
-            MeetingEquipment.equipment_id.label("equipment_id"),
-            func.sum(MeetingEquipment.quantity).label("booked_qty"),
-        )
-        .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
-        .filter(
-            func.upper(Meeting.status) != "CANCELLED",
-            Meeting.start_time < end_time,
-            Meeting.end_time > start_time,
-        )
-        .group_by(MeetingEquipment.equipment_id)
-        .subquery()
-    )
-
-    query = (
-        db.query(Equipment, func.coalesce(booked_quantities.c.booked_qty, 0))
-        .outerjoin(booked_quantities, Equipment.id == booked_quantities.c.equipment_id)
-    )
-    if category:
-        query = query.filter(Equipment.category == category)
-    if search:
-        search_term = f"%{search.strip()}%"
-        query = query.filter(
-            Equipment.name.ilike(search_term) | Equipment.code.ilike(search_term)
-        )
-
-    results = []
-    for equipment, booked_qty in query.order_by(Equipment.name).all():
-        booked_qty = int(booked_qty)
-        available_qty = equipment.total_qty - booked_qty
-        if not equipment.is_active:
-            status_label = "Ngừng hoạt động / Bảo trì"
-        elif available_qty <= 0:
-            status_label = "Đã đặt hết"
-        else:
-            status_label = "Có sẵn"
-
-        response_data = EquipmentResponse.model_validate(equipment).model_dump()
-        response_data.update(
-            {
-                "booked_qty": booked_qty,
-                "available_qty": available_qty,
-                "status_label": status_label,
-            }
-        )
-        results.append(EquipmentStatusResponse.model_validate(response_data))
-    return results
-
-def check_equipment_availability(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    requested_items: List[MeetingEquipmentItemInput],
-    exclude_meeting_id: Optional[int] = None
-):
-
-    """
-    Tính toán số lượng khả dụng = Tổng tồn kho - Số lượng đã đặt trong các cuộc họp trùng khung giờ
-    """
-    for item in requested_items:
-        # 1. Lấy thông tin thiết bị
-        equip = db.query(Equipment).filter(Equipment.id == item.equipment_id, Equipment.is_active == True).first()
-        if not equip:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Thiết bị với ID {item.equipment_id} không tồn tại hoặc đã bị vô hiệu hóa."
-            )
-
-        # 2. Truy vấn tổng số lượng thiết bị này đã được đặt ở các cuộc họp khác trùng thời gian
-        # Điều kiện trùng giờ: (Meeting.start_time < end_time) AND (Meeting.end_time > start_time)
-        query = (
-            db.query(func.coalesce(func.sum(MeetingEquipment.quantity), 0))
-            .join(Meeting, MeetingEquipment.meeting_id == Meeting.id)
-            .filter(
-                MeetingEquipment.equipment_id == item.equipment_id,
-                Meeting.status != "CANCELLED",  # Bỏ qua cuộc họp đã hủy
-                Meeting.start_time < end_time,
-                Meeting.end_time > start_time
-            )
-        )
-
-        if exclude_meeting_id:
-            query = query.filter(Meeting.id != exclude_meeting_id)
-
-        booked_qty = query.scalar() or 0
-        available_qty = equip.total_qty - booked_qty
-
-        if item.quantity > available_qty:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Thiết bị '{equip.name}' không đủ số lượng trong khung giờ này. "
-                       f"Yêu cầu: {item.quantity}, Khả dụng: {available_qty} (Tổng: {equip.total_qty}, Đã đặt: {booked_qty})."
-            )
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 ````
 
 ## File: app/core/database.py
@@ -4341,45 +6819,6 @@ def get_db():
         db.close()
 ````
 
-## File: app/routers/auth.py
-````python
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.core.security import authenticate_user, create_access_token, get_current_user, require_role
-from app.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse, UserResponse
-
-router = APIRouter(prefix="/auth")
-
-
-def issue_token(user: User) -> TokenResponse:
-    token = create_access_token(data={"sub": user.username, "user_id": user.id, "role": user.role})
-    return TokenResponse(
-        access_token=token,
-        token_type="bearer",
-        role=user.role,
-        username=user.username,
-        full_name=user.full_name or user.username,
-    )
-
-
-@router.post("/login", response_model=TokenResponse, summary="Đăng nhập")
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    return issue_token(authenticate_user(db, payload.username, payload.password))
-
-
-@router.get("/me", response_model=UserResponse, summary="Lấy thông tin cá nhân")
-def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
-
-
-@router.get("/admin-only", summary="Kiểm tra quyền Admin")
-def admin_only_route(current_user: User = Depends(require_role("admin"))):
-    return {"status": "success", "message": f"Xin chào Admin {current_user.full_name}! Bạn có toàn quyền quản trị."}
-````
-
 ## File: frontend/assets/index-DDntIe9W.css
 ````css
 @import "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";@layer components;@layer properties{@supports (((-webkit-hyphens:none)) and (not (margin-trim:inline))) or ((-moz-orient:inline) and (not (color:rgb(from red r g b)))){*,:before,:after,::backdrop{--tw-translate-x:0;--tw-translate-y:0;--tw-translate-z:0;--tw-rotate-x:initial;--tw-rotate-y:initial;--tw-rotate-z:initial;--tw-skew-x:initial;--tw-skew-y:initial;--tw-space-y-reverse:0;--tw-border-style:solid;--tw-leading:initial;--tw-font-weight:initial;--tw-tracking:initial;--tw-shadow:0 0 #0000;--tw-shadow-color:initial;--tw-shadow-alpha:100%;--tw-inset-shadow:0 0 #0000;--tw-inset-shadow-color:initial;--tw-inset-shadow-alpha:100%;--tw-ring-color:initial;--tw-ring-shadow:0 0 #0000;--tw-inset-ring-color:initial;--tw-inset-ring-shadow:0 0 #0000;--tw-ring-inset:initial;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-offset-shadow:0 0 #0000;--tw-blur:initial;--tw-brightness:initial;--tw-contrast:initial;--tw-grayscale:initial;--tw-hue-rotate:initial;--tw-invert:initial;--tw-opacity:initial;--tw-saturate:initial;--tw-sepia:initial;--tw-drop-shadow:initial;--tw-drop-shadow-color:initial;--tw-drop-shadow-alpha:100%;--tw-drop-shadow-size:initial}}}@layer theme{:root,:host{--font-mono:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;--color-red-500:oklch(63.7% .237 25.331);--color-green-500:oklch(72.3% .219 149.579);--color-blue-400:oklch(70.7% .165 254.624);--color-gray-50:oklch(98.5% .002 247.839);--color-gray-100:oklch(96.7% .003 264.542);--color-gray-200:oklch(92.8% .006 264.531);--color-gray-300:oklch(87.2% .01 258.338);--color-gray-400:oklch(70.7% .022 261.325);--color-gray-500:oklch(55.1% .027 264.364);--color-gray-600:oklch(44.6% .03 256.802);--color-gray-700:oklch(37.3% .034 259.733);--color-gray-800:oklch(27.8% .033 256.848);--color-gray-900:oklch(21% .034 264.665);--color-white:#fff;--spacing:.25rem;--text-xs:.75rem;--text-xs--line-height:calc(1 / .75);--text-sm:.875rem;--text-sm--line-height:calc(1.25 / .875);--text-lg:1.125rem;--text-lg--line-height:calc(1.75 / 1.125);--text-xl:1.25rem;--text-xl--line-height:calc(1.75 / 1.25);--text-2xl:1.5rem;--text-2xl--line-height:calc(2 / 1.5);--font-weight-medium:500;--font-weight-semibold:600;--font-weight-bold:700;--tracking-tight:-.025em;--leading-snug:1.375;--radius-md:.375rem;--radius-lg:.5rem;--default-transition-duration:.15s;--default-transition-timing-function:cubic-bezier(.4, 0, .2, 1);--default-font-family:"Inter", system-ui, sans-serif;--default-mono-font-family:var(--font-mono)}}@layer base{*,:after,:before,::backdrop{box-sizing:border-box;border:0 solid;margin:0;padding:0}::file-selector-button{box-sizing:border-box;border:0 solid;margin:0;padding:0}html,:host{-webkit-text-size-adjust:100%;tab-size:4;line-height:1.5;font-family:var(--default-font-family,-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");font-feature-settings:var(--default-font-feature-settings,normal);font-variation-settings:var(--default-font-variation-settings,normal);-webkit-tap-highlight-color:transparent}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;-webkit-text-decoration:inherit;-webkit-text-decoration:inherit;-webkit-text-decoration:inherit;-webkit-text-decoration:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,samp,pre{font-family:var(--default-mono-font-family,ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);font-feature-settings:var(--default-mono-font-feature-settings,normal);font-variation-settings:var(--default-mono-font-variation-settings,normal);font-size:1em}small{font-size:80%}sub,sup{vertical-align:baseline;font-size:75%;line-height:0;position:relative}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}:-moz-focusring:where(:not(iframe)){outline:auto}progress{vertical-align:baseline}summary{display:list-item}ol,ul,menu{list-style:none}img,svg,video,canvas,audio,iframe,embed,object{vertical-align:middle;display:block}img,video{max-width:100%;height:auto}button,input,select,optgroup,textarea{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}::file-selector-button{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}:where(select:is([multiple],[size])) optgroup{font-weight:bolder}:where(select:is([multiple],[size])) optgroup option{padding-inline-start:20px}::file-selector-button{margin-inline-end:4px}::placeholder{opacity:1}@supports (not ((-webkit-appearance:-apple-pay-button))) or (contain-intrinsic-size:1px){::placeholder{color:currentColor}@supports (color:color-mix(in lab, red, red)){::placeholder{color:color-mix(in oklab, currentcolor 50%, transparent)}}}textarea{resize:vertical}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-date-and-time-value{min-height:1lh;text-align:inherit}::-webkit-datetime-edit{display:inline-flex}::-webkit-datetime-edit-fields-wrapper{padding:0}::-webkit-datetime-edit{padding-block:0}::-webkit-datetime-edit-year-field{padding-block:0}::-webkit-datetime-edit-month-field{padding-block:0}::-webkit-datetime-edit-day-field{padding-block:0}::-webkit-datetime-edit-hour-field{padding-block:0}::-webkit-datetime-edit-minute-field{padding-block:0}::-webkit-datetime-edit-second-field{padding-block:0}::-webkit-datetime-edit-millisecond-field{padding-block:0}::-webkit-datetime-edit-meridiem-field{padding-block:0}::-webkit-calendar-picker-indicator{line-height:1}:-moz-ui-invalid{box-shadow:none}button,input:where([type=button],[type=reset],[type=submit]){appearance:button}::file-selector-button{appearance:button}::-webkit-inner-spin-button{height:auto}::-webkit-outer-spin-button{height:auto}[hidden]:where(:not([hidden=until-found])){display:none!important}}@layer utilities{.pointer-events-none{pointer-events:none}.absolute{position:absolute}.fixed{position:fixed}.relative{position:relative}.top-0{top:0}.top-1\.5{top:calc(var(--spacing) * 1.5)}.top-1\/2{top:50%}.top-3{top:calc(var(--spacing) * 3)}.right-0{right:0}.right-1\.5{right:calc(var(--spacing) * 1.5)}.right-2{right:calc(var(--spacing) * 2)}.right-3{right:calc(var(--spacing) * 3)}.bottom-0{bottom:0}.left-0{left:0}.left-3{left:calc(var(--spacing) * 3)}.z-50{z-index:50}.mx-1{margin-inline:var(--spacing)}.mt-0\.5{margin-top:calc(var(--spacing) * .5)}.mt-auto{margin-top:auto}.mb-0\.5{margin-bottom:calc(var(--spacing) * .5)}.mb-1{margin-bottom:var(--spacing)}.mb-1\.5{margin-bottom:calc(var(--spacing) * 1.5)}.mb-3{margin-bottom:calc(var(--spacing) * 3)}.mb-4{margin-bottom:calc(var(--spacing) * 4)}.mb-6{margin-bottom:calc(var(--spacing) * 6)}.ml-auto{margin-left:auto}.block{display:block}.flex{display:flex}.grid{display:grid}.hidden{display:none}.inline{display:inline}.inline-block{display:inline-block}.inline-flex{display:inline-flex}.h-0\.5{height:calc(var(--spacing) * .5)}.h-1\.5{height:calc(var(--spacing) * 1.5)}.h-2{height:calc(var(--spacing) * 2)}.h-8{height:calc(var(--spacing) * 8)}.h-9{height:calc(var(--spacing) * 9)}.h-\[56px\]{height:56px}.h-\[60px\]{height:60px}.h-full{height:100%}.min-h-screen{min-height:100vh}.w-1\.5{width:calc(var(--spacing) * 1.5)}.w-2{width:calc(var(--spacing) * 2)}.w-8{width:calc(var(--spacing) * 8)}.w-9{width:calc(var(--spacing) * 9)}.w-\[220px\]{width:220px}.w-full{width:100%}.max-w-\[480px\]{max-width:480px}.min-w-0{min-width:0}.flex-1{flex:1}.flex-shrink-0{flex-shrink:0}.-translate-y-1\/2{--tw-translate-y:calc(calc(1 / 2 * 100%) * -1);translate:var(--tw-translate-x) var(--tw-translate-y)}.transform{transform:var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,)}.cursor-pointer{cursor:pointer}.appearance-none{appearance:none}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.justify-between{justify-content:space-between}.justify-center{justify-content:center}.gap-1{gap:var(--spacing)}.gap-1\.5{gap:calc(var(--spacing) * 1.5)}.gap-2{gap:calc(var(--spacing) * 2)}.gap-3{gap:calc(var(--spacing) * 3)}.gap-4{gap:calc(var(--spacing) * 4)}.gap-5{gap:calc(var(--spacing) * 5)}:where(.space-y-0\.5>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing) * .5) * var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing) * .5) * calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-3>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing) * 3) * var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing) * 3) * calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-4>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing) * 4) * var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing) * 4) * calc(1 - var(--tw-space-y-reverse)))}.truncate{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.rounded-\[10px\]{border-radius:10px}.rounded-full{border-radius:2147483647px}.rounded-lg{border-radius:var(--radius-lg)}.rounded-md{border-radius:var(--radius-md)}.border{border-style:var(--tw-border-style);border-width:1px}.border-2{border-style:var(--tw-border-style);border-width:2px}.border-t{border-top-style:var(--tw-border-style);border-top-width:1px}.border-r{border-right-style:var(--tw-border-style);border-right-width:1px}.border-b{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}.border-gray-100{border-color:var(--color-gray-100)}.border-gray-200{border-color:var(--color-gray-200)}.border-white{border-color:var(--color-white)}.bg-gray-50{background-color:var(--color-gray-50)}.bg-gray-100{background-color:var(--color-gray-100)}.bg-green-500{background-color:var(--color-green-500)}.bg-red-500{background-color:var(--color-red-500)}.bg-white{background-color:var(--color-white)}.object-cover{object-fit:cover}.p-4{padding:calc(var(--spacing) * 4)}.p-6{padding:calc(var(--spacing) * 6)}.px-2{padding-inline:calc(var(--spacing) * 2)}.px-2\.5{padding-inline:calc(var(--spacing) * 2.5)}.px-3{padding-inline:calc(var(--spacing) * 3)}.px-4{padding-inline:calc(var(--spacing) * 4)}.px-5{padding-inline:calc(var(--spacing) * 5)}.px-6{padding-inline:calc(var(--spacing) * 6)}.py-0\.5{padding-block:calc(var(--spacing) * .5)}.py-1{padding-block:var(--spacing)}.py-1\.5{padding-block:calc(var(--spacing) * 1.5)}.py-2{padding-block:calc(var(--spacing) * 2)}.py-2\.5{padding-block:calc(var(--spacing) * 2.5)}.py-3{padding-block:calc(var(--spacing) * 3)}.py-4{padding-block:calc(var(--spacing) * 4)}.py-5{padding-block:calc(var(--spacing) * 5)}.pt-3{padding-top:calc(var(--spacing) * 3)}.pt-4{padding-top:calc(var(--spacing) * 4)}.pr-4{padding-right:calc(var(--spacing) * 4)}.pr-8{padding-right:calc(var(--spacing) * 8)}.pb-20{padding-bottom:calc(var(--spacing) * 20)}.pl-3{padding-left:calc(var(--spacing) * 3)}.pl-9{padding-left:calc(var(--spacing) * 9)}.text-left{text-align:left}.text-2xl{font-size:var(--text-2xl);line-height:var(--tw-leading,var(--text-2xl--line-height))}.text-lg{font-size:var(--text-lg);line-height:var(--tw-leading,var(--text-lg--line-height))}.text-sm{font-size:var(--text-sm);line-height:var(--tw-leading,var(--text-sm--line-height))}.text-xl{font-size:var(--text-xl);line-height:var(--tw-leading,var(--text-xl--line-height))}.text-xs{font-size:var(--text-xs);line-height:var(--tw-leading,var(--text-xs--line-height))}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-\[12px\]{font-size:12px}.text-\[13px\]{font-size:13px}.text-\[14px\]{font-size:14px}.text-\[15px\]{font-size:15px}.leading-snug{--tw-leading:var(--leading-snug);line-height:var(--leading-snug)}.font-bold{--tw-font-weight:var(--font-weight-bold);font-weight:var(--font-weight-bold)}.font-medium{--tw-font-weight:var(--font-weight-medium);font-weight:var(--font-weight-medium)}.font-semibold{--tw-font-weight:var(--font-weight-semibold);font-weight:var(--font-weight-semibold)}.tracking-tight{--tw-tracking:var(--tracking-tight);letter-spacing:var(--tracking-tight)}.text-gray-300{color:var(--color-gray-300)}.text-gray-400{color:var(--color-gray-400)}.text-gray-500{color:var(--color-gray-500)}.text-gray-600{color:var(--color-gray-600)}.text-gray-700{color:var(--color-gray-700)}.text-gray-800{color:var(--color-gray-800)}.text-gray-900{color:var(--color-gray-900)}.text-white{color:var(--color-white)}.placeholder-gray-400::placeholder{color:var(--color-gray-400)}.ring-1{--tw-ring-shadow:var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)}.ring-gray-200{--tw-ring-color:var(--color-gray-200)}.filter{filter:var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,)}.transition{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to,opacity,box-shadow,transform,translate,scale,rotate,filter,-webkit-backdrop-filter,backdrop-filter,display,content-visibility,overlay,pointer-events;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-all{transition-property:all;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-colors{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.outline-none{--tw-outline-style:none;outline-style:none}@media (hover:hover){.hover\:border-blue-400:hover{border-color:var(--color-blue-400)}.hover\:bg-gray-50:hover{background-color:var(--color-gray-50)}.hover\:bg-gray-100:hover{background-color:var(--color-gray-100)}}@media (width>=64rem){.lg\:flex{display:flex}.lg\:hidden{display:none}}}*{box-sizing:border-box}body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;background-color:#f9fafb;font-family:Inter,system-ui,sans-serif}@property --tw-translate-x{syntax:"*";inherits:false;initial-value:0}@property --tw-translate-y{syntax:"*";inherits:false;initial-value:0}@property --tw-translate-z{syntax:"*";inherits:false;initial-value:0}@property --tw-rotate-x{syntax:"*";inherits:false}@property --tw-rotate-y{syntax:"*";inherits:false}@property --tw-rotate-z{syntax:"*";inherits:false}@property --tw-skew-x{syntax:"*";inherits:false}@property --tw-skew-y{syntax:"*";inherits:false}@property --tw-space-y-reverse{syntax:"*";inherits:false;initial-value:0}@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-leading{syntax:"*";inherits:false}@property --tw-font-weight{syntax:"*";inherits:false}@property --tw-tracking{syntax:"*";inherits:false}@property --tw-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-shadow-color{syntax:"*";inherits:false}@property --tw-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-inset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-shadow-color{syntax:"*";inherits:false}@property --tw-inset-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-ring-color{syntax:"*";inherits:false}@property --tw-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-ring-color{syntax:"*";inherits:false}@property --tw-inset-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-ring-inset{syntax:"*";inherits:false}@property --tw-ring-offset-width{syntax:"<length>";inherits:false;initial-value:0}@property --tw-ring-offset-color{syntax:"*";inherits:false;initial-value:#fff}@property --tw-ring-offset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-blur{syntax:"*";inherits:false}@property --tw-brightness{syntax:"*";inherits:false}@property --tw-contrast{syntax:"*";inherits:false}@property --tw-grayscale{syntax:"*";inherits:false}@property --tw-hue-rotate{syntax:"*";inherits:false}@property --tw-invert{syntax:"*";inherits:false}@property --tw-opacity{syntax:"*";inherits:false}@property --tw-saturate{syntax:"*";inherits:false}@property --tw-sepia{syntax:"*";inherits:false}@property --tw-drop-shadow{syntax:"*";inherits:false}@property --tw-drop-shadow-color{syntax:"*";inherits:false}@property --tw-drop-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-drop-shadow-size{syntax:"*";inherits:false}
@@ -4402,160 +6841,6 @@ Error generating stack: `+e.message+`
 ````
 User-agent: *
 Disallow: /
-````
-
-## File: tests/test_meetings_history.py
-````python
-"""Tests for GET /api/meetings/history."""
-
-from datetime import datetime, timedelta
-
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from tests.helpers import (
-    _create_user,
-    _create_room,
-    _create_meeting,
-    _add_participant,
-    _make_token,
-    _auth_header,
-)
-
-
-class TestNoToken:
-    def test_returns_401_without_token(self, client: TestClient):
-        resp = client.get("/api/meetings/history")
-        assert resp.status_code == 401
-
-
-class TestOrganizerSeesMeeting:
-    def test_organizer_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer")
-        room = _create_room(db_session)
-        past = datetime.utcnow() - timedelta(days=3)
-        end = datetime.utcnow() - timedelta(days=1)
-        m = _create_meeting(db_session, room, org, past, end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id in ids
-
-
-class TestParticipantSeesMeeting:
-    def test_invited_user_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer2")
-        invitee = _create_user(db_session, "invitee")
-        room = _create_room(db_session, "Room B")
-        past = datetime.utcnow() - timedelta(days=5)
-        end = datetime.utcnow() - timedelta(days=4)
-        m = _create_meeting(db_session, room, org, past, end)
-        _add_participant(db_session, m, invitee)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(invitee)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id in ids
-
-
-class TestNonParticipantExcluded:
-    def test_outsider_sees_nothing(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer3")
-        outsider = _create_user(db_session, "outsider")
-        room = _create_room(db_session, "Room C")
-        past = datetime.utcnow() - timedelta(days=7)
-        end = datetime.utcnow() - timedelta(days=6)
-        _create_meeting(db_session, room, org, past, end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(outsider)))
-        assert resp.status_code == 200
-        assert resp.json() == []
-
-
-class TestFutureMeetingExcluded:
-    def test_future_meeting_not_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer4")
-        room = _create_room(db_session, "Room D")
-        future_start = datetime.utcnow() + timedelta(days=1)
-        future_end = datetime.utcnow() + timedelta(days=2)
-        m = _create_meeting(db_session, room, org, future_start, future_end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id not in ids
-
-
-class TestCanceledMeetingExcluded:
-    def test_canceled_meeting_not_in_history(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer5")
-        room = _create_room(db_session, "Room E")
-        past = datetime.utcnow() - timedelta(days=10)
-        end = datetime.utcnow() - timedelta(days=9)
-        m = _create_meeting(db_session, room, org, past, end, status="canceled")
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert m.id not in ids
-
-
-class TestNoDuplicates:
-    def test_no_duplicate_when_organizer_and_participant(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer6")
-        room = _create_room(db_session, "Room F")
-        past = datetime.utcnow() - timedelta(days=2)
-        end = datetime.utcnow() - timedelta(hours=1)
-        m = _create_meeting(db_session, room, org, past, end)
-        _add_participant(db_session, m, org)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert ids.count(m.id) == 1, "Duplicate records must not be returned"
-
-
-class TestOrderByDesc:
-    def test_ordered_by_end_time_desc(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer7")
-        room = _create_room(db_session, "Room G")
-        m1 = _create_meeting(db_session, room, org,
-                             datetime.utcnow() - timedelta(days=10),
-                             datetime.utcnow() - timedelta(days=9))
-        m2 = _create_meeting(db_session, room, org,
-                             datetime.utcnow() - timedelta(days=3),
-                             datetime.utcnow() - timedelta(days=2))
-        m3 = _create_meeting(db_session, room, org,
-                             datetime.utcnow() - timedelta(days=20),
-                             datetime.utcnow() - timedelta(days=19))
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert ids == [m2.id, m1.id, m3.id]
-
-
-class TestResponseShape:
-    def test_response_has_expected_fields(self, client: TestClient, db_session: Session):
-        org = _create_user(db_session, "organizer8")
-        room = _create_room(db_session, "Room H")
-        past = datetime.utcnow() - timedelta(days=5)
-        end = datetime.utcnow() - timedelta(days=4)
-        _create_meeting(db_session, room, org, past, end)
-
-        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
-        assert resp.status_code == 200
-        item = resp.json()[0]
-        expected = {
-            "id", "title", "description",
-            "meeting_type", "online_link",
-            "room_id", "organizer_id",
-            "start_time", "end_time", "status",
-            "is_recurring", "recurring_type",
-            "equipments", "participant_ids",
-        }
-        assert set(item.keys()) == expected
 ````
 
 ## File: .gitignore
@@ -4801,75 +7086,6 @@ test.db
 }
 ````
 
-## File: schema.sql
-````sql
-CREATE DATABASE IF NOT EXISTS meeting_db
-    DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE meeting_db;
-
-CREATE TABLE IF NOT EXISTS users (
-    id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    username        VARCHAR(50) NOT NULL,
-    email           VARCHAR(150) DEFAULT NULL,
-    full_name       VARCHAR(150) DEFAULT NULL,
-    hashed_password VARCHAR(255) NOT NULL,
-    role            VARCHAR(20) NOT NULL DEFAULT 'user',
-    is_active       TINYINT(1) NOT NULL DEFAULT 1,
-    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_users_username (username),
-    UNIQUE KEY uq_users_email (email)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS rooms (
-    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    name        VARCHAR(100) NOT NULL,
-    location    VARCHAR(255) DEFAULT NULL,
-    capacity    INT NOT NULL DEFAULT 1,
-    description TEXT DEFAULT NULL,
-    amenities   TEXT DEFAULT NULL,
-    is_active   TINYINT(1) NOT NULL DEFAULT 1,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_rooms_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS meetings (
-    id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    title          VARCHAR(200) NOT NULL,
-    description    TEXT DEFAULT NULL,
-    is_recurring   TINYINT(1) NOT NULL DEFAULT 0,
-    recurring_type VARCHAR(20) DEFAULT NULL,
-    room_id        INT UNSIGNED NOT NULL,
-    organizer_id   INT UNSIGNED DEFAULT NULL,
-    start_time     DATETIME NOT NULL,
-    end_time       DATETIME NOT NULL,
-    status         VARCHAR(20) NOT NULL DEFAULT 'scheduled',
-    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at     DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    KEY idx_meetings_room_id (room_id),
-    KEY idx_meetings_organizer_id (organizer_id),
-    KEY idx_meetings_start_time (start_time),
-    CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_meetings_organizer FOREIGN KEY (organizer_id) REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-CREATE TABLE IF NOT EXISTS meeting_participants (
-    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    meeting_id INT UNSIGNED NOT NULL,
-    user_id    INT UNSIGNED NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_meeting_participant (meeting_id, user_id),
-    CONSTRAINT fk_meeting_participants_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_meeting_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-````
-
 ## File: app/models/__init__.py
 ````python
 # app/models/__init__.py
@@ -4918,295 +7134,606 @@ class Room(Base):
         return f"<Room id={self.id} name={self.name!r}>"
 ````
 
-## File: app/models/user.py
+## File: app/routers/auth.py
 ````python
-# app/models/user.py
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
-from app.core.database import Base
+import os
+import re
+import secrets
+from datetime import datetime
+from urllib.parse import urlencode, urlsplit, urlunsplit
+
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.security import (
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_role,
+)
+from app.models.user import User
+from app.schemas.auth import LoginRequest, TokenResponse, UserResponse
+from app.services.google_calendar_service import (
+    GOOGLE_CALENDAR_EVENTS_SCOPE,
+    encrypt_refresh_token,
+    revoke_google_refresh_token,
+    sync_user_meetings_to_google,
+    verify_calendar_consent_signature,
+)
+
+router = APIRouter(prefix="/auth")
+
+GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_STATE_COOKIE = "google_oauth_state"
 
 
-class User(Base):
-    """Model đại diện cho bảng người dùng (tài khoản) trong hệ thống."""
+def _google_oauth_config() -> tuple[str, str, str, str]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.getenv(
+        "GOOGLE_REDIRECT_URI",
+        "http://localhost:8000/api/auth/google/callback",
+    )
+    frontend_login_url = os.getenv(
+        "FRONTEND_LOGIN_URL",
+        "http://localhost:8000/static/login.html",
+    )
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is not configured",
+        )
+    return client_id, client_secret, redirect_uri, frontend_login_url
 
-    __tablename__ = "users"
 
-    # ✅ Sửa primary_primary_key thành primary_key
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    username = Column(String(50), unique=True, nullable=False, index=True, comment="Tên đăng nhập")
-    email = Column(String(150), unique=True, nullable=True, comment="Địa chỉ Email")
-    full_name = Column(String(150), nullable=True, comment="Họ và tên người dùng")
-    hashed_password = Column(String(255), nullable=False, comment="Mật khẩu đã băm")
-    role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
-    is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
-    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
+def _frontend_redirect(frontend_login_url: str, values: dict[str, str], *, fragment: bool) -> str:
+    parts = urlsplit(frontend_login_url)
+    encoded_values = urlencode(values)
+    if fragment:
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, encoded_values))
+    query = f"{parts.query}&{encoded_values}" if parts.query else encoded_values
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
-    def __repr__(self) -> str:
-        return f"<User id={self.id} username={self.username!r} role={self.role!r}>"
+
+def _unique_google_username(db: Session, email: str) -> str:
+    base = re.sub(r"[^a-zA-Z0-9_.-]", "_", email.split("@", 1)[0]).strip("._-")[:40]
+    base = base or "google_user"
+    username = base
+    suffix = 1
+    while db.query(User.id).filter(User.username == username).first():
+        suffix_text = f"_{suffix}"
+        username = f"{base[:50 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    return username
+
+
+def _google_authorization_redirect(
+    flow: str,
+    user_id: int | None = None,
+    *,
+    return_authorization_url: bool = False,
+):
+    client_id, _, redirect_uri, _ = _google_oauth_config()
+    state = secrets.token_urlsafe(32)
+    cookie_value = f"{state}|{flow}|{user_id or ''}"
+    query = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    if flow.startswith("calendar"):
+        query["scope"] += f" {GOOGLE_CALENDAR_EVENTS_SCOPE}"
+        query["access_type"] = "offline"
+        query["prompt"] = "consent"
+    authorization_url = f"{GOOGLE_AUTHORIZATION_URL}?{urlencode(query)}"
+    response = (
+        JSONResponse({"authorization_url": authorization_url})
+        if return_authorization_url
+        else RedirectResponse(authorization_url)
+    )
+    response.set_cookie(
+        GOOGLE_STATE_COOKIE,
+        cookie_value,
+        max_age=600,
+        path="/api/auth/google",
+        secure=redirect_uri.startswith("https://"),
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+def _frontend_dashboard_url(frontend_login_url: str) -> str:
+    configured_url = os.getenv("FRONTEND_DASHBOARD_URL")
+    if configured_url:
+        return configured_url
+    parts = urlsplit(frontend_login_url)
+    if parts.path.endswith("/login.html"):
+        path = f"{parts.path[:-len('login.html')]}dashboard.html"
+    else:
+        path = "/static/dashboard.html"
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def issue_token(user: User) -> TokenResponse:
+    token = create_access_token(data={"sub": user.username, "user_id": user.id, "role": user.role})
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        role=user.role,
+        username=user.username,
+        full_name=user.full_name or user.username,
+    )
+
+
+@router.post("/login", response_model=TokenResponse, summary="Đăng nhập")
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    return issue_token(authenticate_user(db, payload.username, payload.password))
+
+
+@router.get("/google/login", summary="Đăng nhập bằng Google")
+def google_login():
+    return _google_authorization_redirect("login")
+
+
+@router.get("/google/calendar/connect", summary="Cấp quyền Google Calendar")
+def google_calendar_connect(
+    user_id: int,
+    expires: int,
+    signature: str,
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if not user or not verify_calendar_consent_signature(user, expires, signature):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Calendar consent link is invalid or expired")
+    return _google_authorization_redirect("calendar", user.id)
+
+
+@router.get("/google/calendar/authorize", summary="Kết nối Google Calendar cá nhân")
+def google_calendar_authorize(current_user: User = Depends(get_current_user)):
+    return _google_authorization_redirect(
+        "calendar_settings",
+        current_user.id,
+        return_authorization_url=True,
+    )
+
+
+@router.get("/google/callback", summary="Hoàn tất đăng nhập Google")
+def google_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_db),
+):
+    _, client_secret, redirect_uri, frontend_login_url = _google_oauth_config()
+    cookie_parts = request.cookies.get(GOOGLE_STATE_COOKIE, "").split("|", 2)
+    if len(cookie_parts) != 3:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
+    expected_state, flow, flow_user_text = cookie_parts
+    if not state or not expected_state or not secrets.compare_digest(state, expected_state):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
+    if flow not in {"login", "calendar", "calendar_settings"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth flow")
+    if error:
+        error_code = (
+            "calendar_permission_denied"
+            if flow in {"calendar", "calendar_settings"} and error == "access_denied"
+            else "access_denied" if error == "access_denied" else "oauth_failed"
+        )
+        redirect_url = (
+            _frontend_dashboard_url(frontend_login_url)
+            if flow == "calendar_settings"
+            else frontend_login_url
+        )
+        return RedirectResponse(
+            _frontend_redirect(redirect_url, {"google_error": error_code}, fragment=False),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OAuth code")
+
+    try:
+        token_response = httpx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": os.environ["GOOGLE_CLIENT_ID"],
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=10,
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        google_access_token = token_data.get("access_token")
+        if not google_access_token:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Google did not return an access token")
+
+        profile_response = httpx.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {google_access_token}"},
+            timeout=10,
+        )
+        profile_response.raise_for_status()
+        profile = profile_response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not complete Google sign-in",
+        ) from exc
+
+    email = str(profile.get("email") or "").strip().lower()
+    if not email or profile.get("email_verified") is not True:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google account email is not verified")
+
+    if flow in {"calendar", "calendar_settings"}:
+        try:
+            calendar_user_id = int(flow_user_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid calendar account") from exc
+        user = db.query(User).filter(User.id == calendar_user_id, User.is_active.is_(True)).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Calendar account is not available",
+            )
+        if flow == "calendar" and (
+            not user.email or user.email.strip().lower() != email
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Google email must match the invited RoomSync account",
+            )
+        refresh_token = token_data.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Google did not return calendar authorization; retry consent",
+            )
+        try:
+            user.google_refresh_token = encrypt_refresh_token(refresh_token)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        user.google_calendar_connected_at = datetime.now()
+        db.commit()
+        background_tasks.add_task(sync_user_meetings_to_google, user.id)
+        _, _, redirect_uri, frontend_login_url = _google_oauth_config()
+        redirect = RedirectResponse(
+            _frontend_redirect(
+                _frontend_dashboard_url(frontend_login_url),
+                {"calendar_connected": "1"},
+                fragment=False,
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+        redirect.delete_cookie(
+            GOOGLE_STATE_COOKIE,
+            path="/api/auth/google",
+            secure=redirect_uri.startswith("https://"),
+            httponly=True,
+            samesite="lax",
+        )
+        return redirect
+
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if user is None:
+        user = User(
+            username=_unique_google_username(db, email),
+            email=email,
+            full_name=str(profile.get("name") or email.split("@", 1)[0])[:150],
+            hashed_password=hash_password(secrets.token_urlsafe(48)),
+            role="employee",
+            is_active=True,
+        )
+        try:
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        except IntegrityError as exc:
+            db.rollback()
+            user = db.query(User).filter(func.lower(User.email) == email).first()
+            if user is None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Could not create Google account") from exc
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
+
+    token = issue_token(user)
+    redirect_values = {
+        "access_token": token.access_token,
+        "token_type": token.token_type,
+        "role": user.role,
+        "username": user.username,
+        "full_name": user.full_name or user.username,
+        "email": user.email or "",
+        "user_id": str(user.id),
+        "picture": str(profile.get("picture") or ""),
+    }
+    redirect = RedirectResponse(
+        _frontend_redirect(frontend_login_url, redirect_values, fragment=True),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+    redirect.delete_cookie(
+        GOOGLE_STATE_COOKIE,
+        path="/api/auth/google",
+        secure=redirect_uri.startswith("https://"),
+        httponly=True,
+        samesite="lax",
+    )
+    return redirect
+
+
+@router.get("/me", response_model=UserResponse, summary="Lấy thông tin cá nhân")
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+@router.get("/google/calendar/status", summary="Trạng thái kết nối Google Calendar")
+def google_calendar_status(current_user: User = Depends(get_current_user)):
+    return {
+        "connected": bool(current_user.google_refresh_token),
+        "connected_at": current_user.google_calendar_connected_at,
+    }
+
+
+@router.delete("/google/calendar/disconnect", summary="Ngắt kết nối Google Calendar")
+def google_calendar_disconnect(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    encrypted_refresh_token = current_user.google_refresh_token
+    current_user.google_refresh_token = None
+    current_user.google_calendar_connected_at = None
+    db.commit()
+    if encrypted_refresh_token:
+        background_tasks.add_task(revoke_google_refresh_token, encrypted_refresh_token)
+    return {"connected": False}
+
+
+@router.get("/admin-only", summary="Kiểm tra quyền Admin")
+def admin_only_route(current_user: User = Depends(require_role("admin"))):
+    return {"status": "success", "message": f"Xin chào Admin {current_user.full_name}! Bạn có toàn quyền quản trị."}
 ````
 
-## File: frontend/login.html
-````html
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Đăng nhập - RoomSync</title>
-    <!-- Nhúng Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=10">
-    <link rel="stylesheet" href="css/booking.css">
-    <style>
-        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
-        .custom-input:focus {
-            border-color: #004CFF !important;
-            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
+## File: tests/test_meetings_history.py
+````python
+"""Tests for GET /api/meetings/history."""
+
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from tests.helpers import (
+    _create_user,
+    _create_room,
+    _create_meeting,
+    _add_participant,
+    _make_token,
+    _auth_header,
+)
+
+
+class TestNoToken:
+    def test_returns_401_without_token(self, client: TestClient):
+        resp = client.get("/api/meetings/history")
+        assert resp.status_code == 401
+
+
+class TestOrganizerSeesMeeting:
+    def test_organizer_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer")
+        room = _create_room(db_session)
+        past = datetime.utcnow() - timedelta(days=3)
+        end = datetime.utcnow() - timedelta(days=1)
+        m = _create_meeting(db_session, room, org, past, end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id in ids
+
+
+class TestParticipantSeesMeeting:
+    def test_invited_user_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer2")
+        invitee = _create_user(db_session, "invitee")
+        room = _create_room(db_session, "Room B")
+        past = datetime.utcnow() - timedelta(days=5)
+        end = datetime.utcnow() - timedelta(days=4)
+        m = _create_meeting(db_session, room, org, past, end)
+        _add_participant(db_session, m, invitee)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(invitee)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id in ids
+
+
+class TestNonParticipantExcluded:
+    def test_outsider_sees_nothing(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer3")
+        outsider = _create_user(db_session, "outsider")
+        room = _create_room(db_session, "Room C")
+        past = datetime.utcnow() - timedelta(days=7)
+        end = datetime.utcnow() - timedelta(days=6)
+        _create_meeting(db_session, room, org, past, end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(outsider)))
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestFutureMeetingExcluded:
+    def test_future_meeting_not_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer4")
+        room = _create_room(db_session, "Room D")
+        future_start = datetime.utcnow() + timedelta(days=1)
+        future_end = datetime.utcnow() + timedelta(days=2)
+        m = _create_meeting(db_session, room, org, future_start, future_end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id not in ids
+
+
+class TestCanceledMeetingExcluded:
+    def test_canceled_meeting_not_in_history(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer5")
+        room = _create_room(db_session, "Room E")
+        past = datetime.utcnow() - timedelta(days=10)
+        end = datetime.utcnow() - timedelta(days=9)
+        m = _create_meeting(db_session, room, org, past, end, status="canceled")
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert m.id not in ids
+
+
+class TestNoDuplicates:
+    def test_no_duplicate_when_organizer_and_participant(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer6")
+        room = _create_room(db_session, "Room F")
+        past = datetime.utcnow() - timedelta(days=2)
+        end = datetime.utcnow() - timedelta(hours=1)
+        m = _create_meeting(db_session, room, org, past, end)
+        _add_participant(db_session, m, org)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert ids.count(m.id) == 1, "Duplicate records must not be returned"
+
+
+class TestOrderByDesc:
+    def test_ordered_by_end_time_desc(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer7")
+        room = _create_room(db_session, "Room G")
+        m1 = _create_meeting(db_session, room, org,
+                             datetime.utcnow() - timedelta(days=10),
+                             datetime.utcnow() - timedelta(days=9))
+        m2 = _create_meeting(db_session, room, org,
+                             datetime.utcnow() - timedelta(days=3),
+                             datetime.utcnow() - timedelta(days=2))
+        m3 = _create_meeting(db_session, room, org,
+                             datetime.utcnow() - timedelta(days=20),
+                             datetime.utcnow() - timedelta(days=19))
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert ids == [m2.id, m1.id, m3.id]
+
+
+class TestResponseShape:
+    def test_response_has_expected_fields(self, client: TestClient, db_session: Session):
+        org = _create_user(db_session, "organizer8")
+        room = _create_room(db_session, "Room H")
+        past = datetime.utcnow() - timedelta(days=5)
+        end = datetime.utcnow() - timedelta(days=4)
+        _create_meeting(db_session, room, org, past, end)
+
+        resp = client.get("/api/meetings/history", headers=_auth_header(_make_token(org)))
+        assert resp.status_code == 200
+        item = resp.json()[0]
+        expected = {
+            "id", "title", "description",
+            "meeting_type", "meeting_link", "online_link",
+            "room_id", "organizer_id",
+            "start_time", "end_time", "status",
+            "is_recurring", "recurring_type",
+            "equipments", "participant_ids",
         }
-    </style>
-</head>
-<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
+        assert set(item.keys()) == expected
+````
 
-    <div class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
-        
-        <!-- KHUNG CHỨA FORM -->
-        <div class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
-            
-            <!-- THẺ FORM ĐĂNG NHẬP -->
-            <div class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
-                
-                <!-- LogoMark Component -->
-                <div class="flex items-center gap-2.5 mb-8">
-                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background-color: #004CFF;">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
-                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
-                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
-                            <circle cx="12" cy="15" r="1.5" fill="white" />
-                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
-                        </svg>
-                    </div>
-                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
-                </div>
+## File: schema.sql
+````sql
+CREATE DATABASE IF NOT EXISTS meeting_db
+    DEFAULT CHARACTER SET utf8mb4
+    DEFAULT COLLATE utf8mb4_unicode_ci;
 
-                <!-- Tiêu đề -->
-                <div class="mb-8">
-                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
-                        Đăng nhập vào tài khoản
-                    </h1>
-                    <p class="mt-1.5 text-sm text-gray-500">
-                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
-                    </p>
-                </div>
+USE meeting_db;
 
-                <!-- LoginForm Component -->
-                <form id="loginForm" class="w-full">
-                    
-                    <!-- Input Email / Username -->
-                    <div class="mb-6">
-                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
-                            Email công ty
-                        </label>
-                        <div class="relative">
-                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                    <polyline points="22,6 12,13 2,6" />
-                                </svg>
-                            </span>
-                            <input
-                                type="text"
-                                id="username"
-                                name="username"
-                                placeholder="ten@congty.com"
-                                required
-                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
-                            />
-                        </div>
-                    </div>
+CREATE TABLE IF NOT EXISTS users (
+    id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    username        VARCHAR(50) NOT NULL,
+    email           VARCHAR(150) DEFAULT NULL,
+    full_name       VARCHAR(150) DEFAULT NULL,
+    hashed_password VARCHAR(255) NOT NULL,
+    role            VARCHAR(20) NOT NULL DEFAULT 'user',
+    is_active       TINYINT(1) NOT NULL DEFAULT 1,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_username (username),
+    UNIQUE KEY uq_users_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-                    <!-- Input Password -->
-                    <div class="mb-6">
-                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
-                            Mật khẩu
-                        </label>
-                        <div class="relative">
-                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                                </svg>
-                            </span>
-                            <input
-                                type="password"
-                                id="password"
-                                name="password"
-                                placeholder="••••••••"
-                                required
-                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
-                            />
-                            <button
-                                type="button"
-                                id="togglePassword"
-                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
-                                aria-label="Hiện mật khẩu"
-                            >
-                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                                    <line x1="1" y1="1" x2="23" y2="23" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
+CREATE TABLE IF NOT EXISTS rooms (
+    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name        VARCHAR(100) NOT NULL,
+    location    VARCHAR(255) DEFAULT NULL,
+    capacity    INT NOT NULL DEFAULT 1,
+    description TEXT DEFAULT NULL,
+    amenities   TEXT DEFAULT NULL,
+    is_active   TINYINT(1) NOT NULL DEFAULT 1,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_rooms_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
-                    <div class="flex items-center justify-between mb-6">
-                        <label class="flex items-center gap-2 cursor-pointer select-none">
-                            <div class="relative">
-                                <input type="checkbox" id="rememberMe" class="sr-only" />
-                                <div id="checkboxBox" class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
-                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                                    </svg>
-                                </div>
-                            </div>
-                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
-                        </label>
-                        <a
-                            href="#"
-                            class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
-                        >
-                            Quên mật khẩu?
-                        </a>
-                    </div>
-
-                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
-                    <div id="errorAlert" class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
-                        Tài khoản hoặc mật khẩu không chính xác!
-                    </div>
-
-                    <!-- Nút Đăng nhập -->
-                    <button
-                        type="submit"
-                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25"
-                    >
-                        Đăng Nhập
-                    </button>
-
-                    <p class="mt-6 text-xs text-center text-gray-400">
-                        Chưa có tài khoản?
-                        <a
-                            href="#"
-                            class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
-                        >
-                            Liên hệ quản trị viên
-                        </a>
-                    </p>
-                </form>
-
-            </div>
-
-            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
-            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
-                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
-            </p>
-
-        </div>
-
-        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
-        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
-            <img
-                src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
-                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
-                class="absolute inset-0 w-full h-full object-cover"
-                style="opacity: 0.45;"
-            />
-
-            <div
-                class="absolute inset-0"
-                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"
-            ></div>
-
-            <div class="absolute inset-0 flex flex-col justify-end p-14">
-                <div class="flex flex-wrap gap-3 mb-10">
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
-                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
-                </div>
-
-                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
-                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
-                </h2>
-                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
-                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá tại một nơi duy nhất.
-                </p>
-
-                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
-                    <div>
-                        <div class="text-lg font-semibold text-white">2.400+</div>
-                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
-                    </div>
-                    <div>
-                        <div class="text-lg font-semibold text-white">98,5%</div>
-                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
-                    </div>
-                    <div>
-                        <div class="text-lg font-semibold text-white">340+</div>
-                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-    </div>
-
-    <!-- Script xử lý UI -->
-    <script>
-        // 1. Tương tác Ẩn / Hiện Mật Khẩu
-        const togglePasswordBtn = document.getElementById('togglePassword');
-        const passwordInput = document.getElementById('password');
-        const eyeIcon = document.getElementById('eyeIcon');
-
-        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
-        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
-
-        let isPasswordOpen = false;
-
-        if (togglePasswordBtn && passwordInput) {
-            togglePasswordBtn.addEventListener('click', () => {
-                isPasswordOpen = !isPasswordOpen;
-                passwordInput.type = isPasswordOpen ? 'text' : 'password';
-                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
-                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
-            });
-        }
-
-        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
-        const rememberCheckbox = document.getElementById('rememberMe');
-        const checkboxBox = document.getElementById('checkboxBox');
-        const checkIcon = document.getElementById('checkIcon');
-
-        if (rememberCheckbox) {
-            rememberCheckbox.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    checkboxBox.style.backgroundColor = '#004CFF';
-                    checkboxBox.style.borderColor = '#004CFF';
-                    checkIcon.classList.remove('hidden');
-                } else {
-                    checkboxBox.style.backgroundColor = '#FFFFFF';
-                    checkboxBox.style.borderColor = '#D1D5DB';
-                    checkIcon.classList.add('hidden');
-                }
-            });
-        }
-    </script>
-
-    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
-    <script src="js/login.js?v=2"></script>
-</body>
-</html>
+CREATE TABLE IF NOT EXISTS meetings (
+    id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    title          VARCHAR(200) NOT NULL,
+    description    TEXT DEFAULT NULL,
+    meeting_type   VARCHAR(20) NOT NULL DEFAULT 'offline',
+    online_link    VARCHAR(500) DEFAULT NULL,
+    is_recurring   TINYINT(1) NOT NULL DEFAULT 0,
+    recurring_type VARCHAR(20) DEFAULT NULL,
+    room_id        INT UNSIGNED DEFAULT NULL,
+    organizer_id   INT UNSIGNED DEFAULT NULL,
+    start_time     DATETIME NOT NULL,
+    end_time       DATETIME NOT NULL,
+    status         VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_meetings_room_id (room_id),
+    KEY idx_meetings_organizer_id (organizer_id),
+    KEY idx_meetings_start_time (start_time),
+    CONSTRAINT fk_meetings_room FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_meetings_organizer FOREIGN KEY (organizer_id) REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS meeting_participants (
+    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    meeting_id INT UNSIGNED NOT NULL,
+    user_id    INT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_meeting_participant (meeting_id, user_id),
+    CONSTRAINT fk_meeting_participants_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_meeting_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ````
 
 ## File: app/core/security.py
@@ -5313,6 +7840,37 @@ def require_role(required_role: str):
         return current_user
 
     return role_checker
+````
+
+## File: app/models/user.py
+````python
+# app/models/user.py
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
+from app.core.database import Base
+
+
+class User(Base):
+    """Model đại diện cho bảng người dùng (tài khoản) trong hệ thống."""
+
+    __tablename__ = "users"
+
+    # ✅ Sửa primary_primary_key thành primary_key
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False, index=True, comment="Tên đăng nhập")
+    email = Column(String(150), unique=True, nullable=True, comment="Địa chỉ Email")
+    full_name = Column(String(150), nullable=True, comment="Họ và tên người dùng")
+    hashed_password = Column(String(255), nullable=False, comment="Mật khẩu đã băm")
+    google_refresh_token = Column(Text, nullable=True)
+    google_calendar_connected_at = Column(DateTime, nullable=True)
+    google_refresh_token = Column(Text, nullable=True)
+    google_calendar_connected_at = Column(DateTime, nullable=True)
+    role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
+    is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} username={self.username!r} role={self.role!r}>"
 ````
 
 ## File: app/schemas/room.py
@@ -6344,141 +8902,546 @@ button {
 }
 ````
 
-## File: frontend/js/login.js
-````javascript
-document.addEventListener('DOMContentLoaded', () => {
-    const loginForm = document.getElementById('loginForm');
-    const errorAlert = document.getElementById('errorAlert');
+## File: frontend/index.html
+````html
+<!DOCTYPE html>
+<html lang="vi">
 
-    if (!loginForm) return;
-
-    loginForm.addEventListener('submit', async function(e) {
-        e.preventDefault();
-
-        if (errorAlert) errorAlert.classList.add('hidden');
-
-        const usernameInput = document.getElementById('username') || document.getElementById('loginEmail');
-        const passwordInput = document.getElementById('password') || document.getElementById('loginPassword');
-
-        if (!usernameInput || !passwordInput) {
-            console.error("Không tìm thấy input username/password!");
-            return;
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập - RoomSync</title>
+    <!-- Nhúng Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css?v=10">
+    <link rel="stylesheet" href="css/booking.css">
+    <style>
+        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
+        .custom-input:focus {
+            border-color: #004CFF !important;
+            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
         }
+    </style>
+</head>
 
-        const username = usernameInput.value.trim();
-        const password = passwordInput.value;
+<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
 
-        try {
-            // Gửi dữ liệu JSON tới API /api/login
-            const res = await fetch('http://localhost:8000/api/login', {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json' 
-                },
-                body: JSON.stringify({
-                    username: username,
-                    password: password
-                })
+    <div
+        class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
+
+        <!-- KHUNG CHỨA FORM -->
+        <div
+            class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
+
+            <!-- THẺ FORM ĐĂNG NHẬP -->
+            <div
+                class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
+
+                <!-- LogoMark Component -->
+                <div class="flex items-center gap-2.5 mb-8">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style="background-color: #004CFF;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
+                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
+                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
+                            <circle cx="12" cy="15" r="1.5" fill="white" />
+                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
+                        </svg>
+                    </div>
+                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
+                </div>
+
+                <!-- Tiêu đề -->
+                <div class="mb-8">
+                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
+                        Đăng nhập vào tài khoản
+                    </h1>
+                    <p class="mt-1.5 text-sm text-gray-500">
+                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
+                    </p>
+                </div>
+
+                <!-- LoginForm Component -->
+                <form id="loginForm" class="w-full">
+
+                    <!-- Input Email / Username -->
+                    <div class="mb-6">
+                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Email công ty
+                        </label>
+                        <div class="relative">
+                            <span
+                                class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path
+                                        d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                            </span>
+                            <input type="text" id="username" name="username" placeholder="ten@congty.com" required
+                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none" />
+                        </div>
+                    </div>
+
+                    <!-- Input Password -->
+                    <div class="mb-6">
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Mật khẩu
+                        </label>
+                        <div class="relative">
+                            <span
+                                class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                            </span>
+                            <input type="password" id="password" name="password" placeholder="••••••••" required
+                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none" />
+                            <button type="button" id="togglePassword"
+                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                                aria-label="Hiện mật khẩu">
+                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path
+                                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                                    <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
+                    <div class="flex items-center justify-between mb-6">
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
+                            <div class="relative">
+                                <input type="checkbox" id="rememberMe" class="sr-only" />
+                                <div id="checkboxBox"
+                                    class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
+                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10"
+                                        fill="none">
+                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5"
+                                            stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </div>
+                            </div>
+                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
+                        </label>
+                        <a href="#" class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]">
+                            Quên mật khẩu?
+                        </a>
+                    </div>
+
+                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
+                    <div id="errorAlert"
+                        class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
+                        Tài khoản hoặc mật khẩu không chính xác!
+                    </div>
+
+                    <!-- Nút Đăng nhập -->
+                    <button type="submit"
+                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                        Đăng Nhập
+                    </button>
+
+                    <p class="mt-6 text-xs text-center text-gray-400">
+                        Chưa có tài khoản?
+                        <a href="#" class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]">
+                            Liên hệ quản trị viên
+                        </a>
+                    </p>
+                </form>
+
+            </div>
+
+            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
+            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
+                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
+            </p>
+
+        </div>
+
+        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
+        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
+            <img src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
+                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
+                class="absolute inset-0 w-full h-full object-cover" style="opacity: 0.45;" />
+
+            <div class="absolute inset-0"
+                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"></div>
+
+            <div class="absolute inset-0 flex flex-col justify-end p-14">
+                <div class="flex flex-wrap gap-3 mb-10">
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20"
+                        style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
+                </div>
+
+                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
+                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
+                </h2>
+                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
+                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá
+                    tại một nơi duy nhất.
+                </p>
+
+                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
+                    <div>
+                        <div class="text-lg font-semibold text-white">2.400+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">98,5%</div>
+                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">340+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script xử lý UI (Giữ nguyên) -->
+    <script>
+        // 1. Tương tác Ẩn / Hiện Mật Khẩu
+        const togglePasswordBtn = document.getElementById('togglePassword');
+        const passwordInput = document.getElementById('password');
+        const eyeIcon = document.getElementById('eyeIcon');
+
+        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
+        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
+
+        let isPasswordOpen = false;
+
+        if (togglePasswordBtn && passwordInput) {
+            togglePasswordBtn.addEventListener('click', () => {
+                isPasswordOpen = !isPasswordOpen;
+                passwordInput.type = isPasswordOpen ? 'text' : 'password';
+                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
+                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
             });
-
-            const result = await res.json();
-
-            if (res.ok) {
-                // Lưu Token vào LocalStorage
-                const token = result.access_token || result.token;
-                localStorage.setItem('token', token);
-                
-                if (result.user_name) localStorage.setItem('user_name', result.user_name);
-                if (result.role) localStorage.setItem('role', result.role);
-
-                // Chuyển hướng sang trang Dashboard
-                window.location.href = 'dashboard.html';
-            } else {
-                if (errorAlert) {
-                    errorAlert.textContent = result.detail || 'Tài khoản hoặc mật khẩu không chính xác!';
-                    errorAlert.classList.remove('hidden');
-                } else {
-                    alert(result.detail || 'Tài khoản hoặc mật khẩu không chính xác!');
-                }
-            }
-        } catch (err) {
-            console.error('Lỗi kết nối:', err);
-            if (errorAlert) {
-                errorAlert.textContent = 'Không thể kết nối đến máy chủ Backend!';
-                errorAlert.classList.remove('hidden');
-            }
         }
-    });
-});
+
+        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
+        const rememberCheckbox = document.getElementById('rememberMe');
+        const checkboxBox = document.getElementById('checkboxBox');
+        const checkIcon = document.getElementById('checkIcon');
+
+        if (rememberCheckbox) {
+            rememberCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    checkboxBox.style.backgroundColor = '#004CFF';
+                    checkboxBox.style.borderColor = '#004CFF';
+                    checkIcon.classList.remove('hidden');
+                } else {
+                    checkboxBox.style.backgroundColor = '#FFFFFF';
+                    checkboxBox.style.borderColor = '#D1D5DB';
+                    checkIcon.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+
+
+
+    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
+    <script src="js/login.js?v=2"></script>
+</body>
+
+</html>
 ````
 
-## File: frontend/index.html
+## File: frontend/login.html
 ````html
 <!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="0; url=login.html">
-    <title>RoomSync - Đăng nhập</title>
+    <title>Đăng nhập - RoomSync</title>
+    <!-- Nhúng Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css?v=10">
+    <link rel="stylesheet" href="css/booking.css">
+    <style>
+        /* CSS tuỳ chỉnh hiệu ứng Focus đúng theo Style Figma */
+        .custom-input:focus {
+            border-color: #004CFF !important;
+            box-shadow: 0 0 0 3px rgba(0, 76, 255, 0.08) !important;
+        }
+    </style>
 </head>
-<body>
-    <p>Đang chuyển đến trang đăng nhập... <a href="login.html">Tiếp tục</a></p>
+<body class="bg-gray-50 lg:bg-white text-gray-900 antialiased font-sans min-h-screen">
+
+    <div class="min-h-screen w-full flex flex-col items-center justify-center lg:flex-row lg:items-stretch lg:justify-start">
+
+        <!-- KHUNG CHỨA FORM -->
+        <div class="w-full flex-1 flex flex-col items-center justify-center px-5 py-12 lg:p-0 lg:w-[480px] lg:flex-none lg:border-r lg:border-gray-100 lg:bg-white">
+
+            <!-- THẺ FORM ĐĂNG NHẬP -->
+            <div class="w-full max-w-[390px] bg-white rounded-2xl px-8 py-10 shadow-[0_4px_24px_rgba(0,0,0,0.07)] lg:max-w-[360px] lg:rounded-none lg:shadow-none lg:p-0">
+
+                <!-- LogoMark Component -->
+                <div class="flex items-center gap-2.5 mb-8">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background-color: #004CFF;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="4" width="18" height="16" rx="2" stroke="white" stroke-width="2" />
+                            <path d="M8 2v4M16 2v4M3 10h18" stroke="white" stroke-width="2" stroke-linecap="round" />
+                            <circle cx="8.5" cy="15" r="1.5" fill="white" />
+                            <circle cx="12" cy="15" r="1.5" fill="white" />
+                            <circle cx="15.5" cy="15" r="1.5" fill="white" />
+                        </svg>
+                    </div>
+                    <span class="text-[15px] font-semibold text-gray-900 tracking-tight">RoomSync</span>
+                </div>
+
+                <!-- Tiêu đề -->
+                <div class="mb-8">
+                    <h1 class="text-[26px] leading-tight text-gray-900 tracking-tight font-bold">
+                        Đăng nhập vào tài khoản
+                    </h1>
+                    <p class="mt-1.5 text-sm text-gray-500">
+                        Chào mừng trở lại. Nhập thông tin đăng nhập để tiếp tục.
+                    </p>
+                </div>
+
+                <!-- LoginForm Component -->
+                <form id="loginForm" class="w-full">
+
+                    <!-- Input Email / Username -->
+                    <div class="mb-6">
+                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Email công ty
+                        </label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                    <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                            </span>
+                            <input
+                                type="text"
+                                id="username"
+                                name="username"
+                                placeholder="ten@congty.com"
+                                required
+                                class="custom-input w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Input Password -->
+                    <div class="mb-6">
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Mật khẩu
+                        </label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-3.5 flex items-center text-gray-400 pointer-events-none">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                            </span>
+                            <input
+                                type="password"
+                                id="password"
+                                name="password"
+                                placeholder="••••••••"
+                                required
+                                class="custom-input w-full pl-10 pr-11 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 bg-white transition-colors outline-none"
+                            />
+                            <button
+                                type="button"
+                                id="togglePassword"
+                                class="absolute inset-y-0 right-3.5 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                                aria-label="Hiện mật khẩu"
+                            >
+                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                                    <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Ghi nhớ đăng nhập + Quên mật khẩu -->
+                    <div class="flex items-center justify-between mb-6">
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
+                            <div class="relative">
+                                <input type="checkbox" id="rememberMe" class="sr-only" />
+                                <div id="checkboxBox" class="w-4 h-4 rounded border flex items-center justify-center transition-colors border-gray-300 bg-white">
+                                    <svg id="checkIcon" class="hidden" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                                        <path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </div>
+                            </div>
+                            <span class="text-sm text-gray-600">Ghi nhớ đăng nhập</span>
+                        </label>
+                        <a
+                            href="#"
+                            class="text-sm font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
+                        >
+                            Quên mật khẩu?
+                        </a>
+                    </div>
+
+                    <!-- Khung hiển thị thông báo lỗi khi đăng nhập thất bại -->
+                    <div id="errorAlert" class="hidden mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm text-center">
+                        Tài khoản hoặc mật khẩu không chính xác!
+                    </div>
+
+                    <!-- Nút Đăng nhập -->
+                    <button
+                        type="submit"
+                        class="w-full py-3 rounded-lg text-sm font-semibold text-white transition-all bg-[#004CFF] hover:bg-[#0038CC] focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25"
+                    >
+                        Đăng Nhập
+                    </button>
+
+                    <div class="my-5 flex items-center gap-3 text-xs text-gray-400" aria-hidden="true">
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                        <span>hoặc</span>
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                    </div>
+
+                    <button
+                        type="button"
+                        id="googleLoginButton"
+                        class="w-full flex items-center justify-center gap-3 py-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-blue-100"
+                    >
+                        <span class="text-lg font-bold text-[#4285F4]" aria-hidden="true">G</span>
+                        Đăng nhập với Google
+                    </button>
+
+                    <p class="mt-6 text-xs text-center text-gray-400">
+                        Chưa có tài khoản?
+                        <a
+                            href="#"
+                            class="font-medium transition-colors text-[#004CFF] hover:text-[#0038CC]"
+                        >
+                            Liên hệ quản trị viên
+                        </a>
+                    </p>
+                </form>
+
+            </div>
+
+            <!-- Dòng Copyright chuẩn giao diện Mobile Figma -->
+            <p class="mt-6 text-center text-xs text-gray-400 lg:hidden">
+                © 2026 RoomSync Inc. Bảo lưu mọi quyền.
+            </p>
+
+        </div>
+
+        <!-- CỘT BÊN PHẢI: BANNER DESKTOP -->
+        <div class="hidden lg:flex flex-1 relative overflow-hidden" style="background-color: #001A66;">
+            <img
+                src="https://images.unsplash.com/photo-1740933084056-078fac872bff?w=1200&h=900&fit=crop&auto=format"
+                alt="Phòng họp doanh nghiệp hiện đại với bàn và ghế lớn"
+                class="absolute inset-0 w-full h-full object-cover"
+                style="opacity: 0.45;"
+            />
+
+            <div
+                class="absolute inset-0"
+                style="background: linear-gradient(135deg, rgba(0,76,255,0.35) 0%, rgba(0,10,60,0.7) 100%);"
+            ></div>
+
+            <div class="absolute inset-0 flex flex-col justify-end p-14">
+                <div class="flex flex-wrap gap-3 mb-10">
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đặt phòng họp</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Đồng bộ lịch</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Phân tích dữ liệu</span>
+                    <span class="px-3 py-1.5 rounded-full text-xs font-medium text-white/80 border border-white/20" style="background-color: rgba(255,255,255,0.08);">Hỗ trợ SSO</span>
+                </div>
+
+                <h2 class="text-3xl font-semibold text-white leading-snug mb-3 max-w-md">
+                    Đặt đúng phòng họp,<br />mọi lúc bạn cần.
+                </h2>
+                <p class="text-sm text-white/60 max-w-sm leading-relaxed">
+                    RoomSync giúp đội nhóm của bạn nắm rõ tình trạng toàn bộ phòng họp — đặt lịch, quản lý và tối ưu hoá tại một nơi duy nhất.
+                </p>
+
+                <div class="flex gap-8 mt-8 pt-8 border-t border-white/10">
+                    <div>
+                        <div class="text-lg font-semibold text-white">2.400+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Phòng được quản lý</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">98,5%</div>
+                        <div class="text-xs text-white/50 mt-0.5">Độ chính xác đặt phòng</div>
+                    </div>
+                    <div>
+                        <div class="text-lg font-semibold text-white">340+</div>
+                        <div class="text-xs text-white/50 mt-0.5">Khách hàng doanh nghiệp</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script xử lý UI -->
     <script>
-        window.location.replace('login.html');
+        // 1. Tương tác Ẩn / Hiện Mật Khẩu
+        const togglePasswordBtn = document.getElementById('togglePassword');
+        const passwordInput = document.getElementById('password');
+        const eyeIcon = document.getElementById('eyeIcon');
+
+        const eyeOpenSVG = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />`;
+        const eyeClosedSVG = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />`;
+
+        let isPasswordOpen = false;
+
+        if (togglePasswordBtn && passwordInput) {
+            togglePasswordBtn.addEventListener('click', () => {
+                isPasswordOpen = !isPasswordOpen;
+                passwordInput.type = isPasswordOpen ? 'text' : 'password';
+                eyeIcon.innerHTML = isPasswordOpen ? eyeOpenSVG : eyeClosedSVG;
+                togglePasswordBtn.setAttribute('aria-label', isPasswordOpen ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+            });
+        }
+
+        // 2. Tương tác Checkbox "Ghi nhớ đăng nhập"
+        const rememberCheckbox = document.getElementById('rememberMe');
+        const checkboxBox = document.getElementById('checkboxBox');
+        const checkIcon = document.getElementById('checkIcon');
+
+        if (rememberCheckbox) {
+            rememberCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    checkboxBox.style.backgroundColor = '#004CFF';
+                    checkboxBox.style.borderColor = '#004CFF';
+                    checkIcon.classList.remove('hidden');
+                } else {
+                    checkboxBox.style.backgroundColor = '#FFFFFF';
+                    checkboxBox.style.borderColor = '#D1D5DB';
+                    checkIcon.classList.add('hidden');
+                }
+            });
+        }
     </script>
+
+    <!-- Kết nối file JS xử lý gửi API Đăng nhập -->
+    <script src="js/login.js?v=2"></script>
+    <script src="js/auth.js?v=1"></script>
 </body>
 </html>
-````
-
-## File: README.md
-````markdown
-# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
-
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
-![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
-
-Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
-
----
-
-## 📌 1. Bảng Công nghệ (Tech Stack)
-
-* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
-* **Database:** MySQL
-* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
-* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
-* **Validation & Schemas:** Pydantic v2
-* **Server Runner:** Uvicorn ASGI Server
-
----
-
-## 📁 2. Cấu trúc Dự án (Project Structure)
-
-```text
-MeetingManagement/
-├── app/
-│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
-│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
-│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
-│   ├── models/                # SQLAlchemy Models (ORM Mapping)
-│   │   ├── user.py            # Bảng người dùng
-│   │   ├── room.py            # Bảng phòng họp
-│   │   └── meeting.py         # Bảng lịch họp
-│   ├── routers/               # API Endpoints (Controllers)
-│   │   └── auth.py            # API Đăng nhập / Xác thực
-│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
-│       └── auth.py
-│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
-├── scripts/
-│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
-├── .env.example               # Mẫu cấu hình biến môi trường
-├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
-├── README.md                  # Tài liệu hướng dẫn sử dụng
-├── requirements.txt           # Thư viện phụ thuộc của dự án
-└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
 ````
 
 ## File: scripts/seed.py
@@ -6887,73 +9850,146 @@ if __name__ == "__main__":
     seed()
 ````
 
-## File: requirements.txt
+## File: README.md
+````markdown
+# 🏢 Meeting Management System (Hệ thống Quản lý Phòng họp)
+
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-00000F?style=for-the-badge&logo=mysql&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71105?style=for-the-badge&logo=sqlalchemy&logoColor=white)
+
+Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho doanh nghiệp và tổ chức. Dự án được phát triển bằng **FastAPI** (Python) và **MySQL**, hỗ trợ tối ưu hóa việc quản lý phòng, đăng ký lịch họp và phân quyền người dùng.
+
+---
+
+## 📌 1. Bảng Công nghệ (Tech Stack)
+
+* **Backend Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
+* **Database:** MySQL
+* **ORM:** [SQLAlchemy 2.0](https://www.sqlalchemy.org/) & [PyMySQL](https://pymysql.readthedocs.io/)
+* **Security & Auth:** PBKDF2-HMAC-SHA256 Password Hashing, JWT Token Authentication
+* **Validation & Schemas:** Pydantic v2
+* **Server Runner:** Uvicorn ASGI Server
+
+## 🔐 Google OAuth 2.0
+
+The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).
+
+Users can connect or disconnect their own Google Calendar from the dashboard Settings page. Once connected, newly created meetings are added to the organizer's calendar and Google sends invitations to meeting invitees; connecting also syncs the user's existing meetings. Invitees may still receive a Calendar consent email so their own calendar can be synchronized. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` and `migrations/008_add_meeting_participant_response_status.sql` before deploying. Set `FRONTEND_DASHBOARD_URL` to the dashboard's public URL (defaults to `/static/dashboard.html`). For production, use HTTPS and the exact public callback/frontend URLs.
+
+---
+
+## 📁 2. Cấu trúc Dự án (Project Structure)
+
+```text
+MeetingManagement/
+├── app/
+│   ├── core/                  # Cấu hình kết nối Database và Bảo mật
+│   │   ├── database.py        # Kết nối SQLAlchemy Engine & Session
+│   │   └── security.py        # Hash mật khẩu & Xác thực bảo mật
+│   ├── models/                # SQLAlchemy Models (ORM Mapping)
+│   │   ├── user.py            # Bảng người dùng
+│   │   ├── room.py            # Bảng phòng họp
+│   │   └── meeting.py         # Bảng lịch họp
+│   ├── routers/               # API Endpoints (Controllers)
+│   │   └── auth.py            # API Đăng nhập / Xác thực
+│   └── schemas/               # Pydantic Schemas (Request/Response Validation)
+│       └── auth.py
+│   └── main.py                # File khởi chạy chính của ứng dụng FastAPI
+├── scripts/
+│   └── seed.py                # Script khởi tạo dữ liệu mẫu (Admin, Rooms)
+├── .env.example               # Mẫu cấu hình biến môi trường
+├── .gitignore                 # Bỏ qua các file rác và tài nguyên nhạy cảm
+├── README.md                  # Tài liệu hướng dẫn sử dụng
+├── requirements.txt           # Thư viện phụ thuộc của dự án
+└── schema.sql                 # Sơ đồ Cơ sở dữ liệu DDL
 ````
-annotated-doc==0.0.5
-annotated-types==0.8.0
-anyio>=3.7.1,<4.0.0
-bcrypt==5.0.0
-certifi==2026.7.22
-cffi==2.1.1
-charset-normalizer==3.5.0
-click==8.4.2
-colorama==0.4.6
-cryptography==41.0.5
-distro==1.9.0
-dnspython==2.8.0
-ecdsa==0.19.2
-email-validator==2.3.0
-fastapi==0.104.1
-fastapi-cli==0.0.32
-google-auth==2.56.3
-google-genai==2.18.1
-greenlet==3.5.5
-h11==0.16.0
-httpcore==1.0.9
-httptools==0.8.0
-httpx==0.28.1
-idna==3.18
-iniconfig==2.3.0
-Jinja2==3.1.6
-markdown-it-py==4.2.0
-MarkupSafe==3.0.3
-mdurl==0.1.2
-orjson==3.12.0
-packaging==26.3
-passlib==1.7.4
-pluggy==1.6.0
-pyasn1==0.6.4
-pyasn1_modules==0.4.2
-pycparser==3.0
-pydantic==2.5.3
-pydantic-settings==2.3.4
-pydantic_core==2.14.6
-Pygments==2.20.0
-PyJWT==2.14.0
-PyMySQL==1.1.0
-pytest==8.3.2
-python-dotenv==1.0.0
-python-jose==3.5.0
-python-multipart==0.0.32
-PyYAML==6.0.3
-requests==2.34.2
-rich==15.0.0
-rich-toolkit==0.20.3
-rsa==4.9.1
-shellingham==1.5.4
-six==1.17.0
-sniffio==1.3.1
-SQLAlchemy==2.0.23
-starlette==0.27.0
-tenacity==9.1.4
-typer==0.27.1
-typing-inspection==0.4.4
-typing_extensions==4.16.0
-ujson==5.13.0
-urllib3==2.7.0
-uvicorn==0.24.0.post1
-watchfiles==1.2.0
-websockets==16.1.1
+
+## File: frontend/js/login.js
+````javascript
+document.addEventListener('DOMContentLoaded', () => {
+    const loginForm = document.getElementById('loginForm');
+    const errorAlert = document.getElementById('errorAlert');
+
+    if (!loginForm) return;
+
+    loginForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        if (errorAlert) errorAlert.classList.add('hidden');
+
+        const usernameInput = document.getElementById('username') || document.getElementById('loginEmail');
+        const passwordInput = document.getElementById('password') || document.getElementById('loginPassword');
+
+        if (!usernameInput || !passwordInput) {
+            console.error("Không tìm thấy input username/password!");
+            return;
+        }
+
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+
+        try {
+            // Thay vì dùng URLSearchParams, hãy gửi dạng JSON chuẩn
+            const res = await fetch('http://localhost:8000/api/auth/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    password: password
+                })
+            });
+
+            const result = await res.json();
+
+            if (res.ok) {
+                // Lưu Token vào LocalStorage[cite: 5]
+                const token = result.access_token || result.token;
+                localStorage.setItem('token', token);
+
+                if (result.full_name) localStorage.setItem('user_name', result.full_name);
+                const email = result.email || result.user?.email;
+                if (email) localStorage.setItem('user_email', email);
+                if (result.user_name) localStorage.setItem('user_name', result.user_name);
+                if (result.role) localStorage.setItem('role', result.role);
+
+                // 👉 LƯU THÊM EMAIL THẬT TỪ DATABASE VÀO LOCALSTORAGE
+                localStorage.setItem('user_email', result.email || username);
+
+                // Chuyển hướng sang trang Dashboard[cite: 5]
+                window.location.href = 'dashboard.html';
+            } else {
+                if (errorAlert) {
+                    // Xử lý an toàn để tránh hiện chữ [object Object] khi FastAPI trả về lỗi cấu trúc
+                    let errorMessage = 'Tài khoản hoặc mật khẩu không chính xác!';
+                    if (result.detail) {
+                        if (typeof result.detail === 'string') {
+                            errorMessage = result.detail;
+                        } else if (Array.isArray(result.detail)) {
+                            errorMessage = result.detail.map(err => err.msg || JSON.stringify(err)).join(', ');
+                        } else if (typeof result.detail === 'object') {
+                            errorMessage = result.detail.msg || JSON.stringify(result.detail);
+                        }
+                    }
+
+                    errorAlert.textContent = errorMessage;
+                    errorAlert.classList.remove('hidden');
+                } else {
+                    alert('Tài khoản hoặc mật khẩu không chính xác!');
+                }
+            }
+        } catch (err) {
+            console.error('Lỗi kết nối:', err);
+            if (errorAlert) {
+                errorAlert.textContent = 'Không thể kết nối đến máy chủ Backend!';
+                errorAlert.classList.remove('hidden');
+            }
+        }
+    });
+});
 ````
 
 ## File: app/models/meeting.py
@@ -6970,7 +10006,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 
 from app.core.database import Base
 
@@ -6983,8 +10019,8 @@ class Meeting(Base):
     description = Column(Text, nullable=True)
     # meeting_type: 'online' | 'offline' — online meetings do not require a room
     meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
-    # online_link: used when meeting_type == 'online'
-    online_link = Column(String(500), nullable=True)
+    meeting_link = Column(String, nullable=True)
+    online_link = synonym("meeting_link")
     is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
     recurring_type = Column(String(20), nullable=True)
     # room_id is nullable: online meetings have no room
@@ -7027,6 +10063,7 @@ class MeetingParticipant(Base):
         nullable=False,
         index=True,
     )
+    response_status = Column(String(20), nullable=False, default="pending", server_default="pending")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     # Relationships
@@ -7211,10 +10248,14 @@ def read_available_rooms(
 ## File: app/schemas/meeting.py
 ````python
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.schemas.equipment import MeetingEquipmentItemInput, MeetingEquipmentItemOutput
+
+
+class MeetingParticipationResponse(BaseModel):
+    response_status: Literal["accepted", "declined"]
 
 
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
@@ -7223,7 +10264,8 @@ class MeetingCreateRequest(BaseModel):
     description: Optional[str] = None
     # meeting_type: 'online' | 'offline'
     meeting_type: str = 'offline'
-    # online_link: bắt buộc khi meeting_type='online'
+    meeting_link: Optional[str] = None
+    # Retained for compatibility with existing clients and service code.
     online_link: Optional[str] = None
     # room_id: bắt buộc khi meeting_type='offline', phải NULL khi 'online'
     room_id: Optional[int] = None
@@ -7248,16 +10290,9 @@ class MeetingCreateRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_meeting_mode(self) -> 'MeetingCreateRequest':
-        if self.meeting_type == 'online':
-            if self.room_id is not None:
-                raise ValueError(
-                    "Cuộc họp online không được có room_id. Hãy gửi room_id = null."
-                )
-            if not self.online_link or not self.online_link.strip():
-                raise ValueError("Cuộc họp online cần có online_link.")
-        elif self.meeting_type == 'offline':
-            if not self.room_id:
-                raise ValueError("Cuộc họp offline cần có room_id hợp lệ.")
+        link = (self.meeting_link or self.online_link or '').strip() or None
+        self.meeting_link = link
+        self.online_link = link
         return self
 
 
@@ -7267,6 +10302,7 @@ class MeetingResponse(BaseModel):
     title: str
     description: Optional[str] = None
     meeting_type: str = 'offline'
+    meeting_link: Optional[str] = None
     online_link: Optional[str] = None
     room_id: Optional[int] = None
     organizer_id: Optional[int] = None
@@ -7338,18 +10374,65 @@ class SuggestTimeResponse(BaseModel):
     suggested_slots: List[TimeSlot]
 ````
 
+## File: requirements.txt
+````
+fastapi==0.104.1
+fastapi-cli==0.0.32
+google-auth==2.56.3
+google-api-python-client>=2.150,<3.0
+google-genai>=1.0.0
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.18
+iniconfig==2.3.0
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+orjson==3.12.0
+packaging==26.3
+passlib==1.7.4
+pluggy==1.6.0
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+aiomysql==0.2.0
+pymysql==1.1.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+alembic==1.12.1
+python-dotenv==1.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+openpyxl==3.1.2
+reportlab==4.0.7
+qrcode==7.4.2
+pillow==10.1.0
+requests==2.31.0
+pytest==8.3.2
+````
+
 ## File: app/services/meeting_service.py
 ````python
 from datetime import datetime, timedelta
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
+
+logger = logging.getLogger(__name__)
 
 class MeetingService:
 
@@ -7363,7 +10446,7 @@ class MeetingService:
                 detail="Kh?ng t?m th?y cu?c h?p.",
             )
 
-        is_admin = current_user.role == "admin"
+        is_admin = str(current_user.role or "").strip().casefold() == "admin"
         if meeting.organizer_id != current_user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -7373,8 +10456,21 @@ class MeetingService:
         # Idempotent: repeating the operation is a successful no-op.
         if meeting.status != "CANCELLED":
             meeting.status = "CANCELLED"
-            db.commit()
-            db.refresh(meeting)
+            try:
+                db.commit()
+                db.refresh(meeting)
+            except SQLAlchemyError as exc:
+                db.rollback()
+                logger.exception(
+                    "Failed to cancel meeting_id=%s for user_id=%s",
+                    meeting_id,
+                    current_user.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Không thể hủy cuộc họp do lỗi cơ sở dữ liệu. "
+                    "Vui lòng kiểm tra migration schema và thử lại.",
+                ) from exc
 
         return meeting
 
@@ -7404,11 +10500,21 @@ class MeetingService:
 
         # 1. Xác định meeting_type và kiểm tra phòng (chỉ khi offline)
         meeting_type = getattr(payload, 'meeting_type', 'offline') or 'offline'
-        online_link  = (getattr(payload, 'online_link', None) or '').strip() or None
+        meeting_link = (
+            getattr(payload, 'meeting_link', None)
+            or getattr(payload, 'online_link', None)
+            or ''
+        ).strip() or None
+        room_id = payload.room_id
 
         if meeting_type == 'offline':
+            if room_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Offline meetings require a room_id",
+                )
             room = db.query(Room).filter(
-                Room.id == payload.room_id,
+                Room.id == room_id,
                 Room.is_active == True
             ).first()
             if not room:
@@ -7416,8 +10522,19 @@ class MeetingService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Phòng họp không tồn tại hoặc đã ngưng hoạt động!"
                 )
-        else:
+        elif meeting_type == 'online':
+            if not meeting_link:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Online meetings require a meeting_link",
+                )
+            room_id = None
             room = None
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="meeting_type must be 'offline' or 'online'",
+            )
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
@@ -7466,7 +10583,7 @@ class MeetingService:
                 # Kiểm tra conflict phòng — chỉ áp dụng cho OFFLINE meeting
                 if meeting_type == 'offline':
                     overlapping_meeting = db.query(Meeting).filter(
-                        Meeting.room_id == payload.room_id,
+                        Meeting.room_id == room_id,
                         Meeting.status.notin_(["CANCELLED", "canceled"]),
                         and_(
                             Meeting.start_time < e_time,
@@ -7491,8 +10608,8 @@ class MeetingService:
                     title=payload.title,
                     description=payload.description,
                     meeting_type=meeting_type,
-                    online_link=online_link,
-                    room_id=payload.room_id if meeting_type == 'offline' else None,
+                    meeting_link=meeting_link,
+                    room_id=room_id,
                     organizer_id=organizer_id,
                     start_time=s_time,
                     end_time=e_time,
@@ -8031,6 +11148,8 @@ body {
 .booking-room-name, .booking-meeting-title { display: block; }
 .booking-room-name { color: #0f172a; font-size: 14px; font-weight: 700; }
 .booking-meeting-title { margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.45; }
+.booking-meeting-link { display: inline-block; margin-top: 6px; color: #1d4ed8; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.booking-meeting-link:hover { color: #1e40af; }
 .booking-equipment-summary { margin-top: 7px; color: #64748b; font-size: 11px; line-height: 1.5; }
 .booking-datetime { display: flex; flex-direction: column; gap: 4px; }
 .booking-date { color: #64748b; font-size: 12px; }
@@ -8044,6 +11163,50 @@ body {
 .booking-cancel-button:hover { background: #fef2f2; border-color: #f87171; }
 .table-empty-state { padding: 28px 14px !important; color: #64748b; text-align: center; }
 
+.booking-tabs { display: flex; gap: 8px; margin: 0 0 18px; padding: 5px; width: fit-content; border-radius: 10px; background: #f1f5f9; }
+.booking-tab { padding: 9px 16px; color: #64748b; background: transparent; border: 0; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.booking-tab.active { color: #1d4ed8; background: #fff; box-shadow: 0 1px 3px #0f172a1a; }
+.booking-panel[hidden] { display: none; }
+.booking-calendar-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.booking-calendar-nav, .booking-calendar-views { display: flex; align-items: center; gap: 8px; }
+.booking-calendar-title { min-width: 180px; margin: 0 0 0 8px; color: #0f172a; font-size: 18px; font-weight: 700; }
+.booking-calendar-button, .booking-calendar-views button { min-height: 36px; padding: 7px 11px; color: #475569; background: #fff; border: 1px solid #e2e8f0; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.booking-calendar-views button.active { color: #1d4ed8; border-color: #93c5fd; background: #eff6ff; }
+.booking-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.booking-calendar-weekday { padding: 10px 6px; color: #64748b; background: #f8fafc; text-align: center; font-size: 11px; font-weight: 700; }
+.booking-calendar-day { min-height: 100px; padding: 8px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; cursor: pointer; }
+.booking-calendar-day:nth-child(7n) { border-right: 0; }
+.booking-calendar-day.outside { background: #f8fafc; color: #94a3b8; }
+.booking-calendar-day.selected { outline: 2px solid #2563eb; outline-offset: -2px; background: #eff6ff; }
+.booking-calendar-day.today .booking-calendar-day-number { color: #1d4ed8; font-weight: 800; }
+.booking-calendar-day-number { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; }
+.booking-calendar-event { display: block; overflow: hidden; margin-top: 5px; padding: 4px 5px; color: #1e40af; background: #dbeafe; border-radius: 4px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.booking-calendar-more { margin-top: 4px; color: #64748b; font-size: 10px; }
+.booking-day-agenda { margin-top: 18px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.booking-day-agenda h3 { margin: 0 0 12px; color: #0f172a; font-size: 15px; font-weight: 700; }
+.booking-agenda-item { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid #f1f5f9; }
+.booking-agenda-time { color: #1d4ed8; font-size: 12px; font-weight: 700; }
+.booking-agenda-details strong, .booking-agenda-details span { display: block; }
+.booking-agenda-details strong { color: #0f172a; font-size: 13px; }
+.booking-agenda-details span { margin-top: 3px; color: #64748b; font-size: 12px; }
+.booking-list { display: grid; gap: 10px; }
+.booking-list-card { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+.booking-list-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) auto auto; align-items: center; gap: 14px; padding: 14px 16px; }
+.booking-list-main { min-width: 0; }
+.booking-list-main strong, .booking-list-main span { display: block; }
+.booking-list-main strong { overflow: hidden; color: #0f172a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.booking-list-main span, .booking-list-time { margin-top: 4px; color: #64748b; font-size: 12px; }
+.booking-list-actions { display: flex; gap: 7px; justify-content: flex-end; }
+.booking-guest-toggle, .booking-rsvp-button { padding: 7px 10px; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.booking-guest-toggle:hover, .booking-rsvp-button:hover { background: #f8fafc; }
+.booking-guest-list { padding: 12px 16px; border-top: 1px solid #f1f5f9; background: #f8fafc; }
+.booking-guest { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; color: #334155; font-size: 12px; }
+.booking-guest.pending { color: #94a3b8; }
+.booking-guest-status.accepted { color: #15803d; font-weight: 700; }
+.booking-guest-status.declined { color: #b91c1c; }
+.booking-guest-status.pending { color: #94a3b8; }
+.booking-list-empty { padding: 28px 16px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 10px; text-align: center; font-size: 13px; }
+
 .equipment-availability-filters { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
 .equipment-filter-field { display: flex; flex-direction: column; gap: 6px; color: #475569; font-size: 12px; font-weight: 600; }
 .equipment-filter-field input { min-width: 0; height: 38px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
@@ -8052,6 +11215,17 @@ body {
 .equipment-status-badge.available { background: #dcfce7; color: #166534; }
 .equipment-status-badge.booked-out { background: #fee2e2; color: #991b1b; }
 .equipment-status-badge.maintenance { background: #fef3c7; color: #854d0e; }
+
+@media (max-width: 768px) {
+    .booking-tabs { width: 100%; }
+    .booking-tab { flex: 1; padding-right: 8px; padding-left: 8px; }
+    .booking-calendar-day { min-height: 72px; padding: 4px; }
+    .booking-calendar-event { font-size: 9px; }
+    .booking-list-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+    .booking-list-time { grid-column: 1; }
+    .booking-list-actions { grid-column: 2; grid-row: 1 / span 2; flex-direction: column; align-items: stretch; }
+    .booking-agenda-item { grid-template-columns: 82px minmax(0, 1fr); }
+}
 
 /* ==========================================
    4. MODALS BASE & FIGMA BOOKING MODAL
@@ -8437,10 +11611,12 @@ input:checked + .slider:before {
 ## File: app/routers/meetings.py
 ````python
 # app/routers/meetings.py
+import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -8449,6 +11625,7 @@ from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import (
     MeetingCreateRequest,
+    MeetingParticipationResponse,
     MeetingResponse,
     SuggestTimeRequest,
     SuggestTimeResponse,
@@ -8456,8 +11633,14 @@ from app.schemas.meeting import (
 from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
 from app.services.notification_service import send_meeting_invitation_notifications
+from app.services.calendar_email_service import request_calendar_access_for_invitees
+from app.services.google_calendar_service import (
+    delete_google_events_for_meeting,
+    sync_user_meetings_to_google,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -8490,6 +11673,9 @@ def create_meeting(
         organizer_id=current_user.id,
     )
 
+    if current_user.google_refresh_token and created_meetings:
+        background_tasks.add_task(sync_user_meetings_to_google, current_user.id)
+
     # 2. Gửi thông báo ngầm cho những người được mời tham dự
     # Filter organizer khỏi danh sách — organizer không nhận invitation notification
     if payload.participant_ids and created_meetings:
@@ -8503,6 +11689,11 @@ def create_meeting(
                 participant_ids=notify_ids,
                 meeting_title=first_meeting.title,
                 start_time_str=start_str,
+            )
+            background_tasks.add_task(
+                request_calendar_access_for_invitees,
+                user_ids=notify_ids,
+                meeting_ids=[meeting.id for meeting in created_meetings],
             )
 
     return created_meetings
@@ -8543,7 +11734,121 @@ def get_meetings(
     if end_date:
         query = query.filter(Meeting.end_time <= end_date)
 
-    return query.all()
+    try:
+        return query.all()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while listing meetings")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể tải danh sách cuộc họp do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration.",
+        ) from exc
+
+
+@router.get(
+    "/mine",
+    summary="Lịch họp của người dùng hiện tại",
+    description="Trả về cuộc họp do người dùng chủ trì hoặc được mời, kèm trạng thái phản hồi của từng khách mời.",
+)
+def get_my_meetings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        meetings = (
+            db.query(Meeting)
+            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .filter(
+                (Meeting.organizer_id == current_user.id)
+                | (MeetingParticipant.user_id == current_user.id)
+            )
+            .filter(Meeting.status.notin_(["CANCELLED", "canceled", "cancelled"]))
+            .distinct()
+            .order_by(Meeting.start_time)
+            .all()
+        )
+
+        results = []
+        for meeting in meetings:
+            item = MeetingResponse.model_validate(meeting).model_dump(mode="json")
+            item["is_organizer"] = meeting.organizer_id == current_user.id
+            item["organizer_name"] = (
+                meeting.organizer.full_name or meeting.organizer.username
+                if meeting.organizer
+                else "Người tổ chức"
+            )
+            item["room_name"] = meeting.room.name if meeting.room else None
+            item["my_response_status"] = next(
+                (
+                    participant.response_status
+                    for participant in meeting.participants
+                    if participant.user_id == current_user.id
+                ),
+                None,
+            )
+            item["participants"] = [
+                {
+                    "user_id": participant.user_id,
+                    "name": (
+                        participant.user.full_name or participant.user.username
+                        if participant.user
+                        else "Người tham dự"
+                    ),
+                    "email": participant.user.email if participant.user else None,
+                    "response_status": participant.response_status,
+                }
+                for participant in meeting.participants
+            ]
+            results.append(item)
+        return results
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while loading meetings for user_id=%s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể tải lịch họp do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration của meeting_participants.",
+        ) from exc
+
+
+@router.patch(
+    "/{meeting_id}/response",
+    summary="Phản hồi lời mời họp",
+    description="Cho phép người được mời xác nhận tham gia hoặc từ chối; không cấp quyền hủy cuộc họp.",
+)
+def respond_to_meeting_invitation(
+    meeting_id: int,
+    payload: MeetingParticipationResponse,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        participant = (
+            db.query(MeetingParticipant)
+            .filter(
+                MeetingParticipant.meeting_id == meeting_id,
+                MeetingParticipant.user_id == current_user.id,
+            )
+            .first()
+        )
+        if participant is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy lời mời họp.")
+        participant.response_status = payload.response_status
+        db.commit()
+        return {"meeting_id": meeting_id, "response_status": participant.response_status}
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Database error while saving RSVP for meeting_id=%s user_id=%s",
+            meeting_id,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể lưu phản hồi do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration của meeting_participants.",
+        ) from exc
 
 
 @router.get(
@@ -8578,7 +11883,16 @@ def get_meeting_history(
         .order_by(Meeting.end_time.desc())
     )
 
-    return query.all()
+    try:
+        return query.all()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while loading meeting history for user_id=%s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể tải lịch sử cuộc họp do lỗi cơ sở dữ liệu. "
+            "Vui lòng kiểm tra schema/migration.",
+        ) from exc
 
 
 @router.patch(
@@ -8590,10 +11904,13 @@ def get_meeting_history(
 )
 def cancel_meeting(
     meeting_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return MeetingService.cancel_meeting(db, meeting_id, current_user)
+    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
+    return meeting
 
 
 @router.delete(
@@ -8605,10 +11922,13 @@ def cancel_meeting(
 )
 def cancel_meeting_legacy(
     meeting_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return MeetingService.cancel_meeting(db, meeting_id, current_user)
+    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
+    return meeting
 ````
 
 ## File: app/main.py
@@ -8619,6 +11939,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, configure_mappers
+from sqlalchemy import inspect
 
 # 1. DB & Models
 from app.db.session import Base
@@ -8627,20 +11948,67 @@ from app.models.user import User
 from app.models.room import Room
 from app.models.meeting import Meeting
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
+from app.models.google_calendar_event import GoogleCalendarEvent
 
 # 2. Routers & Security
 from app.routers import auth, equipment, meetings, notifications, rooms, users
 from app.core.security import authenticate_user
 from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
-
+from app.routers import auth, equipment, meetings, notifications, rooms, users
+from app.routers import reports
 # 3. Khởi tạo Mapper & Tạo bảng Database
 try:
     configure_mappers()
 except Exception as e:
     print(f"❌ Lỗi cấu hình ORM Models: {e}")
 
+from sqlalchemy import text
+
 Base.metadata.create_all(bind=engine)
+
+# Tự động cập nhật các cột mới nếu các bảng đã tồn tại từ schema cũ
+def _auto_migrate_schema():
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "mysql":
+                # 1. Kiểm tra bảng meetings
+                cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
+                if "meeting_type" not in cols_meetings:
+                    conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
+                    print("✅ Đã tự động thêm cột 'meeting_type' vào bảng meetings.")
+                if "online_link" not in cols_meetings:
+                    conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
+                    print("✅ Đã tự động thêm cột 'online_link' vào bảng meetings.")
+
+                # Cho phép room_id nhận giá trị NULL (cho cuộc họp trực tuyến)
+                room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
+                if room_id_col and room_id_col[2] == 'NO':
+                    col_type = room_id_col[1]
+                    conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
+                    print("✅ Đã cập nhật cột 'room_id' cho phép NULL.")
+
+                # 2. Kiểm tra bảng rooms
+                cols_rooms = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM rooms")).fetchall()]
+                if "amenities" not in cols_rooms:
+                    conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
+                    print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
+
+            if "meeting_participants" in inspect(conn).get_table_names():
+                participant_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("meeting_participants")
+                }
+                if "response_status" not in participant_columns:
+                    conn.execute(text(
+                        "ALTER TABLE meeting_participants "
+                        "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
+                    ))
+                    print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
+    except Exception as e:
+        print(f"⚠️ Thông báo cập nhật schema: {e}")
+
+_auto_migrate_schema()
 
 # 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
 app = FastAPI(title="Meeting Management System API", version="1.0.0")
@@ -8671,7 +12039,7 @@ app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
 app.include_router(notifications.router, prefix="/api", tags=["notifications"])
 app.include_router(users.router, prefix="/api", tags=["users"])
-
+app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
 # 8. Endpoints Đăng nhập & Root
 @app.post("/api/login", tags=["auth"])
 def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):
@@ -8701,15 +12069,17 @@ def render_index_page():
 ````html
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=14">
+    <link rel="stylesheet" href="css/style.css?v=15">
     <link rel="stylesheet" href="css/booking.css?v=3">
     <link rel="stylesheet" href="css/create-meeting.css?v=1">
 </head>
+
 <body>
     <div class="app-layout" id="appLayout">
         <!-- SIDEBAR -->
@@ -8718,26 +12088,53 @@ def render_index_page():
                 <span class="logo-icon">RS</span>
                 <span class="brand-name">RoomSync</span>
             </div>
-            
+
             <nav class="nav-menu">
                 <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
                     <span class="nav-text">Tổng quan</span>
                 </a>
                 <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path>
+                    </svg>
                     <span class="nav-text">Phòng họp</span>
                 </a>
                 <a href="#" class="nav-item" id="navEquipments" onclick="switchMainTab('equipments', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M9 9h6v6H9zM9 2v2m6-2v2M9 20v2m6-2v2M2 9h2m-2 6h2m16-6h2m-2 6h2"></path></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                        <path d="M9 9h6v6H9zM9 2v2m6-2v2M9 20v2m6-2v2M2 9h2m-2 6h2m16-6h2m-2 6h2"></path>
+                    </svg>
                     <span class="nav-text">Thiết bị</span>
                 </a>
                 <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
                     <span class="nav-text">Đặt lịch của tôi</span>
                 </a>
+                <!-- TAB BÁO CÁO TRÊN NAVBAR -->
+                <a href="#" class="nav-item" id="navReport" onclick="switchMainTab('report', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 20V10M12 20V4M6 20v-6"></path>
+                    </svg>
+                    <span class="nav-text">Báo cáo sử dụng</span>
+                </a>
                 <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
                     <span class="nav-text">Cài đặt</span>
                 </a>
             </nav>
@@ -8757,20 +12154,34 @@ def render_index_page():
             <header class="topbar">
                 <div class="topbar-left">
                     <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
                     </button>
-                    
+
                     <div class="search-box" id="topbarSearchContainer">
-                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..." oninput="handleSearch()">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..."
+                            oninput="handleSearch()">
                     </div>
                 </div>
-                
+
                 <div class="topbar-right">
                     <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                     <div class="notification-wrapper">
-                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()" title="Thông báo">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()"
+                            title="Thông báo">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
                             <span id="notificationDot" class="notification-dot" style="display: none;"></span>
                         </button>
                         <div id="notificationPopup" class="notification-popup" style="display: none;">
@@ -8796,10 +12207,12 @@ def render_index_page():
                         <div class="hero-content">
                             <span class="hero-badge">Hệ thống Quản lý Doanh nghiệp</span>
                             <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
-                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
+                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án
+                                kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
                             <div class="hero-actions">
                                 <button class="btn-hero-primary" onclick="openCreateMeeting()">Tạo cuộc họp</button>
-                                <button class="btn-hero-secondary" onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
+                                <button class="btn-hero-secondary"
+                                    onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
                             </div>
                         </div>
                     </div>
@@ -8809,7 +12222,8 @@ def render_index_page():
                             <h2>Phòng họp hiện có</h2>
                             <p class="subtitle" id="currentDateText">Đang tải...</p>
                         </div>
-                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
                             + Thêm phòng họp
                         </button>
                     </div>
@@ -8839,7 +12253,8 @@ def render_index_page():
 
                     <div class="filter-wrapper">
                         <div class="filter-left">
-                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span id="filterDateLabel">26/09/2026</span></button>
+                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span
+                                    id="filterDateLabel">26/09/2026</span></button>
                             <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
                                 <option value="all">Sức chứa ˅</option>
                                 <option value="small">Nhỏ (1 - 5 người)</option>
@@ -8876,7 +12291,8 @@ def render_index_page():
 
                     <div class="page-header">
                         <h2>Tất cả phòng họp</h2>
-                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()" style="display: none;">
+                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
                             + Thêm phòng họp
                         </button>
                     </div>
@@ -8891,14 +12307,16 @@ def render_index_page():
                             <h2>Trạng thái và khả dụng thiết bị</h2>
                             <p class="subtitle">Số lượng khả dụng được tính theo khung thời gian đã chọn.</p>
                         </div>
-                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()" style="display: none;">
+                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()"
+                            style="display: none;">
                             + Thêm thiết bị mới
                         </button>
                     </div>
                     <div class="equipment-availability-filters">
                         <label class="equipment-filter-field">
                             <span>Bắt đầu</span>
-                            <input id="equipmentStartTime" type="datetime-local" onchange="fetchEquipmentAvailability()">
+                            <input id="equipmentStartTime" type="datetime-local"
+                                onchange="fetchEquipmentAvailability()">
                         </label>
                         <label class="equipment-filter-field">
                             <span>Kết thúc</span>
@@ -8906,11 +12324,13 @@ def render_index_page():
                         </label>
                         <label class="equipment-filter-field">
                             <span>Phân loại</span>
-                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại" oninput="scheduleEquipmentAvailabilityFetch()">
+                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
                         </label>
                         <label class="equipment-filter-field">
                             <span>Tìm thiết bị</span>
-                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị" oninput="scheduleEquipmentAvailabilityFetch()">
+                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
                         </label>
                     </div>
                     <div class="table-card equipment-availability-table-wrap">
@@ -8927,7 +12347,9 @@ def render_index_page():
                                 </tr>
                             </thead>
                             <tbody id="equipmentAvailabilityTableBody">
-                                <tr><td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td></tr>
+                                <tr>
+                                    <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -8936,8 +12358,10 @@ def render_index_page():
                     <div id="adminEquipmentSection" style="display: none; margin-top: 28px;">
                         <div class="page-header" style="margin-bottom: 14px;">
                             <div>
-                                <h3 style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">Bảng Quản Lý Thiết Bị (Admin Table)</h3>
-                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle Bật/Tắt và Chỉnh sửa / Xóa.</p>
+                                <h3 style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">Bảng Quản Lý Thiết Bị
+                                    (Admin Table)</h3>
+                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle
+                                    Bật/Tắt và Chỉnh sửa / Xóa.</p>
                             </div>
                         </div>
                         <div class="table-card equipment-availability-table-wrap">
@@ -8953,7 +12377,9 @@ def render_index_page():
                                     </tr>
                                 </thead>
                                 <tbody id="adminEquipmentTableBody">
-                                    <tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>
+                                    <tr>
+                                        <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -8965,55 +12391,230 @@ def render_index_page():
                     <div class="page-header">
                         <h2>Lịch họp đã đặt của tôi</h2>
                     </div>
+                    <div class="booking-tabs" role="tablist" aria-label="Các lịch họp của tôi">
+                        <button class="booking-tab active" id="bookingTabCalendar" type="button" role="tab"
+                            aria-selected="true" aria-controls="bookingPanelCalendar"
+                            onclick="switchBookingTab('calendar')">Lịch họp</button>
+                        <button class="booking-tab" id="bookingTabMine" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelMine"
+                            onclick="switchBookingTab('mine')">Của tôi</button>
+                        <button class="booking-tab" id="bookingTabInvited" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelInvited"
+                            onclick="switchBookingTab('invited')">Được mời</button>
+                    </div>
+
+                    <section id="bookingPanelCalendar" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabCalendar">
+                        <div class="booking-calendar-toolbar">
+                            <div class="booking-calendar-nav">
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(-1)"
+                                    aria-label="Khoảng thời gian trước">‹</button>
+                                <button type="button" class="booking-calendar-button" onclick="goToBookingCalendarToday()">Hôm nay</button>
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(1)"
+                                    aria-label="Khoảng thời gian sau">›</button>
+                                <h3 id="bookingCalendarTitle" class="booking-calendar-title"></h3>
+                            </div>
+                            <div class="booking-calendar-views" role="group" aria-label="Chế độ xem lịch">
+                                <button type="button" data-calendar-view="month" class="active"
+                                    onclick="setBookingCalendarView('month')">Tháng</button>
+                                <button type="button" data-calendar-view="week"
+                                    onclick="setBookingCalendarView('week')">Tuần</button>
+                                <button type="button" data-calendar-view="day"
+                                    onclick="setBookingCalendarView('day')">Ngày</button>
+                            </div>
+                        </div>
+                        <div id="bookingCalendarGrid" class="booking-calendar-grid"></div>
+                        <div class="booking-day-agenda">
+                            <h3 id="bookingAgendaTitle">Lịch trong ngày</h3>
+                            <div id="bookingDayAgenda"></div>
+                        </div>
+                    </section>
+
+                    <section id="bookingPanelMine" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabMine" hidden>
+                        <div id="myBookingsTableBody" class="booking-list"></div>
+                    </section>
+
+                    <section id="bookingPanelInvited" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabInvited" hidden>
+                        <div id="invitedBookingsList" class="booking-list"></div>
+                    </section>
+                </div>
+
+                <!-- VIEW 5: BÁO CÁO SỬ DỤNG PHÒNG HỌP (TAB BÁO CÁO CHÍNH THỨC) -->
+                <div id="viewReport" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>
+                            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                                <line x1="3" y1="20" x2="21" y2="20"></line>
+                            </svg>
+                            Báo cáo & Thống kê Sử dụng Phòng họp
+                        </h2>
+                        <p class="subtitle">Cung cấp dữ liệu phân tích tỷ lệ lấp đầy và tổng số giờ họp của từng phòng.
+                        </p>
+                    </div>
+
+                    <!-- Bộ lọc báo cáo -->
+                    <div class="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap gap-4 items-end"
+                        style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; display: flex; gap: 16px; align-items: flex-end;">
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Từ
+                                ngày:</label>
+                            <input type="datetime-local" id="reportStartDate"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Đến
+                                ngày:</label>
+                            <input type="datetime-local" id="reportEndDate"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Phòng
+                                họp:</label>
+                            <select id="reportRoomIdSelect"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem; background: #fff;">
+                                <option value="">Tất cả các phòng</option>
+                            </select>
+                        </div>
+                        <button onclick="fetchRoomUsageReport()"
+                            style="background: #2563eb; color: #fff; border: none; padding: 9px 16px; border-radius: 6px; font-weight: 600; cursor: pointer;">
+                            Xem Báo Cáo
+                        </button>
+                    </div>
+
+                    <!-- Khối Tổng quan (Summary Cards) -->
+                    <div class="stats-grid" style="margin-bottom: 24px;">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số phòng</span>
+                            <div class="stat-value" id="sumTotalRooms">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số cuộc họp</span>
+                            <div class="stat-value text-green" id="sumTotalMeetings">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số giờ họp</span>
+                            <div class="stat-value text-orange" id="sumTotalHours">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ lấp đầy TB</span>
+                            <div class="stat-value text-purple" id="sumAvgOccupancy">-</div>
+                        </div>
+                    </div>
+
+                    <!-- Bảng chi tiết -->
                     <div class="table-card">
-                        <div class="table-scroll my-bookings-scroll">
-                        <table class="data-table my-bookings-table">
-                            <thead>
-                                <tr>
-                                    <th>Phòng họp</th>
-                                    <th>Thời gian</th>
-                                    <th>Trạng thái</th>
-                                    <th>Hành động</th>
-                                </tr>
-                            </thead>
-                            <tbody id="myBookingsTableBody"></tbody>
-                        </table>
+                        <div style="padding: 16px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #1e293b;">
+                            Chi tiết theo từng phòng họp</div>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Tên phòng</th>
+                                        <th>Số cuộc họp</th>
+                                        <th>Tổng số giờ</th>
+                                        <th>Tỷ lệ lấp đầy (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="roomDetailsTableBody">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">Chưa
+                                            có dữ liệu. Bấm "Xem Báo Cáo" để tải.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
 
-                <!-- VIEW 5: CÀI ĐẶT -->
-                <div id="viewSettings" class="tab-view" style="display: none;">
-                    <div class="page-header">
-                        <h2>Cài đặt tài khoản</h2>
+                <!-- VIEW 6: CÀI ĐẶT -->
+                <div id="viewSettings" class="tab-view max-w-4xl mx-auto py-6 px-4" style="display: none;">
+                    <!-- Tiêu đề trang -->
+                    <div class="mb-6">
+                        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Cài đặt tài khoản</h1>
+                        <p class="text-sm text-gray-500 mt-1">Quản lý thông tin cá nhân và bảo mật tài khoản của bạn.
+                        </p>
                     </div>
-                    <div class="settings-card">
-                        <div class="settings-profile-header">
-                            <div class="user-avatar-large" id="settingsAvatar">N</div>
-                            <div>
-                                <h3 id="settingsName">Nguyễn Minh Tuấn</h3>
-                                <p id="settingsRole" class="subtitle">Quản trị viên</p>
+
+                    <div class="space-y-6">
+                        <!-- Thẻ 1: Thông tin hồ sơ -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <div class="flex items-center gap-4 pb-6 border-b border-gray-100">
+                                <div id="settingsAvatar"
+                                    class="w-16 h-16 rounded-full bg-[#004CFF] text-white flex items-center justify-center text-2xl font-bold shadow-inner">
+                                    Q
+                                </div>
+                                <div>
+                                    <h3 id="settingsName" class="text-lg font-semibold text-gray-900">Quản trị viên</h3>
+                                    <p id="settingsRole" class="text-sm text-gray-500">Quản trị viên</p>
+                                </div>
+                            </div>
+
+                            <!-- Form cập nhật thông tin -->
+                            <div class="mt-6 space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Họ và tên</label>
+                                    <input type="text" id="settingsInputName"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Email liên hệ</label>
+                                    <input type="email" id="settingsInputEmail"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div class="pt-2">
+                                    <button type="button" onclick="updateUserSettings()"
+                                        class="px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-all shadow-sm focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                                        Lưu thay đổi
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="settings-form">
-                            <div class="form-group">
-                                <label>Họ và tên</label>
-                                <input type="text" class="form-control" id="settingsInputName" value="Nguyễn Minh Tuấn">
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Google Calendar</h3>
+                            <p class="text-sm text-gray-500 mb-4">
+                                Kết nối tài khoản Google để tự động đồng bộ cuộc họp và gửi lời mời cho người tham dự.
+                            </p>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span id="googleCalendarStatus" class="text-sm text-gray-600" role="status"
+                                    aria-live="polite">Đang kiểm tra kết nối...</span>
+                                <button id="googleCalendarAction" type="button"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#004CFF] hover:bg-[#0038CC] transition-colors"
+                                    onclick="handleGoogleCalendarAction()" disabled>
+                                    Kết nối ngay
+                                </button>
                             </div>
-                            <div class="form-group">
-                                <label>Email liên hệ</label>
-                                <input type="email" class="form-control" id="settingsInputEmail" value="admin@congty.com" readonly>
-                            </div>
-                            <button class="btn-save" onclick="alert('Đã cập nhật thông tin!')">Lưu thay đổi</button>
                         </div>
 
-                        <hr style="margin: 24px 0; border: none; border-top: 1px solid #e2e8f0;">
+                        <!-- Thẻ 2: Phiên đăng nhập & Bảo mật -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Phiên đăng nhập</h3>
+                            <p class="text-sm text-gray-500 mb-4">Quản lý trạng thái kết nối của bạn trên hệ thống
+                                RoomSync.</p>
 
-                        <div class="logout-section">
-                            <h4>Phiên đăng nhập</h4>
-                            <p class="subtitle" style="margin-bottom: 12px;">Bấm nút bên dưới để thoát khỏi hệ thống RoomSync.</p>
-                            <button onclick="logout()" class="btn-logout-danger">🚪 Đăng xuất khỏi hệ thống</button>
+                            <div class="pt-4 border-t border-gray-100 flex items-center justify-between">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900 block">Đăng xuất tài khoản</span>
+                                    <span class="text-xs text-gray-500">Kết thúc phiên làm việc hiện tại trên thiết bị
+                                        này.</span>
+                                </div>
+                                <button type="button" onclick="logout()"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors">
+                                    Đăng xuất
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -9041,7 +12642,8 @@ def render_index_page():
                 <input type="hidden" id="editRoomId">
                 <div class="form-group">
                     <label>Tên phòng họp</label>
-                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B" required>
+                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
+                        required>
                 </div>
                 <div class="form-group">
                     <label>Vị trí (Tầng)</label>
@@ -9053,7 +12655,8 @@ def render_index_page():
                 </div>
                 <div class="form-group">
                     <label>Tiện ích (phân cách bằng dấu phẩy)</label>
-                    <input type="text" id="roomAmenities" class="form-control" placeholder="Màn hình, Wifi, Video, Đồ uống">
+                    <input type="text" id="roomAmenities" class="form-control"
+                        placeholder="Màn hình, Wifi, Video, Đồ uống">
                 </div>
                 <div class="modal-actions">
                     <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
@@ -9071,7 +12674,8 @@ def render_index_page():
                 <input type="hidden" id="editEquipmentId">
                 <div class="form-group">
                     <label>Tên thiết bị <span style="color:red;">*</span></label>
-                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony" required>
+                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony"
+                        required>
                 </div>
                 <div class="form-group">
                     <label>Mã thiết bị</label>
@@ -9079,7 +12683,8 @@ def render_index_page():
                 </div>
                 <div class="form-group">
                     <label>Phân loại</label>
-                    <input type="text" id="equipmentCategory" class="form-control" placeholder="Ví dụ: Audio, Visual, Cable">
+                    <input type="text" id="equipmentCategory" class="form-control"
+                        placeholder="Ví dụ: Audio, Visual, Cable">
                 </div>
                 <div class="form-group">
                     <label>Số lượng tổng (total_qty) <span style="color:red;">*</span></label>
@@ -9112,13 +12717,15 @@ def render_index_page():
                             <p class="cm-help">Xác định cuộc họp và nội dung trước khi lựa chọn vị trí hoặc phòng.</p>
                         </div>
                         <label class="cm-label" for="cmTitle">Tên cuộc họp</label>
-                        <input id="cmTitle" class="cm-title-input" name="title" maxlength="120" placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
+                        <input id="cmTitle" class="cm-title-input" name="title" maxlength="120"
+                            placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
                         <p id="cmTitleError" class="cm-field-error">Nhập tên cuộc họp trước khi tạo.</p>
                     </section>
 
                     <section class="cm-section">
                         <label class="cm-label" for="cmDescription">Mô tả ngắn</label>
-                        <textarea id="cmDescription" class="cm-textarea" rows="3" placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
+                        <textarea id="cmDescription" class="cm-textarea" rows="3"
+                            placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
                     </section>
 
                     <section class="cm-section">
@@ -9141,9 +12748,12 @@ def render_index_page():
                             </label>
                         </div>
                         <div class="cm-seg" role="group" aria-label="Lặp lại">
-                            <button type="button" id="cmRecNone" aria-pressed="true" onclick="setRecurrence('none')">Không lặp</button>
-                            <button type="button" id="cmRecWeekly" aria-pressed="false" onclick="setRecurrence('weekly')">Hàng tuần</button>
-                            <button type="button" id="cmRecMonthly" aria-pressed="false" onclick="setRecurrence('monthly')">Hàng tháng</button>
+                            <button type="button" id="cmRecNone" aria-pressed="true"
+                                onclick="setRecurrence('none')">Không lặp</button>
+                            <button type="button" id="cmRecWeekly" aria-pressed="false"
+                                onclick="setRecurrence('weekly')">Hàng tuần</button>
+                            <button type="button" id="cmRecMonthly" aria-pressed="false"
+                                onclick="setRecurrence('monthly')">Hàng tháng</button>
                         </div>
                         <select id="cmRecurrence" class="cm-select" hidden>
                             <option value="none">Không lặp</option>
@@ -9165,26 +12775,33 @@ def render_index_page():
                             <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
                         </div>
                         <div class="cm-attendee-search">
-                            <input id="cmAttendeeSearch" class="cm-search" type="search" placeholder="Tìm người tham dự..." autocomplete="off" />
+                            <input id="cmAttendeeSearch" class="cm-search" type="search"
+                                placeholder="Tìm người tham dự..." autocomplete="off" />
                             <ul id="cmAttendeeSuggest" class="cm-suggest"></ul>
                         </div>
                         <div id="cmAttendeeChips" class="cm-chips"></div>
-                        <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên nhóm</button>
+                        <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên
+                            nhóm</button>
                     </section>
 
                     <section class="cm-section">
                         <p class="cm-section-title">Vị trí</p>
-                        <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp">
-                            <button type="button" id="cmModeOnline" aria-pressed="false" onclick="setCreateMeetingMode('online')">🌐 Online</button>
-                            <button type="button" id="cmModeOffline" aria-pressed="true" onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
+                        <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp"
+                            aria-controls="cmOnlineBox cmResources">
+                            <button type="button" id="cmModeOnline" aria-pressed="false"
+                                onclick="setCreateMeetingMode('online')">🌐 Online</button>
+                            <button type="button" id="cmModeOffline" aria-pressed="true"
+                                onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
                         </div>
-                        <div id="cmOnlineBox" class="cm-online-box">
+                        <div id="cmOnlineBox" class="cm-online-box" aria-hidden="true">
                             <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
-                            <input id="cmMeetingLink" class="cm-input" type="url" placeholder="https://meet.roomsync.vn/..." />
-                            <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo link</button>
+                            <input id="cmMeetingLink" class="cm-input" type="url"
+                                name="meeting_link" placeholder="https://meet.google.com/..." autocomplete="url" />
+                            <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo
+                                link</button>
                         </div>
 
-                        <div id="cmResources" class="cm-resources is-open">
+                        <div id="cmResources" class="cm-resources is-open" aria-hidden="false">
                             <p class="cm-section-title">Yêu cầu phòng</p>
                             <div class="cm-fixed-requirements">
                                 <span class="cm-label">Thiết bị cố định bắt buộc</span>
@@ -9200,7 +12817,8 @@ def render_index_page():
                                     <strong id="cmCapacityValue">1 người</strong>
                                     <span id="cmCapacityMin" class="cm-help">Phòng tối thiểu: 1 chỗ</span>
                                 </div>
-                                <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost" onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
+                                <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost"
+                                    onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
                             </div>
                             <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
                             <div id="cmRoomResults" class="cm-room-list">
@@ -9228,7 +12846,8 @@ def render_index_page():
                     <div id="cmSummaryStatus" class="cm-status is-ok">✓ Không có xung đột</div>
                     <div class="cm-summary-actions">
                         <button id="cmSubmit" class="cm-btn cm-btn-primary" type="submit">TẠO CUỘC HỌP</button>
-                        <button class="cm-btn cm-btn-secondary" type="button" onclick="closeCreateMeeting()">Hủy</button>
+                        <button class="cm-btn cm-btn-secondary" type="button"
+                            onclick="closeCreateMeeting()">Hủy</button>
                     </div>
                 </aside>
             </form>
@@ -9237,15 +12856,17 @@ def render_index_page():
                 <div class="cm-success-icon" aria-hidden="true">✓</div>
                 <h2>Đã tạo cuộc họp</h2>
                 <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
-                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp khác</button>
+                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp
+                    khác</button>
                 <button type="button" class="cm-btn cm-btn-secondary" onclick="closeCreateMeeting()">Đóng</button>
             </div>
         </section>
     </div>
 
-    <script src="js/app.js?v=9"></script>
-    <script src="js/create-meeting.js?v=2"></script>
+    <script src="js/app.js?v=12"></script>
+    <script src="js/create-meeting.js?v=3"></script>
 </body>
+
 </html>
 ````
 
@@ -9257,8 +12878,12 @@ def render_index_page():
 const API_BASE = "http://localhost:8000/api";
 let allRooms = [];
 let myBookings = [];
+let bookingCalendarView = 'month';
+let bookingCalendarDate = new Date();
+let bookingSelectedDate = new Date();
 let selectedRoomId = null;
 let equipmentAvailabilityTimer = null;
+let googleCalendarOAuthError = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -9280,16 +12905,34 @@ function escapeHtml(value) {
 /* ==========================================================================
    INITIALIZATION & DOM LOAD
    ========================================================================== */
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     const token = getAuthToken();
     const isMeetingPreview = new URLSearchParams(location.search).get('preview') === 'meeting';
     if (!token && !isMeetingPreview) {
-        window.location.href = 'login.html';
+        window.location.href = 'index.html';
         return;
     }
 
-    const userName = localStorage.getItem('user_name') || 'Nguyễn Minh Tuấn';
-    const role = localStorage.getItem('role') || 'user';
+    let userName = localStorage.getItem('user_name') || 'Người dùng';
+    let userEmail = localStorage.getItem('user_email') || '';
+    let role = localStorage.getItem('role') || 'user';
+
+    // Gọi API lấy thông tin chuẩn từ Database trực tiếp
+    try {
+        const profileRes = await fetch(`${API_BASE}/users/me`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (profileRes.ok) {
+            const userData = await profileRes.json();
+            userName = userData.full_name || userName;
+            userEmail = userData.email || userEmail;
+            localStorage.setItem('user_name', userName);
+            localStorage.setItem('user_email', userEmail);
+        }
+    } catch (e) {
+        console.error("Không thể tải thông tin profile từ server", e);
+    }
+
     const isAdmin = role === 'admin';
 
     // Cập nhật thông tin người dùng trên giao diện
@@ -9301,7 +12944,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const settingsInputName = document.getElementById('settingsInputName');
     if (settingsInputName) settingsInputName.value = userName;
-    
+
+    const settingsInputEmail = document.getElementById('settingsInputEmail');
+    if (settingsInputEmail) {
+        settingsInputEmail.value = userEmail;
+        settingsInputEmail.removeAttribute('readonly'); // Cho phép sửa email
+    }
+    loadCurrentUserProfile();
     const initial = userName.charAt(0).toUpperCase();
     ['avatarText', 'headerAvatarText', 'settingsAvatar'].forEach(id => {
         const el = document.getElementById(id);
@@ -9337,6 +12986,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btn2) btn2.style.display = 'block';
         if (addEqBtn) addEqBtn.style.display = 'block';
         if (adminEqSection) adminEqSection.style.display = 'block';
+    } else {
+        const navReport = document.getElementById('navReport');
+        if (navReport) navReport.style.display = 'none';
     }
 
     // Tải dữ liệu ban đầu
@@ -9344,6 +12996,26 @@ document.addEventListener('DOMContentLoaded', () => {
     setDefaultEquipmentAvailabilityTimes();
     if (isAdmin) {
         fetchAdminEquipments();
+    }
+
+    // Khởi tạo thời gian mặc định cho bộ lọc báo cáo
+    const reportEnd = document.getElementById("reportEndDate");
+    const reportStart = document.getElementById("reportStartDate");
+    if (reportEnd && reportStart) {
+        const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        reportEnd.value = now.toISOString().slice(0, 16);
+        reportStart.value = thirtyDaysAgo.toISOString().slice(0, 16);
+        loadRoomsForReportFilter();
+    }
+
+    const callbackQuery = new URLSearchParams(window.location.search);
+    if (callbackQuery.has('calendar_connected') || callbackQuery.has('google_error')) {
+        googleCalendarOAuthError = callbackQuery.get('google_error');
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('calendar_connected');
+        cleanUrl.searchParams.delete('google_error');
+        window.history.replaceState({}, document.title, `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+        switchMainTab('settings', document.getElementById('navSettings'));
     }
 });
 
@@ -9390,10 +13062,141 @@ function switchMainTab(tabName, el) {
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         fetchMyBookings();
+    } else if (tabName === 'report') {
+        const view = document.getElementById('viewReport');
+        if (view) view.style.display = 'block';
+        if (searchContainer) searchContainer.style.display = 'none';
+        fetchRoomUsageReport();
     } else if (tabName === 'settings') {
         const view = document.getElementById('viewSettings');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
+        loadCurrentUserProfile();
+        loadGoogleCalendarStatus();
+    }
+}
+
+async function loadGoogleCalendarStatus() {
+    const statusElement = document.getElementById('googleCalendarStatus');
+    const actionButton = document.getElementById('googleCalendarAction');
+    if (!statusElement || !actionButton) return;
+
+    actionButton.disabled = true;
+    statusElement.textContent = 'Đang kiểm tra kết nối...';
+    try {
+        const response = await fetch(`${API_BASE}/auth/google/calendar/status`, {
+            headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!response.ok) throw new Error(`Không thể kiểm tra kết nối Google Calendar (${response.status})`);
+        const result = await response.json();
+        const connected = result.connected === true;
+        const oauthErrorMessages = {
+            calendar_permission_denied: 'Bạn chưa cấp quyền Google Calendar. Có thể kết nối lại bất cứ lúc nào.',
+            oauth_failed: 'Không thể kết nối Google Calendar. Vui lòng thử lại.',
+        };
+        statusElement.textContent = connected
+            ? 'Tài khoản Google Calendar đã được kết nối.'
+            : oauthErrorMessages[googleCalendarOAuthError] || 'Chưa kết nối Google Calendar.';
+        googleCalendarOAuthError = null;
+        actionButton.textContent = connected ? 'Ngắt kết nối' : 'Kết nối ngay';
+        actionButton.dataset.connected = String(connected);
+        actionButton.disabled = false;
+    } catch (error) {
+        console.error('Không thể tải trạng thái Google Calendar:', error);
+        statusElement.textContent = 'Không thể tải trạng thái Google Calendar. Vui lòng thử lại.';
+    }
+}
+
+async function handleGoogleCalendarAction() {
+    const statusElement = document.getElementById('googleCalendarStatus');
+    const actionButton = document.getElementById('googleCalendarAction');
+    if (!statusElement || !actionButton) return;
+
+    actionButton.disabled = true;
+    try {
+        if (actionButton.dataset.connected === 'true') {
+            const response = await fetch(`${API_BASE}/auth/google/calendar/disconnect`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${getAuthToken()}` },
+            });
+            if (!response.ok) throw new Error(`Không thể ngắt kết nối Google Calendar (${response.status})`);
+            await loadGoogleCalendarStatus();
+            return;
+        }
+
+        const response = await fetch(`${API_BASE}/auth/google/calendar/authorize`, {
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!response.ok) throw new Error(`Không thể bắt đầu kết nối Google Calendar (${response.status})`);
+        const result = await response.json();
+        if (!result.authorization_url) throw new Error('Máy chủ không trả về địa chỉ xác thực Google');
+        window.location.assign(result.authorization_url);
+    } catch (error) {
+        console.error('Không thể cập nhật kết nối Google Calendar:', error);
+        statusElement.textContent = error.message || 'Không thể cập nhật kết nối Google Calendar.';
+        actionButton.disabled = false;
+    }
+}
+
+async function loadCurrentUserProfile() {
+    const emailInput = document.getElementById('settingsInputEmail');
+    if (!emailInput) return;
+    emailInput.disabled = false;
+    emailInput.readOnly = false;
+
+    let storedUser = {};
+    try {
+        const parsedUser = JSON.parse(localStorage.getItem('user') || '{}');
+        if (parsedUser && typeof parsedUser === 'object') storedUser = parsedUser;
+    } catch (error) {
+        storedUser = {};
+    }
+
+    const getFallbackEmail = user => {
+        const cachedEmail = localStorage.getItem('user_email') || storedUser.email || '';
+        if (cachedEmail.trim()) return cachedEmail.trim();
+
+        const username = String(
+            user?.username || storedUser.username || localStorage.getItem('username') || '',
+        ).trim();
+        return username ? `${username.toLowerCase()}@congty.com` : '';
+    };
+
+    const setEmailValue = email => {
+        emailInput.value = email;
+        emailInput.defaultValue = email;
+    };
+
+    setEmailValue(getFallbackEmail());
+
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+
+        const user = await response.json();
+        const actualEmail = typeof user.email === 'string' ? user.email.trim() : '';
+        const email = actualEmail || getFallbackEmail(user);
+        setEmailValue(email);
+        if (actualEmail) localStorage.setItem('user_email', actualEmail);
+
+        const fullName = user.full_name || user.username;
+        if (fullName) {
+            localStorage.setItem('user_name', fullName);
+            const nameDisplay = document.getElementById('userNameDisplay');
+            const settingsName = document.getElementById('settingsName');
+            const settingsInputName = document.getElementById('settingsInputName');
+            if (nameDisplay) nameDisplay.innerText = fullName;
+            if (settingsName) settingsName.innerText = fullName;
+            if (settingsInputName) settingsInputName.value = fullName;
+        }
+    } catch (error) {
+        console.warn('Could not load the current user profile:', error);
     }
 }
 
@@ -9408,9 +13211,56 @@ function scrollToRooms() {
 }
 
 /* ==========================================================================
+   UPDATE USER SETTINGS (LƯU THÔNG TIN CÁ NHÂN & EMAIL THẬT)
+   ========================================================================== */
+async function updateUserSettings() {
+    const newName = document.getElementById('settingsInputName')?.value.trim();
+    const newEmail = document.getElementById('settingsInputEmail')?.value.trim();
+    const token = getAuthToken();
+
+    if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+        alert("Vui lòng nhập địa chỉ email hợp lệ!");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/users/me`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                full_name: newName,
+                email: newEmail
+            })
+        });
+
+        if (res.ok) {
+            const updatedUser = await res.json();
+
+            localStorage.setItem('user_name', updatedUser.full_name || newName);
+            localStorage.setItem('user_email', updatedUser.email || newEmail);
+
+            const nameDisplay = document.getElementById('userNameDisplay');
+            if (nameDisplay) nameDisplay.innerText = updatedUser.full_name || newName;
+            const settingsName = document.getElementById('settingsName');
+            if (settingsName) settingsName.innerText = updatedUser.full_name || newName;
+
+            alert("Đã cập nhật thông tin thành công!");
+        } else {
+            const err = await res.json();
+            alert(`Cập nhật thất bại: ${err.detail || 'Lỗi không xác định'}`);
+        }
+    } catch (error) {
+        console.error("Lỗi cập nhật thông tin:", error);
+        alert("Không thể kết nối máy chủ để lưu thông tin!");
+    }
+}
+
+/* ==========================================================================
    NOTIFICATION MANAGEMENT
    ========================================================================== */
-
 async function fetchNotifications() {
     const token = getAuthToken();
     if (!token) return;
@@ -9440,9 +13290,6 @@ function renderNotifications(notifications) {
     }
 
     const unreadCount = notifications.filter(n => !n.is_read).length;
-
-    // Chỉ cập nhật chấm đỏ khi popup ĐANG ĐÓNG (fetch nền / trang tải)
-    // Khi popup đang mở thì không tự động ẩn chấm đỏ qua hàm này
     const popupVisible = popup.style.display !== 'none';
     if (!popupVisible) {
         updateNotificationDot(unreadCount);
@@ -9464,14 +13311,12 @@ function renderNotifications(notifications) {
     `;
 }
 
-// Hiển thị hoặc ẩn chấm đỏ nhấp nháy trên nút chuông
 function updateNotificationDot(unreadCount) {
     const dot = document.getElementById('notificationDot');
     if (!dot) return;
     dot.style.display = unreadCount > 0 ? 'block' : 'none';
 }
 
-// Toggle popup thông báo: mở thì ẩn chấm đỏ ngay + load data; đóng thì ẩn popup
 function toggleNotificationPopup() {
     const popup = document.getElementById('notificationPopup');
     if (!popup) return;
@@ -9480,13 +13325,11 @@ function toggleNotificationPopup() {
     popup.style.display = isHidden ? 'block' : 'none';
 
     if (isHidden) {
-        // Ẩn chấm đỏ ngay khi người dùng mở popup (đã "xem" thông báo)
         updateNotificationDot(0);
         fetchNotifications();
     }
 }
 
-// Đóng popup khi bấm ra ngoài vùng notification-wrapper
 document.addEventListener('click', function (e) {
     const wrapper = document.querySelector('.notification-wrapper');
     const popup = document.getElementById('notificationPopup');
@@ -9496,32 +13339,23 @@ document.addEventListener('click', function (e) {
     }
 });
 
-// Fetch khi trang tải để hiển thị chấm đỏ nếu có thông báo chưa đọc
-document.addEventListener('DOMContentLoaded', () => {
-    fetchNotifications();
-});
-
 window.fetchNotifications = fetchNotifications;
 window.updateNotificationDot = updateNotificationDot;
 
 /* ==========================================================================
-   MANUAL GUEST INVITE (nhập tên + gmail người ngoài hệ thống)
+   MANUAL GUEST INVITE
    ========================================================================== */
-// Mảng lưu danh sách khách mời thủ công
 let _manualGuests = [];
 
 function addManualGuest() {
-    const nameInput  = document.getElementById('inviteGuestName');
+    const nameInput = document.getElementById('inviteGuestName');
     const emailInput = document.getElementById('inviteGuestEmail');
     if (!nameInput || !emailInput) return;
 
-    const name  = nameInput.value.trim();
+    const name = nameInput.value.trim();
     const email = emailInput.value.trim();
 
-    if (!name && !email) {
-        nameInput.focus();
-        return;
-    }
+    if (!name && !email) { nameInput.focus(); return; }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         emailInput.style.borderColor = '#ef4444';
         emailInput.focus();
@@ -9529,7 +13363,6 @@ function addManualGuest() {
         return;
     }
 
-    // Tránh trùng email
     if (_manualGuests.find(g => g.email === email)) {
         emailInput.style.borderColor = '#f59e0b';
         setTimeout(() => emailInput.style.borderColor = '', 1500);
@@ -9537,7 +13370,7 @@ function addManualGuest() {
     }
 
     _manualGuests.push({ name, email });
-    nameInput.value  = '';
+    nameInput.value = '';
     emailInput.value = '';
     nameInput.focus();
     renderManualGuestList();
@@ -9551,10 +13384,7 @@ function removeManualGuest(email) {
 function renderManualGuestList() {
     const container = document.getElementById('manualGuestList');
     if (!container) return;
-    if (_manualGuests.length === 0) {
-        container.innerHTML = '';
-        return;
-    }
+    if (_manualGuests.length === 0) { container.innerHTML = ''; return; }
     container.innerHTML = _manualGuests.map(g => `
         <span class="manual-guest-tag" title="${g.email}">
             ${g.name ? `<strong>${escapeHtml(g.name)}</strong>&nbsp;` : ''}
@@ -9564,158 +13394,23 @@ function renderManualGuestList() {
     `).join('');
 }
 
-// Cho phép nhấn Enter trên ô email để thêm nhanh + keyboard navigation cho suggestions
-document.addEventListener('DOMContentLoaded', () => {
-    const emailInput = document.getElementById('inviteGuestEmail');
-    const nameInput  = document.getElementById('inviteGuestName');
-
-    if (emailInput) {
-        emailInput.addEventListener('keydown', e => {
-            if (handleSuggestionKeydown(e)) return;
-            if (e.key === 'Enter') { e.preventDefault(); addManualGuest(); }
-        });
-    }
-    if (nameInput) {
-        nameInput.addEventListener('keydown', e => {
-            if (handleSuggestionKeydown(e)) return;
-            if (e.key === 'Enter') { e.preventDefault(); emailInput?.focus(); }
-        });
-    }
-
-    // Bấm ngoài vùng invite → ẩn suggestions
-    document.addEventListener('click', e => {
-        const wrapper = document.querySelector('.invite-manual-wrapper');
-        if (wrapper && !wrapper.contains(e.target)) hideSuggestions();
-    });
-});
-
-/* ---------- AUTOCOMPLETE LOGIC ---------- */
-let _activeSugIndex = -1;
-
-function onInviteInput() {
-    const nameVal  = (document.getElementById('inviteGuestName')?.value  || '').trim().toLowerCase();
-    const emailVal = (document.getElementById('inviteGuestEmail')?.value || '').trim().toLowerCase();
-    const query    = nameVal || emailVal;
-
-    if (!query || query.length < 1 || _allUsers.length === 0) {
-        hideSuggestions();
-        return;
-    }
-
-    // Lọc users khớp tên hoặc email, loại trừ người đã thêm
-    const addedEmails = new Set(_manualGuests.map(g => g.email.toLowerCase()));
-    const matches = _allUsers.filter(u => {
-        if (addedEmails.has((u.email || '').toLowerCase())) return false;
-        const fullName = (u.full_name || '').toLowerCase();
-        const email    = (u.email || '').toLowerCase();
-        return fullName.includes(query) || email.includes(query);
-    }).slice(0, 8); // tối đa 8 gợi ý
-
-    if (matches.length === 0) { hideSuggestions(); return; }
-
-    renderSuggestions(matches, query);
-}
-
-function highlightMatch(text, query) {
-    if (!query) return escapeHtml(text);
-    const idx = text.toLowerCase().indexOf(query.toLowerCase());
-    if (idx === -1) return escapeHtml(text);
-    return escapeHtml(text.slice(0, idx))
-        + `<mark>${escapeHtml(text.slice(idx, idx + query.length))}</mark>`
-        + escapeHtml(text.slice(idx + query.length));
-}
-
-function renderSuggestions(users, query) {
-    const list = document.getElementById('inviteSuggestions');
-    if (!list) return;
-    _activeSugIndex = -1;
-
-    list.innerHTML = users.map((u, i) => {
-        const initials = (u.full_name || u.email || '?')[0].toUpperCase();
-        return `
-        <li data-index="${i}" data-name="${escapeHtml(u.full_name || '')}" data-email="${escapeHtml(u.email || '')}"
-            onmousedown="selectSuggestion('${escapeHtml(u.full_name || '')}', '${escapeHtml(u.email || '')}')">
-            <div class="sug-avatar">${initials}</div>
-            <div class="sug-info">
-                <strong>${highlightMatch(u.full_name || 'Người dùng', query)}</strong>
-                <span>${highlightMatch(u.email || '', query)}</span>
-            </div>
-        </li>`;
-    }).join('');
-
-    list.style.display = 'block';
-}
-
-function selectSuggestion(name, email) {
-    const nameInput  = document.getElementById('inviteGuestName');
-    const emailInput = document.getElementById('inviteGuestEmail');
-    if (nameInput)  nameInput.value  = name;
-    if (emailInput) emailInput.value = email;
-    hideSuggestions();
-    // Tự động thêm ngay khi chọn
-    addManualGuest();
-}
-
-function hideSuggestions() {
-    const list = document.getElementById('inviteSuggestions');
-    if (list) { list.style.display = 'none'; list.innerHTML = ''; }
-    _activeSugIndex = -1;
-}
-
-function handleSuggestionKeydown(e) {
-    const list = document.getElementById('inviteSuggestions');
-    if (!list || list.style.display === 'none') return false;
-    const items = list.querySelectorAll('li');
-    if (!items.length) return false;
-
-    if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        _activeSugIndex = Math.min(_activeSugIndex + 1, items.length - 1);
-        items.forEach((li, i) => li.classList.toggle('active', i === _activeSugIndex));
-        return true;
-    }
-    if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        _activeSugIndex = Math.max(_activeSugIndex - 1, 0);
-        items.forEach((li, i) => li.classList.toggle('active', i === _activeSugIndex));
-        return true;
-    }
-    if (e.key === 'Enter' && _activeSugIndex >= 0) {
-        e.preventDefault();
-        const active = items[_activeSugIndex];
-        if (active) selectSuggestion(active.dataset.name, active.dataset.email);
-        return true;
-    }
-    if (e.key === 'Escape') {
-        hideSuggestions();
-        return true;
-    }
-    return false;
-}
-
-// Lấy danh sách guest thủ công để gửi cùng form (nếu cần)
 function getManualGuests() { return [..._manualGuests]; }
-
-// Reset khi đóng modal
 function resetManualGuests() {
     _manualGuests = [];
     renderManualGuestList();
-    hideSuggestions();
-    const nameInput  = document.getElementById('inviteGuestName');
+    const nameInput = document.getElementById('inviteGuestName');
     const emailInput = document.getElementById('inviteGuestEmail');
-    if (nameInput)  nameInput.value  = '';
+    if (nameInput) nameInput.value = '';
     if (emailInput) emailInput.value = '';
 }
 
-window.addManualGuest    = addManualGuest;
+window.addManualGuest = addManualGuest;
 window.removeManualGuest = removeManualGuest;
-window.getManualGuests   = getManualGuests;
+window.getManualGuests = getManualGuests;
 window.resetManualGuests = resetManualGuests;
-window.onInviteInput     = onInviteInput;
-window.selectSuggestion  = selectSuggestion;
 
 /* ==========================================================================
-   DATE & TIME FORMATTING UTILITIES (ĐÃ CẢI TIẾN TIẾNG VIỆT FIGMA UI)
+   DATE & TIME FORMATTING UTILITIES
    ========================================================================== */
 function formatDateInput(date) {
     const year = date.getFullYear();
@@ -9732,9 +13427,6 @@ function formatDateTimeLocal(date) {
     return `${formatDateInput(date)}T${formatTimeInput(date)}`;
 }
 
-/**
- * Định dạng nhãn hiển thị thời gian Tiếng Việt (Ví dụ: 08:30 (8h30 sáng), 14:00 (14h chiều))
- */
 function formatVietnameseTimeLabel(hour, minute) {
     const timeStr = `${String(hour).padStart(2, '0')}:${minute}`;
     let period = 'sáng';
@@ -9746,17 +13438,13 @@ function formatVietnameseTimeLabel(hour, minute) {
     return `${timeStr} (${hour}h${minText} ${period})`;
 }
 
-/**
- * Tạo danh sách mốc thời gian mỗi 30 phút từ 07:00 đến 21:00
- */
 function buildViTimeOptions(selectEl, defaultTimeStr) {
     if (!selectEl) return;
     selectEl.innerHTML = '';
-    
+
     for (let h = 7; h <= 21; h++) {
         for (let m of ['00', '30']) {
-            if (h === 21 && m === '30') continue; // Giới hạn đến 21:00
-            
+            if (h === 21 && m === '30') continue;
             const valueStr = `${String(h).padStart(2, '0')}:${m}`;
             const opt = document.createElement('option');
             opt.value = valueStr;
@@ -9785,21 +13473,6 @@ function updateDateDisplay(dateVal) {
     label.textContent = `${days[dt.getDay()]} ${d}/${m}/${y}`;
 }
 
-function triggerDatePicker() {
-    const inp = document.getElementById('meetingDateInput');
-    if (!inp) return;
-    inp.style.position = 'fixed';
-    inp.style.opacity = '0';
-    inp.style.width = '1px';
-    inp.style.height = '1px';
-    inp.style.pointerEvents = 'none';
-    inp.showPicker ? inp.showPicker() : inp.click();
-    inp.addEventListener('change', function onDateChange() {
-        updateDateDisplay(inp.value);
-        inp.removeEventListener('change', onDateChange);
-    }, { once: true });
-}
-
 function setDefaultBookingTimes() {
     const now = new Date();
     let startHour = now.getHours();
@@ -9810,7 +13483,7 @@ function setDefaultBookingTimes() {
     if (startHour > 20) startHour = 20;
 
     let endHour = startHour + 1;
-    
+
     const startTimeStr = `${String(startHour).padStart(2, '0')}:${startMin}`;
     const endTimeStr = `${String(endHour).padStart(2, '0')}:${startMin}`;
 
@@ -9869,14 +13542,14 @@ function renderRooms(rooms, isAdmin) {
         if (room.amenities) {
             let amenitiesList = room.amenities;
             if (typeof amenitiesList === 'string') {
-                try { amenitiesList = JSON.parse(amenitiesList); } 
+                try { amenitiesList = JSON.parse(amenitiesList); }
                 catch (e) { amenitiesList = [amenitiesList]; }
             }
             if (Array.isArray(amenitiesList)) {
                 amenitiesHTML = amenitiesList.map(a => `<span class="tag">${getAmenityIcon(a)} ${escapeHtml(a)}</span>`).join(' ');
             }
         }
-        
+
         let adminButtons = '';
         if (isAdmin) {
             adminButtons = `
@@ -9931,90 +13604,13 @@ function updateStats(rooms) {
 
 function getAmenityIcon(name) {
     const lower = (name || '').toLowerCase();
-    if (lower.includes('màn hình') || lower.includes('tv') || lower.includes('display')) return '📺';
-    if (lower.includes('wifi') || lower.includes('mạng') || lower.includes('internet')) return '📶';
-    if (lower.includes('video') || lower.includes('camera') || lower.includes('webcam')) return '🎥';
+    if (lower.includes('màn hình') || lower.includes('tv')) return '📺';
+    if (lower.includes('wifi') || lower.includes('internet')) return '📶';
+    if (lower.includes('video') || lower.includes('camera')) return '🎥';
     if (lower.includes('chiếu') || lower.includes('projector')) return '📽️';
-    if (lower.includes('mic') || lower.includes('loa') || lower.includes('âm thanh') || lower.includes('sound')) return '🎙️';
-    if (lower.includes('đồ uống') || lower.includes('nước') || lower.includes('trà') || lower.includes('cà phê') || lower.includes('coffee')) return '☕';
-    if (lower.includes('bảng') || lower.includes('board') || lower.includes('flipchart')) return '📋';
-    if (lower.includes('điều hòa') || lower.includes('máy lạnh') || lower.includes('ac')) return '❄️';
+    if (lower.includes('mic') || lower.includes('loa')) return '🎙️';
+    if (lower.includes('đồ uống') || lower.includes('nước') || lower.includes('trà') || lower.includes('cà phê')) return '☕';
     return '✨';
-}
-
-function renderRoomAmenities(room) {
-    const container = document.getElementById('roomAvailableAmenities');
-    if (!container) return;
-
-    if (!room) {
-        container.innerHTML = '<span style="color: #94a3b8; font-size: 0.82rem; font-style: italic;">Chưa chọn phòng họp.</span>';
-        return;
-    }
-
-    let list = room.amenities || [];
-    if (typeof list === 'string') {
-        try { list = JSON.parse(list); } 
-        catch (e) { list = list.split(',').map(s => s.trim()).filter(Boolean); }
-    }
-
-    if (!Array.isArray(list) || list.length === 0) {
-        container.innerHTML = `
-            <div style="display:flex; align-items:center; gap:6px; color: #64748b; font-size: 0.82rem; font-style: italic;">
-                <span>ℹ️ Phòng này chưa cấu hình tiện ích cố định.</span>
-            </div>
-        `;
-        return;
-    }
-
-    container.innerHTML = list.map(item => `
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: #ffffff; color: #166534; border: 1px solid #86efac; border-radius: 9999px; padding: 4px 10px; font-size: 0.8rem; font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
-            <span>${getAmenityIcon(item)}</span>
-            <span>${escapeHtml(item)}</span>
-        </span>
-    `).join('');
-}
-
-/* ==========================================================================
-   PARTICIPANT MANAGEMENT
-   ========================================================================== */
-let _allUsers = []; // Cache danh sách người dùng để dùng cho autocomplete
-
-async function fetchAndRenderParticipants() {
-    const container = document.getElementById('participantListContainer');
-    if (!container) return;
-
-    const token = getAuthToken();
-    try {
-        const res = await fetch(`${API_BASE}/users/`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (!res.ok) throw new Error("Không thể lấy danh sách người dùng");
-
-        const users = await res.json();
-        _allUsers = users || []; // Lưu cache
-
-        if (!users || users.length === 0) {
-            container.innerHTML = '<div style="color: #94a3b8; font-size: 0.82rem;">Chưa có người dùng khác trong hệ thống.</div>';
-            return;
-        }
-
-        container.innerHTML = users.map(user => `
-            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.85rem; cursor: pointer; color: #1e293b;">
-                <input type="checkbox" class="participant-checkbox" value="${user.id}">
-                <span><strong>${escapeHtml(user.full_name || 'Người dùng')}</strong> (${escapeHtml(user.email)})</span>
-            </label>
-        `).join('');
-
-    } catch (err) {
-        console.error("Lỗi tải danh sách người dùng:", err);
-        container.innerHTML = '<div style="color: #ef4444; font-size: 0.82rem;">❌ Không thể tải danh sách người dùng!</div>';
-    }
-}
-
-function getSelectedParticipantIds() {
-    const checkboxes = document.querySelectorAll('.participant-checkbox:checked');
-    return Array.from(checkboxes).map(cb => parseInt(cb.value));
 }
 
 /* ==========================================================================
@@ -10034,7 +13630,6 @@ function openScheduleModal(roomId) {
             <div class="timeline-item"><span>08:00 - 09:30</span><span class="time-free">Còn trống</span></div>
             <div class="timeline-item"><span>10:00 - 11:30</span><span class="${isAvail ? 'time-free' : 'time-busy'}">${isAvail ? 'Còn trống' : 'Đã có cuộc họp'}</span></div>
             <div class="timeline-item"><span>13:30 - 15:00</span><span class="time-free">Còn trống</span></div>
-            <div class="timeline-item"><span>15:30 - 17:00</span><span class="time-free">Còn trống</span></div>
         `;
     }
     const modal = document.getElementById('scheduleModal');
@@ -10046,338 +13641,269 @@ function closeScheduleModal() {
     if (modal) modal.style.display = 'none';
 }
 
-function openBookingModal(roomId) {
-    if (typeof openCreateMeeting === 'function') {
-        openCreateMeeting(roomId ? { roomId } : {});
-        return;
-    }
-}
-
-function closeBookingModal() {
-    if (typeof closeCreateMeeting === 'function') closeCreateMeeting();
-}
-
-async function openQuickBooking() {
-    if (typeof openCreateMeeting === 'function') {
-        openCreateMeeting();
-        return;
-    }
-}
-
-function selectBookingRoom(room) {
-    selectedRoomId = room.id;
-    const roomNameEl = document.querySelector('#bookingModal .room-name');
-    const roomMetaEl = document.querySelector('#bookingModal .room-meta');
-    if (roomNameEl) roomNameEl.innerText = room.name;
-    if (roomMetaEl) {
-        roomMetaEl.innerHTML = `${room.capacity || 10} người · <span class="status-available">Đang hoạt động</span>`;
-    }
-
-    renderRoomAmenities(room);
-
-    const roomMenu = document.getElementById('roomMenu');
-    const roomButton = document.getElementById('room-select');
-    if (roomMenu) roomMenu.hidden = true;
-    if (roomButton) {
-        roomButton.classList.remove('is-open');
-        roomButton.setAttribute('aria-expanded', 'false');
-    }
-}
-
-function renderRoomOptions() {
-    const roomMenu = document.getElementById('roomMenu');
-    if (!roomMenu) return;
-
-    roomMenu.replaceChildren();
-    allRooms.filter(room => room.is_active !== false).forEach(room => {
-        const option = document.createElement('button');
-        option.type = 'button';
-        option.className = `room-option${room.id === selectedRoomId ? ' selected' : ''}`;
-        option.setAttribute('role', 'option');
-        option.setAttribute('aria-selected', String(room.id === selectedRoomId));
-        option.textContent = `${room.name} · ${room.capacity || 10} người`;
-        option.addEventListener('click', () => selectBookingRoom(room));
-        roomMenu.appendChild(option);
-    });
-}
-
-function toggleRoomMenu() {
-    const roomMenu = document.getElementById('roomMenu');
-    const roomButton = document.getElementById('room-select');
-    if (!roomMenu || !roomButton) return;
-
-    roomMenu.hidden = !roomMenu.hidden;
-    roomButton.classList.toggle('is-open', !roomMenu.hidden);
-    roomButton.setAttribute('aria-expanded', String(!roomMenu.hidden));
-}
-
-async function findAvailableTime() {
-    if (!selectedRoomId) return;
-
-    const dateInput = document.getElementById('meetingDateInput');
-    const startInput = document.getElementById('startTimeSelect');
-    const endInput = document.getElementById('endTimeSelect');
-    const button = document.getElementById('findAvailabilityBtn');
-    const message = document.getElementById('availabilityMessage');
-    const results = document.getElementById('availabilityResults');
-    const meetingDate = dateInput ? dateInput.value : '';
-
-    if (!meetingDate) return;
-    const requestedStart = new Date(`${meetingDate}T${startInput.value}:00`);
-    const requestedEnd = new Date(`${meetingDate}T${endInput.value}:00`);
-    if (requestedEnd <= requestedStart) requestedEnd.setDate(requestedEnd.getDate() + 1);
-
-    const duration = requestedEnd.getTime() - requestedStart.getTime();
-    const workEnd = new Date(`${meetingDate}T18:00:00`);
-    if (!duration || requestedStart >= workEnd) {
-        message.textContent = 'Không còn khung giờ phù hợp trong giờ làm việc hôm nay.';
-        message.classList.add('is-error');
-        message.hidden = false;
-        return;
-    }
-
-    button.disabled = true;
-    message.classList.remove('is-error');
-    message.textContent = 'Đang tìm khung giờ trống...';
-    message.hidden = false;
-    results.replaceChildren();
-
-    try {
-        const availableSlots = [];
-        for (let candidate = new Date(requestedStart); candidate.getTime() + duration <= workEnd.getTime(); candidate.setMinutes(candidate.getMinutes() + 30)) {
-            const candidateEnd = new Date(candidate.getTime() + duration);
-            const params = new URLSearchParams({
-                start_time: `${formatDateInput(candidate)}T${formatTimeInput(candidate)}:00`,
-                end_time: `${formatDateInput(candidateEnd)}T${formatTimeInput(candidateEnd)}:00`,
-            });
-            const response = await fetch(`${API_BASE}/rooms/available?${params}`);
-            if (!response.ok) throw new Error('Không thể kiểm tra lịch phòng.');
-
-            const availableRooms = await response.json();
-            if (availableRooms.some(room => room.id === selectedRoomId)) {
-                availableSlots.push({
-                    date: formatDateInput(candidate),
-                    start: formatTimeInput(candidate),
-                    end: formatTimeInput(candidateEnd),
-                });
-                if (availableSlots.length === 5) break;
-            }
-        }
-
-        if (availableSlots.length) {
-            message.textContent = `Tìm thấy ${availableSlots.length} khung giờ trống. Chọn giờ bạn muốn:`;
-            availableSlots.forEach(slot => {
-                const option = document.createElement('button');
-                option.type = 'button';
-                option.className = 'time-suggestion';
-                option.textContent = `${slot.start}–${slot.end}`;
-                option.addEventListener('click', () => {
-                    const di = document.getElementById('meetingDateInput');
-                    if (di) { di.value = slot.date; updateDateDisplay(slot.date); }
-                    const ss = document.getElementById('startTimeSelect');
-                    if (ss) { ss.value = slot.start; syncHiddenStartTime(ss); }
-                    const es = document.getElementById('endTimeSelect');
-                    if (es) es.value = slot.end;
-                    results.querySelectorAll('.time-suggestion').forEach(item => item.classList.remove('selected'));
-                    option.classList.add('selected');
-                    message.textContent = `Đã chọn ${slot.start}–${slot.end}.`;
-                });
-                results.appendChild(option);
-            });
-        } else {
-            message.textContent = 'Không tìm thấy khung giờ trống phù hợp trong ngày.';
-            message.classList.add('is-error');
-        }
-    } catch (error) {
-        console.error('Lỗi tìm giờ trống:', error);
-        message.textContent = 'Không thể kiểm tra lịch phòng. Vui lòng thử lại.';
-        message.classList.add('is-error');
-    } finally {
-        button.disabled = false;
-    }
-}
-
-async function handleBookingSubmit(e) {
-    e.preventDefault();
-
-    const form = e.target;
-    const title = form.querySelector('[name="title"]')?.value || 'Cuộc họp';
-    const meetingDate = document.getElementById('meetingDateInput')?.value || new Date().toISOString().split('T')[0];
-    const startTime = document.getElementById('startTimeSelect')?.value || '09:00';
-    const endTime = document.getElementById('endTimeSelect')?.value || '10:00';
-    const description = form.querySelector('[name="description"]')?.value || '';
-
-    const recurrenceType = document.getElementById('recurrence-select')?.value || 'none';
-    const isRecurring = recurrenceType !== 'none';
-
-    const start = new Date(`${meetingDate}T${startTime}:00`);
-    const end = new Date(`${meetingDate}T${endTime}:00`);
-    if (end <= start) end.setDate(end.getDate() + 1);
-
-    let recurrenceEndDate = null;
-    if (recurrenceType === 'monthly') {
-        recurrenceEndDate = new Date(start);
-        recurrenceEndDate.setMonth(recurrenceEndDate.getMonth() + 1);
-    } else if (recurrenceType === 'until_changed') {
-        recurrenceEndDate = new Date(start);
-        recurrenceEndDate.setFullYear(recurrenceEndDate.getFullYear() + 1);
-    }
-
-    const payload = {
-        title: title,
-        description: description || "Đặt từ giao diện web",
-        room_id: parseInt(selectedRoomId),
-        start_time: `${formatDateInput(start)}T${formatTimeInput(start)}:00`,
-        end_time: `${formatDateInput(end)}T${formatTimeInput(end)}:00`,
-        is_recurring: isRecurring,
-        recurrence_type: recurrenceType,
-        recurrence_end_date: recurrenceEndDate ? `${formatDateInput(recurrenceEndDate)}T${formatTimeInput(recurrenceEndDate)}:00` : null,
-        equipments: getSelectedEquipmentsData(),
-        participant_ids: getSelectedParticipantIds()
-    };
-
-    const token = getAuthToken();
-
-    try {
-        const res = await fetch(`${API_BASE}/meetings/book`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (res.ok) {
-            alert("Đã đặt lịch họp thành công!");
-            closeBookingModal();
-            const role = localStorage.getItem('role') || 'user';
-            fetchRooms(role === 'admin');
-            fetchMyBookings();
-        } else {
-            const err = await res.json();
-            alert(`Lỗi đặt phòng: ${err.detail || 'Không thể đặt phòng vào khung giờ này'}`);
-        }
-    } catch (err) {
-        console.error("Lỗi đặt phòng:", err);
-        alert("Lỗi kết nối máy chủ!");
-    }
-}
-
 /* ==========================================================================
    MY BOOKINGS MANAGEMENT
    ========================================================================== */
-async function fetchMyBookings() {
-    const token = getAuthToken();
-    if (!token) return;
-
+async function cancelBooking(meetingId) {
+    if (!confirm('Bạn có chắc chắn muốn hủy lịch họp này?')) return;
     try {
-        const res = await fetch(`${API_BASE}/meetings/`, {
-            headers: { 'Authorization': `Bearer ${token}` }
+        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + getAuthToken() }
         });
-
-        if (res.ok) {
-            myBookings = await res.json();
-            renderMyBookings();
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Không thể hủy lịch họp!');
         }
+        alert('Đã hủy lịch họp!');
+        await fetchMyBookings();
+        fetchRooms(localStorage.getItem('role') === 'admin');
     } catch (err) {
-        console.error("Lỗi lấy danh sách lịch họp:", err);
+        alert(`Lỗi: ${err.message}`);
+    }
+}
+async function fetchMyBookings() {
+    if (!getAuthToken()) return;
+    try {
+        const res = await fetch(`${API_BASE}/meetings/mine`, {
+            headers: { 'Authorization': 'Bearer ' + getAuthToken() }
+        });
+        if (!res.ok) throw new Error('Không thể tải danh sách lịch họp.');
+        myBookings = await res.json();
+        renderMyBookings();
+    } catch (err) {
+        console.error('Lỗi lấy danh sách lịch họp:', err);
+        ['myBookingsTableBody', 'invitedBookingsList', 'bookingCalendarGrid'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.innerHTML = '<div class="booking-list-empty">Không thể tải lịch họp. Vui lòng thử lại.</div>';
+        });
     }
 }
 
 function renderMyBookings() {
-    const tbody = document.getElementById('myBookingsTableBody');
-    if (!tbody) return;
+    renderOrganizerBookings(myBookings.filter(meeting => meeting.is_organizer));
+    renderInvitedBookings(myBookings.filter(meeting => !meeting.is_organizer));
+    renderBookingCalendar();
+}
 
-    if (!myBookings || myBookings.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#94a3b8;">Bạn chưa đăng ký lịch họp nào.</td></tr>';
+function bookingRoomName(meeting) {
+    if (String(meeting.meeting_type || '').toLowerCase() === 'online') return 'Cuộc họp online';
+    return meeting.room_name || allRooms.find(room => room.id === meeting.room_id)?.name
+        || (meeting.room_id ? `Phòng ${meeting.room_id}` : 'Phòng chưa xác định');
+}
+
+function bookingDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function bookingTime(date) {
+    return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function bookingDateKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function renderOrganizerBookings(meetings) {
+    const container = document.getElementById('myBookingsTableBody');
+    if (!container) return;
+    if (!meetings.length) {
+        container.innerHTML = '<div class="booking-list-empty">Bạn chưa chủ trì cuộc họp nào.</div>';
         return;
     }
-
-    const statusLabels = {
-        scheduled: { label: 'Đã lên lịch', className: 'booking-status-scheduled' },
-        confirmed: { label: 'Đã xác nhận', className: 'booking-status-scheduled' },
-        in_progress: { label: 'Đang diễn ra', className: 'booking-status-progress' },
-        completed: { label: 'Đã hoàn thành', className: 'booking-status-completed' },
-        canceled: { label: 'Đã hủy', className: 'booking-status-canceled' },
-        cancelled: { label: 'Đã hủy', className: 'booking-status-canceled' },
-    };
-    const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
-
-    tbody.innerHTML = myBookings.map(b => {
-        const roomName = allRooms.find(room => room.id === b.room_id)?.name
-            || b.room?.name
-            || b.room_name
-            || (b.room_id ? `Phòng ${b.room_id}` : 'Phòng chưa xác định');
-        const start = new Date(b.start_time);
-        const end = new Date(b.end_time);
-        const hasValidDate = !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime());
-        const dateLabel = hasValidDate
-            ? start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-            : 'Chưa có ngày';
-        const timeRange = hasValidDate
-            ? `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`
-            : 'Chưa có thời gian';
-        const statusKey = String(b.status || '').toLowerCase();
-        const status = statusLabels[statusKey] || { label: 'Không xác định', className: 'booking-status-unknown' };
-
-        let equipmentsHTML = '';
-        if (b.equipments && b.equipments.length > 0) {
-            const eqList = b.equipments.map(eq => {
-                const name = escapeHtml(eq.equipment_name || 'Thiết bị');
-                return `${name} (x${eq.quantity})`;
-            }).join(', ');
-
-            equipmentsHTML = `
-                <div class="booking-equipment-summary">
-                    Thiết bị: ${eqList}
-                </div>
-            `;
+    container.innerHTML = meetings.map(meeting => {
+        const start = bookingDate(meeting.start_time);
+        const end = bookingDate(meeting.end_time);
+        const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
+        const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
+        const participants = (meeting.participants || []).filter(person => person.user_id !== meeting.organizer_id);
+        const attendeeMarkup = participants.length ? participants.map(person => {
+            const response = ['accepted', 'declined'].includes(person.response_status) ? person.response_status : 'pending';
+            const label = response === 'accepted' ? 'Đã đồng ý' : response === 'declined' ? 'Đã từ chối' : 'Chưa phản hồi';
+            return `<div class="booking-guest ${response === 'accepted' ? '' : 'pending'}"><span>${escapeHtml(person.name || person.email || 'Người tham dự')}</span><span class="booking-guest-status ${response}">${response === 'accepted' ? '✓ ' : ''}${label}</span></div>`;
+        }).join('') : '<div class="booking-guest pending">Chưa có người được mời.</div>';
+        const cancel = `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`;
+        let joinLink = '';
+        try {
+            const url = new URL(String(meeting.meeting_link || meeting.online_link || ''));
+            if (url.protocol === 'http:' || url.protocol === 'https:') {
+                joinLink = `<a class="booking-rsvp-button" href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Tham gia</a>`;
+            }
+        } catch (error) {
+            joinLink = '';
         }
-
-        return `
-            <tr>
-                <td class="booking-room-cell">
-                    <strong class="booking-room-name">${escapeHtml(roomName)}</strong>
-                    <span class="booking-meeting-title">${escapeHtml(b.title || 'Cuộc họp')}</span>
-                    ${equipmentsHTML}
-                </td>
-                <td>
-                    <div class="booking-datetime">
-                        <span class="booking-date">${dateLabel}</span>
-                        <strong class="booking-time">${timeRange}</strong>
-                    </div>
-                </td>
-                <td><span class="booking-status ${status.className}">${status.label}</span></td>
-                <td class="booking-action-cell"><button class="booking-cancel-button" type="button" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
-            </tr>
-        `;
+        return `<article class="booking-list-card"><div class="booking-list-row">
+            <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span></div>
+            <div class="booking-list-time">${escapeHtml(time)}</div>
+            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${cancel}</div>
+        </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
 }
 
-async function cancelBooking(meetingId) {
-    if (!confirm("Bạn có chắc chắn muốn hủy lịch họp này?")) return;
-
-    const token = getAuthToken();
-    try {
-        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (res.ok) {
-            alert("Đã hủy lịch họp!");
-            fetchMyBookings();
-            fetchRooms(localStorage.getItem('role') === 'admin');
-        } else {
-            const err = await res.json();
-            alert(`Lỗi hủy phòng: ${err.detail || 'Không thể hủy!'}`);
-        }
-    } catch (err) {
-        alert("Lỗi kết nối máy chủ!");
+function renderInvitedBookings(meetings) {
+    const container = document.getElementById('invitedBookingsList');
+    if (!container) return;
+    if (!meetings.length) {
+        container.innerHTML = '<div class="booking-list-empty">Bạn chưa được mời tham gia cuộc họp nào.</div>';
+        return;
     }
+    container.innerHTML = meetings.map(meeting => {
+        const start = bookingDate(meeting.start_time);
+        const end = bookingDate(meeting.end_time);
+        const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
+        const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
+        const response = meeting.my_response_status || 'pending';
+        const status = response === 'accepted' ? 'Đã xác nhận' : response === 'declined' ? 'Đã từ chối' : 'Chưa phản hồi';
+        const adminCancel = String(localStorage.getItem('role') || '').trim().toLowerCase() === 'admin'
+            ? `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`
+            : '';
+        return `<article class="booking-list-card"><div class="booking-list-row">
+            <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span><span>Chủ trì: ${escapeHtml(meeting.organizer_name || 'Người tổ chức')}</span></div>
+            <div class="booking-list-time">${escapeHtml(time)}<br>${escapeHtml(status)}</div>
+            <div class="booking-list-actions"><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'accepted')" ${response === 'accepted' ? 'disabled' : ''}>Xác nhận</button><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'declined')" ${response === 'declined' ? 'disabled' : ''}>Từ chối</button>${adminCancel}</div>
+        </div></article>`;
+    }).join('');
 }
 
+function toggleBookingGuests(meetingId, button) {
+    const list = document.getElementById(`bookingGuests${meetingId}`);
+    if (!list) return;
+    list.hidden = !list.hidden;
+    button.setAttribute('aria-expanded', String(!list.hidden));
+}
+
+function switchBookingTab(tab) {
+    const tabs = { calendar: ['bookingTabCalendar', 'bookingPanelCalendar'], mine: ['bookingTabMine', 'bookingPanelMine'], invited: ['bookingTabInvited', 'bookingPanelInvited'] };
+    Object.entries(tabs).forEach(([name, ids]) => {
+        const active = name === tab;
+        const button = document.getElementById(ids[0]);
+        const panel = document.getElementById(ids[1]);
+        if (button) {
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', String(active));
+        }
+        if (panel) panel.hidden = !active;
+    });
+    if (tab === 'calendar') renderBookingCalendar();
+}
+
+function shiftBookingCalendar(amount) {
+    bookingCalendarDate = new Date(bookingCalendarDate);
+    if (bookingCalendarView === 'month') bookingCalendarDate.setMonth(bookingCalendarDate.getMonth() + amount, 1);
+    else bookingCalendarDate.setDate(bookingCalendarDate.getDate() + amount * (bookingCalendarView === 'week' ? 7 : 1));
+    bookingSelectedDate = new Date(bookingCalendarDate);
+    renderBookingCalendar();
+}
+
+function goToBookingCalendarToday() {
+    bookingCalendarDate = new Date();
+    bookingSelectedDate = new Date();
+    renderBookingCalendar();
+}
+
+function setBookingCalendarView(view) {
+    if (!['month', 'week', 'day'].includes(view)) return;
+    bookingCalendarView = view;
+    document.querySelectorAll('[data-calendar-view]').forEach(button => button.classList.toggle('active', button.dataset.calendarView === view));
+    renderBookingCalendar();
+}
+
+function renderBookingCalendar() {
+    const grid = document.getElementById('bookingCalendarGrid');
+    if (!grid) return;
+    const title = document.getElementById('bookingCalendarTitle');
+    const selectedKey = bookingDateKey(bookingSelectedDate);
+    let dates;
+    if (bookingCalendarView === 'month') {
+        const first = new Date(bookingCalendarDate.getFullYear(), bookingCalendarDate.getMonth(), 1);
+        const start = new Date(first);
+        start.setDate(1 - first.getDay());
+        dates = Array.from({ length: 42 }, (_, index) => {
+            const date = new Date(start);
+            date.setDate(start.getDate() + index);
+            return date;
+        });
+        if (title) title.textContent = bookingCalendarDate.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+    } else if (bookingCalendarView === 'week') {
+        const start = new Date(bookingCalendarDate);
+        start.setDate(start.getDate() - start.getDay());
+        dates = Array.from({ length: 7 }, (_, index) => {
+            const date = new Date(start);
+            date.setDate(start.getDate() + index);
+            return date;
+        });
+        if (title) title.textContent = `${dates[0].toLocaleDateString('vi-VN')} – ${dates[6].toLocaleDateString('vi-VN')}`;
+    } else {
+        dates = [new Date(bookingCalendarDate)];
+        if (title) title.textContent = bookingCalendarDate.toLocaleDateString('vi-VN', { day: 'numeric', month: 'long', year: 'numeric' });
+    }
+    const weekdays = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+    const columns = bookingCalendarView === 'day' ? 1 : 7;
+    grid.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+    grid.innerHTML = (bookingCalendarView === 'day' ? '' : weekdays.map(day => `<div class="booking-calendar-weekday">${day}</div>`).join(''))
+        + dates.map(date => {
+            const key = bookingDateKey(date);
+            const events = myBookings.filter(meeting => {
+                const start = bookingDate(meeting.start_time);
+                return start && bookingDateKey(start) === key;
+            }).sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+            const classes = [
+                bookingCalendarView === 'month' && date.getMonth() !== bookingCalendarDate.getMonth() ? 'outside' : '',
+                key === bookingDateKey(new Date()) ? 'today' : '',
+                key === selectedKey ? 'selected' : '',
+            ].filter(Boolean).join(' ');
+            const preview = events.slice(0, bookingCalendarView === 'day' ? events.length : 3).map(meeting => {
+                const start = bookingDate(meeting.start_time);
+                return `<span class="booking-calendar-event">${start ? `${bookingTime(start)} ` : ''}${escapeHtml(meeting.title || 'Cuộc họp')}</span>`;
+            }).join('');
+            const more = events.length > 3 && bookingCalendarView !== 'day' ? `<div class="booking-calendar-more">+${events.length - 3} cuộc họp</div>` : '';
+            return `<div class="booking-calendar-day ${classes}" role="button" tabindex="0" aria-label="${escapeHtml(date.toLocaleDateString('vi-VN'))}, ${events.length} cuộc họp" onclick="selectBookingCalendarDate('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectBookingCalendarDate('${key}')}"><span class="booking-calendar-day-number">${date.getDate()}</span>${preview}${more}</div>`;
+        }).join('');
+    renderBookingAgenda();
+}
+
+function selectBookingCalendarDate(key) {
+    const [year, month, day] = key.split('-').map(Number);
+    bookingSelectedDate = new Date(year, month - 1, day);
+    bookingCalendarDate = new Date(bookingSelectedDate);
+    renderBookingCalendar();
+}
+
+function renderBookingAgenda() {
+    const container = document.getElementById('bookingDayAgenda');
+    const title = document.getElementById('bookingAgendaTitle');
+    if (!container) return;
+    if (title) title.textContent = `Lịch ngày ${bookingSelectedDate.toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`;
+    const key = bookingDateKey(bookingSelectedDate);
+    const events = myBookings.filter(meeting => {
+        const start = bookingDate(meeting.start_time);
+        return start && bookingDateKey(start) === key;
+    }).sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    container.innerHTML = events.length ? events.map(meeting => {
+        const start = bookingDate(meeting.start_time);
+        const end = bookingDate(meeting.end_time);
+        const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
+        return `<div class="booking-agenda-item"><div class="booking-agenda-time">${escapeHtml(time)}</div><div class="booking-agenda-details"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))}${meeting.organizer_name ? ` · ${escapeHtml(meeting.organizer_name)}` : ''}</span></div></div>`;
+    }).join('') : '<div class="booking-list-empty">Không có cuộc họp trong ngày này.</div>';
+}
+
+async function respondToMeeting(meetingId, responseStatus) {
+    try {
+const res = await fetch(`${API_BASE}/meetings/${meetingId}/response`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+    body: JSON.stringify({ response_status: responseStatus }),
+});
+if (!res.ok) {
+    const result = await res.json();
+    throw new Error(result.detail || 'Không thể cập nhật phản hồi.');
+}
+await fetchMyBookings();
+    } catch (error) {
+alert(`Lỗi: ${error.message}`);
+    }
+}
 /* ==========================================================================
    SEARCH & FILTERING
    ========================================================================== */
@@ -10391,8 +13917,8 @@ function applyFilters() {
     const query = searchInput ? searchInput.value.toLowerCase() : '';
     const cap = capSelect ? capSelect.value : 'all';
 
-    let filtered = allRooms.filter(r => 
-        r.name.toLowerCase().includes(query) || 
+    let filtered = allRooms.filter(r =>
+        r.name.toLowerCase().includes(query) ||
         (r.location && r.location.toLowerCase().includes(query))
     );
 
@@ -10434,51 +13960,38 @@ function setFilter(amenity, btn) {
 function openRoomModal() {
     const modalTitle = document.getElementById('modalTitle');
     if (modalTitle) modalTitle.innerText = 'Thêm Phòng Họp Mới';
-
-    const editId = document.getElementById('editRoomId');
-    if (editId) editId.value = '';
-
-    const form = document.getElementById('roomForm');
-    if (form) form.reset();
-
-    const modal = document.getElementById('roomModal');
-    if (modal) modal.style.display = 'flex';
+    document.getElementById('editRoomId').value = '';
+    document.getElementById('roomForm').reset();
+    document.getElementById('roomModal').style.display = 'flex';
 }
 
 function openEditModal(roomId) {
     const room = allRooms.find(r => r.id === roomId);
     if (!room) return;
 
-    const modalTitle = document.getElementById('modalTitle');
-    if (modalTitle) modalTitle.innerText = 'Sửa Thông Tin Phòng Họp';
-
+    document.getElementById('modalTitle').innerText = 'Sửa Thông Tin Phòng Họp';
     document.getElementById('editRoomId').value = room.id;
     document.getElementById('roomName').value = room.name;
     document.getElementById('roomLocation').value = room.location || '';
     document.getElementById('roomCapacity').value = room.capacity || '';
-    
+
     let amenitiesStr = '';
     if (room.amenities) {
         if (typeof room.amenities === 'string') {
             try {
                 let parsed = JSON.parse(room.amenities);
                 amenitiesStr = Array.isArray(parsed) ? parsed.join(', ') : room.amenities;
-            } catch (e) {
-                amenitiesStr = room.amenities;
-            }
+            } catch (e) { amenitiesStr = room.amenities; }
         } else if (Array.isArray(room.amenities)) {
             amenitiesStr = room.amenities.join(', ');
         }
     }
-    
     document.getElementById('roomAmenities').value = amenitiesStr;
-    const modal = document.getElementById('roomModal');
-    if (modal) modal.style.display = 'flex';
+    document.getElementById('roomModal').style.display = 'flex';
 }
 
 function closeRoomModal() {
-    const modal = document.getElementById('roomModal');
-    if (modal) modal.style.display = 'none';
+    document.getElementById('roomModal').style.display = 'none';
 }
 
 async function handleFormSubmit(e) {
@@ -10491,7 +14004,7 @@ async function handleFormSubmit(e) {
         location: document.getElementById('roomLocation').value,
         capacity: parseInt(document.getElementById('roomCapacity').value) || 0,
         amenities: document.getElementById('roomAmenities').value.split(',').map(s => s.trim()).filter(Boolean),
-        is_available: true
+        is_active: true
     };
 
     const method = editId ? 'PUT' : 'POST';
@@ -10500,32 +14013,24 @@ async function handleFormSubmit(e) {
     try {
         const res = await fetch(url, {
             method: method,
-            headers: {
-                'Content-Type': 'application/json',
-                "Authorization": `Bearer ${token}`
-            },
+            headers: { 'Content-Type': 'application/json', "Authorization": `Bearer ${token}` },
             body: JSON.stringify(payload)
         });
 
         if (res.ok) {
             closeRoomModal();
-            const role = localStorage.getItem('role') || 'user';
-            fetchRooms(role === 'admin');
+            fetchRooms(localStorage.getItem('role') === 'admin');
             alert(editId ? "Cập nhật phòng thành công!" : "Thêm phòng thành công!");
         } else {
             const err = await res.json();
             alert(err.detail || "Thao tác thất bại!");
         }
-    } catch (err) {
-        alert("Lỗi kết nối máy chủ!");
-    }
+    } catch (err) { alert("Lỗi kết nối máy chủ!"); }
 }
 
 async function deleteRoom(roomId) {
     if (!confirm("Bạn có chắc chắn muốn xóa phòng này?")) return;
-
     const token = getAuthToken();
-
     try {
         const res = await fetch(`${API_BASE}/rooms/${roomId}/`, {
             method: 'DELETE',
@@ -10534,32 +14039,28 @@ async function deleteRoom(roomId) {
 
         if (res.ok) {
             allRooms = allRooms.filter(r => r.id !== roomId);
-            const role = localStorage.getItem('role') || 'user';
-            renderRooms(allRooms, role === 'admin');
+            renderRooms(allRooms, localStorage.getItem('role') === 'admin');
             updateStats(allRooms);
             alert("Xóa phòng thành công!");
         } else {
             const err = await res.json();
             alert(err.detail || "Thao tác thất bại!");
         }
-    } catch (err) {
-        alert("Lỗi máy chủ!");
-    }
+    } catch (err) { alert("Lỗi máy chủ!"); }
 }
 
 function logout() {
     localStorage.clear();
-    window.location.href = 'login.html';
+    window.location.href = 'index.html';
 }
 
 /* ==========================================================================
-   EQUIPMENT MANAGEMENT & SELECTION
+   EQUIPMENT MANAGEMENT
    ========================================================================== */
 function setDefaultEquipmentAvailabilityTimes() {
     const startInput = document.getElementById('equipmentStartTime');
     const endInput = document.getElementById('equipmentEndTime');
     if (!startInput || !endInput) return;
-
     const now = new Date();
     const end = new Date(now.getTime() + 60 * 60 * 1000);
     startInput.value = formatDateTimeLocal(now);
@@ -10618,96 +14119,10 @@ async function fetchEquipmentAvailability() {
             `;
         }).join('');
     } catch (err) {
-        console.error('Lỗi tải trạng thái thiết bị:', err);
         tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message error">Không thể tải trạng thái thiết bị.</td></tr>';
     }
 }
 
-async function fetchAndRenderEquipments() {
-    const container = document.getElementById('equipmentListContainer');
-    if (!container) return;
-
-    const token = getAuthToken();
-    try {
-        const res = await fetch(`${API_BASE}/equipments/`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (!res.ok) throw new Error("Không thể lấy danh sách thiết bị");
-
-        const equipments = await res.json();
-        const activeEquipments = equipments.filter(eq => eq.is_active !== false);
-
-        if (!activeEquipments || activeEquipments.length === 0) {
-            container.innerHTML = '<div class="equipment-empty">📭 Hiện không có thiết bị bổ sung trong kho để mượn thêm.</div>';
-            return;
-        }
-
-        container.innerHTML = activeEquipments.map(item => `
-            <div class="eq-card" id="eq-card-${item.id}">
-                <label class="eq-label">
-                    <input type="checkbox"
-                           class="eq-checkbox"
-                           value="${item.id}"
-                           onchange="toggleEquipmentQtyInput(this, ${item.id})">
-                    <div class="eq-info">
-                        <span class="eq-name">${escapeHtml(item.name)}</span>
-                        <span class="eq-stock">Kho: ${item.total_qty || '?'} cái</span>
-                    </div>
-                </label>
-                <div class="eq-qty-group">
-                    <span class="eq-qty-label">SL</span>
-                    <input type="number"
-                           id="eq-qty-${item.id}"
-                           value="1"
-                           min="1"
-                           max="${item.total_qty || 99}"
-                           disabled
-                           class="eq-qty-input">
-                </div>
-            </div>
-        `).join('');
-
-    } catch (err) {
-        console.error("Lỗi tải danh sách thiết bị:", err);
-        container.innerHTML = '<div class="equipment-empty" style="color:#ef4444;">❌ Lỗi tải danh sách thiết bị!</div>';
-    }
-}
-
-function toggleEquipmentQtyInput(checkbox, eqId) {
-    const qtyInput = document.getElementById(`eq-qty-${eqId}`);
-    if (!qtyInput) return;
-
-    if (checkbox.checked) {
-        qtyInput.disabled = false;
-        qtyInput.focus();
-    } else {
-        qtyInput.disabled = true;
-        qtyInput.value = 1;
-    }
-}
-
-function getSelectedEquipmentsData() {
-    const selected = [];
-    const checkboxes = document.querySelectorAll('.eq-checkbox:checked');
-
-    checkboxes.forEach(cb => {
-        const eqId = parseInt(cb.value);
-        const qtyInput = document.getElementById(`eq-qty-${eqId}`);
-        const qty = qtyInput ? (parseInt(qtyInput.value) || 1) : 1;
-
-        selected.push({
-            equipment_id: eqId,
-            quantity: qty
-        });
-    });
-
-    return selected;
-}
-
-/* ==========================================================================
-   ADMIN EQUIPMENT MANAGEMENT (CRUD & TOGGLE)
-   ========================================================================== */
 let adminEquipmentsCache = [];
 
 async function fetchAdminEquipments() {
@@ -10718,17 +14133,15 @@ async function fetchAdminEquipments() {
     tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>';
     try {
         const res = await fetch(`${API_BASE}/equipments/?include_inactive=true`, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
+            headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (!res.ok) throw new Error('Không thể tải danh sách thiết bị cho Admin');
+        if (!res.ok) throw new Error();
 
         const equipments = await res.json();
         adminEquipmentsCache = equipments;
 
         if (!equipments.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Chưa có thiết bị nào trong hệ thống.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Chưa có thiết bị nào.</td></tr>';
             return;
         }
 
@@ -10741,164 +14154,204 @@ async function fetchAdminEquipments() {
                     <td>${escapeHtml(item.category || '—')}</td>
                     <td><strong>${item.total_qty}</strong></td>
                     <td>
-                        <label class="switch" title="${isChecked ? 'Đang hoạt động' : 'Tắt / Bảo trì'}">
+                        <label class="switch">
                             <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleEquipmentActive(${item.id}, this.checked)">
                             <span class="slider"></span>
                         </label>
                     </td>
                     <td>
                         <div style="display: flex; gap: 8px;">
-                            <button type="button" class="btn-action edit" onclick="openEditEquipmentModal(${item.id})" style="padding: 4px 10px; font-size: 0.78rem; background: #e0f2fe; color: #0369a1; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">✏️ Sửa</button>
-                            <button type="button" class="btn-action delete" onclick="deleteEquipment(${item.id})" style="padding: 4px 10px; font-size: 0.78rem; background: #fee2e2; color: #b91c1c; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">🗑️ Xóa</button>
+                            <button type="button" onclick="openEditEquipmentModal(${item.id})" style="padding: 4px 10px; font-size: 0.78rem; background: #e0f2fe; color: #0369a1; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Sửa</button>
+                            <button type="button" onclick="deleteEquipment(${item.id})" style="padding: 4px 10px; font-size: 0.78rem; background: #fee2e2; color: #b91c1c; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Xóa</button>
                         </div>
                     </td>
                 </tr>
             `;
         }).join('');
     } catch (err) {
-        console.error('Lỗi tải danh sách Admin equipment:', err);
         tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message error">Không thể tải dữ liệu Admin.</td></tr>';
     }
 }
 
-// Khi Admin toggle trạng thái thiết bị thành Inactive, ở phía User tự động API /availability (do team khác phát triển) sẽ đánh dấu là Đang bảo trì
 async function toggleEquipmentActive(equipmentId, isActive) {
     const token = getAuthToken();
     try {
-        const res = await fetch(`${API_BASE}/equipments/${equipmentId}`, {
+        await fetch(`${API_BASE}/equipments/${equipmentId}`, {
             method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ is_active: isActive })
         });
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || 'Không thể cập nhật trạng thái thiết bị');
-        }
-        await fetchAdminEquipments();
-        fetchEquipmentAvailability();
-    } catch (err) {
-        console.error('Lỗi toggle trạng thái thiết bị:', err);
-        alert(`Lỗi: ${err.message}`);
         fetchAdminEquipments();
-    }
+        fetchEquipmentAvailability();
+    } catch (err) { alert(`Lỗi: ${err.message}`); }
 }
 
 function openEquipmentModal() {
-    const editIdInput = document.getElementById('editEquipmentId');
-    const nameInput = document.getElementById('equipmentName');
-    const codeInput = document.getElementById('equipmentCode');
-    const categoryInput = document.getElementById('equipmentCategory');
-    const totalQtyInput = document.getElementById('equipmentTotalQty');
-    const titleEl = document.getElementById('equipmentModalTitle');
-
-    if (editIdInput) editIdInput.value = '';
-    if (nameInput) nameInput.value = '';
-    if (codeInput) codeInput.value = '';
-    if (categoryInput) categoryInput.value = '';
-    if (totalQtyInput) totalQtyInput.value = 1;
-    if (titleEl) titleEl.innerText = 'Thêm Thiết Bị Mới';
-
-    const modal = document.getElementById('equipmentModal');
-    if (modal) modal.style.display = 'flex';
+    document.getElementById('editEquipmentId').value = '';
+    document.getElementById('equipmentForm').reset();
+    document.getElementById('equipmentModalTitle').innerText = 'Thêm Thiết Bị Mới';
+    document.getElementById('equipmentModal').style.display = 'flex';
 }
 
 function openEditEquipmentModal(id) {
     const equip = adminEquipmentsCache.find(item => item.id === id);
     if (!equip) return;
-
-    const editIdInput = document.getElementById('editEquipmentId');
-    const nameInput = document.getElementById('equipmentName');
-    const codeInput = document.getElementById('equipmentCode');
-    const categoryInput = document.getElementById('equipmentCategory');
-    const totalQtyInput = document.getElementById('equipmentTotalQty');
-    const titleEl = document.getElementById('equipmentModalTitle');
-
-    if (editIdInput) editIdInput.value = equip.id;
-    if (nameInput) nameInput.value = equip.name || '';
-    if (codeInput) codeInput.value = equip.code || '';
-    if (categoryInput) categoryInput.value = equip.category || '';
-    if (totalQtyInput) totalQtyInput.value = equip.total_qty || 1;
-    if (titleEl) titleEl.innerText = 'Sửa Thông Tin Thiết Bị';
-
-    const modal = document.getElementById('equipmentModal');
-    if (modal) modal.style.display = 'flex';
+    document.getElementById('editEquipmentId').value = equip.id;
+    document.getElementById('equipmentName').value = equip.name || '';
+    document.getElementById('equipmentCode').value = equip.code || '';
+    document.getElementById('equipmentCategory').value = equip.category || '';
+    document.getElementById('equipmentTotalQty').value = equip.total_qty || 1;
+    document.getElementById('equipmentModalTitle').innerText = 'Sửa Thông Tin Thiết Bị';
+    document.getElementById('equipmentModal').style.display = 'flex';
 }
 
 function closeEquipmentModal() {
-    const modal = document.getElementById('equipmentModal');
-    if (modal) modal.style.display = 'none';
+    document.getElementById('equipmentModal').style.display = 'none';
 }
 
 async function handleEquipmentFormSubmit(event) {
     event.preventDefault();
     const token = getAuthToken();
     const editId = document.getElementById('editEquipmentId')?.value;
-    const name = document.getElementById('equipmentName')?.value.trim();
-    const code = document.getElementById('equipmentCode')?.value.trim() || null;
-    const category = document.getElementById('equipmentCategory')?.value.trim() || null;
-    const totalQty = parseInt(document.getElementById('equipmentTotalQty')?.value || '1', 10);
-
     const payload = {
-        name,
-        code,
-        category,
-        total_qty: totalQty
+        name: document.getElementById('equipmentName')?.value.trim(),
+        code: document.getElementById('equipmentCode')?.value.trim() || null,
+        category: document.getElementById('equipmentCategory')?.value.trim() || null,
+        total_qty: parseInt(document.getElementById('equipmentTotalQty')?.value || '1', 10)
     };
 
     const isEdit = Boolean(editId);
     const url = isEdit ? `${API_BASE}/equipments/${editId}` : `${API_BASE}/equipments/`;
-    const method = isEdit ? 'PUT' : 'POST';
 
     try {
         const res = await fetch(url, {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
+            method: isEdit ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify(payload)
         });
-
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || 'Thao tác thất bại');
-        }
-
+        if (!res.ok) throw new Error('Thao tác thất bại');
         closeEquipmentModal();
-        await fetchAdminEquipments();
+        fetchAdminEquipments();
         fetchEquipmentAvailability();
         alert(isEdit ? 'Cập nhật thiết bị thành công!' : 'Thêm thiết bị mới thành công!');
-    } catch (err) {
-        console.error('Lỗi lưu thông tin thiết bị:', err);
-        alert(`Lỗi: ${err.message}`);
-    }
+    } catch (err) { alert(`Lỗi: ${err.message}`); }
 }
 
 async function deleteEquipment(id) {
-    if (!confirm('Bạn có chắc chắn muốn chuyển thiết bị này sang trạng thái ngừng hoạt động / xóa?')) return;
+    if (!confirm('Bạn có chắc chắn muốn xóa thiết bị này?')) return;
     const token = getAuthToken();
     try {
-        const res = await fetch(`${API_BASE}/equipments/${id}`, {
+        await fetch(`${API_BASE}/equipments/${id}`, {
             method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        fetchAdminEquipments();
+        fetchEquipmentAvailability();
+    } catch (err) { alert(`Lỗi: ${err.message}`); }
+}
+
+/* ==========================================================================
+   ROOM USAGE REPORT LOGIC
+   ========================================================================== */
+async function loadRoomsForReportFilter() {
+    try {
+        const response = await fetch(`${API_BASE}/rooms/`);
+        if (response.ok) {
+            const rooms = await response.json();
+            const select = document.getElementById("reportRoomIdSelect");
+            if (select) {
+                select.innerHTML = '<option value="">Tất cả các phòng</option>';
+                rooms.forEach(room => {
+                    const option = document.createElement("option");
+                    option.value = room.id;
+                    option.textContent = room.name;
+                    select.appendChild(option);
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Lỗi tải danh sách phòng cho bộ lọc báo cáo:", error);
+    }
+}
+
+async function fetchRoomUsageReport() {
+    const startDateVal = document.getElementById("reportStartDate").value;
+    const endDateVal = document.getElementById("reportEndDate").value;
+    const roomIdVal = document.getElementById("reportRoomIdSelect").value;
+    const token = getAuthToken();
+
+    let url = `${API_BASE}/v1/reports/room-usage?`;
+    const params = new URLSearchParams();
+
+    if (startDateVal) params.append("start_date", new Date(startDateVal).toISOString());
+    if (endDateVal) params.append("end_date", new Date(endDateVal).toISOString());
+    if (roomIdVal) params.append("room_id", roomIdVal);
+
+    try {
+        const response = await fetch(url + params.toString(), {
+            method: "GET",
             headers: {
-                'Authorization': `Bearer ${token}`
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
             }
         });
 
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || 'Không thể xóa thiết bị');
+        if (response.status === 401) {
+            alert("Phiên đăng nhập hết hạn hoặc bạn không có quyền Quản trị viên (Admin)!");
+            return;
         }
 
-        await fetchAdminEquipments();
-        fetchEquipmentAvailability();
-    } catch (err) {
-        console.error('Lỗi khi xóa thiết bị:', err);
-        alert(`Lỗi: ${err.message}`);
+        if (response.status === 400) {
+            const errData = await response.json();
+            alert(`Lỗi tham số: ${errData.detail || "Khoảng thời gian không hợp lệ"}`);
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error("Không thể kết nối lấy dữ liệu báo cáo.");
+        }
+
+        const data = await response.json();
+        renderReportDataToDashboard(data);
+
+    } catch (error) {
+        console.error("Lỗi gọi API báo cáo:", error);
+        alert("Đã xảy ra lỗi khi tải dữ liệu báo cáo từ máy chủ.");
     }
+}
+
+function renderReportDataToDashboard(data) {
+    document.getElementById("sumTotalRooms").textContent = data.summary.total_rooms;
+    document.getElementById("sumTotalMeetings").textContent = data.summary.total_meetings;
+    document.getElementById("sumTotalHours").textContent = `${data.summary.total_hours.toFixed(1)} h`;
+    document.getElementById("sumAvgOccupancy").textContent = `${data.summary.average_occupancy_rate.toFixed(1)}%`;
+
+    const tbody = document.getElementById("roomDetailsTableBody");
+    tbody.innerHTML = "";
+
+    if (!data.room_details || data.room_details.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">Không có dữ liệu cuộc họp trong khoảng thời gian này.</td></tr>`;
+        return;
+    }
+
+    data.room_details.forEach(room => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>${room.room_id}</td>
+            <td><strong>${escapeHtml(room.room_name)}</strong></td>
+            <td>${room.total_meetings}</td>
+            <td>${room.total_hours.toFixed(1)} h</td>
+            <td>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-weight: 600;">${room.occupancy_rate.toFixed(1)}%</span>
+                    <div style="width: 100px; background: #e2e8f0; border-radius: 9999px; height: 8px; overflow: hidden;">
+                        <div style="background: #2563eb; height: 100%; width: ${Math.min(room.occupancy_rate, 100)}%;"></div>
+                    </div>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
 }
 
 /* ==========================================================================
@@ -10910,17 +14363,8 @@ window.switchMainTab = switchMainTab;
 window.navigateToSettings = navigateToSettings;
 window.scrollToRooms = scrollToRooms;
 window.toggleNotificationPopup = toggleNotificationPopup;
-window.toggleRoomMenu = toggleRoomMenu;
-window.findAvailableTime = findAvailableTime;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
-window.openBookingModal = openBookingModal;
-window.closeBookingModal = closeBookingModal;
-window.openBookModal = openBookingModal;
-window.closeBookModal = closeBookingModal;
-window.openQuickBooking = openQuickBooking;
-window.handleBookingSubmit = handleBookingSubmit;
-window.handleBookSubmit = handleBookingSubmit;
 window.cancelBooking = cancelBooking;
 window.handleSearch = handleSearch;
 window.filterToday = filterToday;
@@ -10932,20 +14376,8 @@ window.closeRoomModal = closeRoomModal;
 window.handleFormSubmit = handleFormSubmit;
 window.deleteRoom = deleteRoom;
 window.logout = logout;
-window.fetchAndRenderEquipments = fetchAndRenderEquipments;
 window.fetchEquipmentAvailability = fetchEquipmentAvailability;
 window.scheduleEquipmentAvailabilityFetch = scheduleEquipmentAvailabilityFetch;
-window.toggleEquipmentQtyInput = toggleEquipmentQtyInput;
-window.getSelectedEquipmentsData = getSelectedEquipmentsData;
-window.fetchAndRenderParticipants = fetchAndRenderParticipants;
-window.getSelectedParticipantIds = getSelectedParticipantIds;
-window.renderRoomAmenities = renderRoomAmenities;
-window.getAmenityIcon = getAmenityIcon;
-window.triggerDatePicker = triggerDatePicker;
-window.updateDateDisplay = updateDateDisplay;
-window.buildViTimeOptions = buildViTimeOptions;
-window.formatVietnameseTimeLabel = formatVietnameseTimeLabel;
-window.syncHiddenStartTime = syncHiddenStartTime;
 window.fetchAdminEquipments = fetchAdminEquipments;
 window.toggleEquipmentActive = toggleEquipmentActive;
 window.openEquipmentModal = openEquipmentModal;
@@ -10953,4 +14385,7 @@ window.openEditEquipmentModal = openEditEquipmentModal;
 window.closeEquipmentModal = closeEquipmentModal;
 window.handleEquipmentFormSubmit = handleEquipmentFormSubmit;
 window.deleteEquipment = deleteEquipment;
+window.fetchRoomUsageReport = fetchRoomUsageReport;
+window.loadRoomsForReportFilter = loadRoomsForReportFilter;
+window.updateUserSettings = updateUserSettings;
 ````

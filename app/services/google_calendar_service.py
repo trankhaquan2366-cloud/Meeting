@@ -23,7 +23,9 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_TOKEN_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 
 def _fernet() -> Fernet:
@@ -92,11 +94,44 @@ def _access_token(refresh_token: str) -> str:
         },
         timeout=15,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            error_data = response.json()
+        except ValueError:
+            error_data = {}
+        oauth_error = error_data.get("error") if isinstance(error_data, dict) else None
+        error_description = (
+            error_data.get("error_description")
+            if isinstance(error_data, dict)
+            else None
+        )
+        logger.error(
+            "Google OAuth refresh-token request failed (HTTP %s, error=%s): %s",
+            response.status_code,
+            oauth_error or "unknown",
+            error_description or response.text[:500] or str(exc),
+        )
+        raise
     access_token = response.json().get("access_token")
     if not access_token:
         raise RuntimeError("Google did not return an access token")
     return access_token
+
+
+def revoke_google_refresh_token(encrypted_refresh_token: str) -> None:
+    """Revoke a stored Google refresh token after the local account is disconnected."""
+    try:
+        refresh_token = decrypt_refresh_token(encrypted_refresh_token)
+        response = httpx.post(
+            GOOGLE_TOKEN_REVOKE_URL,
+            params={"token": refresh_token},
+            timeout=15,
+        )
+        response.raise_for_status()
+    except (RuntimeError, httpx.HTTPError):
+        logger.exception("Could not revoke the disconnected Google Calendar token")
 
 
 def _local_datetime(value: datetime) -> datetime:
@@ -139,7 +174,7 @@ def _event_payload(user_id: int, meeting: Meeting) -> dict:
     description = "\n".join(part for part in details if part)
     start = _local_datetime(meeting.start_time)
     end = _local_datetime(meeting.end_time)
-    return {
+    payload = {
         "id": _google_event_id(user_id, meeting.id),
         "summary": meeting.title,
         "description": description,
@@ -147,6 +182,55 @@ def _event_payload(user_id: int, meeting: Meeting) -> dict:
         "start": {"dateTime": start.isoformat(), "timeZone": _timezone_name()},
         "end": {"dateTime": end.isoformat(), "timeZone": _timezone_name()},
     }
+    if meeting.organizer_id == user_id:
+        attendees = [
+            {"email": participant.user.email}
+            for participant in meeting.participants
+            if participant.user and participant.user.email
+        ]
+        if attendees:
+            payload["attendees"] = attendees
+    return payload
+
+
+def _log_calendar_sync_http_error(
+    exc: httpx.HTTPStatusError,
+    *,
+    meeting_id: int,
+    user_id: int,
+) -> None:
+    response = exc.response
+    try:
+        error_data = response.json()
+    except ValueError:
+        error_data = {}
+
+    google_error = error_data.get("error", {}) if isinstance(error_data, dict) else {}
+    errors = google_error.get("errors", []) if isinstance(google_error, dict) else []
+    reason = errors[0].get("reason") if errors and isinstance(errors[0], dict) else None
+    message = google_error.get("message") if isinstance(google_error, dict) else None
+    message = message or response.text[:500] or str(exc)
+
+    if response.status_code == 403:
+        logger.error(
+            "Google Calendar denied sync for meeting_id=%s user_id=%s "
+            "(reason=%s): %s. If this is an insufficientPermissions error, "
+            "disconnect Google Calendar in Settings and connect again to grant "
+            "the calendar.events scope. Also verify Calendar API access and "
+            "the Google account's calendar sharing policy.",
+            meeting_id,
+            user_id,
+            reason or "unknown",
+            message,
+        )
+        return
+
+    logger.exception(
+        "Could not sync meeting_id=%s to Google Calendar for user_id=%s (HTTP %s)",
+        meeting_id,
+        user_id,
+        response.status_code,
+    )
 
 
 def sync_user_meetings_to_google(user_id: int) -> None:
@@ -164,11 +248,13 @@ def sync_user_meetings_to_google(user_id: int) -> None:
 
         meetings = (
             db.query(Meeting)
-            .join(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
             .filter(
-                MeetingParticipant.user_id == user_id,
+                (Meeting.organizer_id == user_id)
+                | (MeetingParticipant.user_id == user_id),
                 Meeting.status.notin_(["CANCELLED", "canceled"]),
             )
+            .distinct()
             .order_by(Meeting.start_time)
             .all()
         )
@@ -188,6 +274,7 @@ def sync_user_meetings_to_google(user_id: int) -> None:
                     GOOGLE_EVENTS_URL,
                     headers=headers,
                     json=_event_payload(user_id, meeting),
+                    params={"sendUpdates": "all"} if meeting.organizer_id == user_id else None,
                     timeout=15,
                 )
                 if response.status_code == 409:
@@ -203,6 +290,13 @@ def sync_user_meetings_to_google(user_id: int) -> None:
                 )
                 db.commit()
                 existing_meeting_ids.add(meeting.id)
+            except httpx.HTTPStatusError as exc:
+                db.rollback()
+                _log_calendar_sync_http_error(
+                    exc,
+                    meeting_id=meeting.id,
+                    user_id=user_id,
+                )
             except (httpx.HTTPError, RuntimeError):
                 db.rollback()
                 logger.exception(
@@ -233,7 +327,7 @@ def delete_google_calendar_event(user: User, google_event_id: str) -> bool:
             token_uri=GOOGLE_TOKEN_URL,
             client_id=client_id,
             client_secret=client_secret,
-            scopes=["https://www.googleapis.com/auth/calendar.events"],
+            scopes=[GOOGLE_CALENDAR_EVENTS_SCOPE],
         )
         credentials.refresh(GoogleAuthRequest())
         service = build("calendar", "v3", credentials=credentials, cache_discovery=False)

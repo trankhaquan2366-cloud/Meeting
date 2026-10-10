@@ -1,11 +1,15 @@
 /* ==========================================================================
    GLOBAL CONFIGURATION & STATE MANAGEMENT
    ========================================================================== */
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = window.API_URL || "http://localhost:8000/api";
 let allRooms = [];
 let myBookings = [];
+let bookingCalendarView = 'month';
+let bookingCalendarDate = new Date();
+let bookingSelectedDate = new Date();
 let selectedRoomId = null;
 let equipmentAvailabilityTimer = null;
+let googleCalendarOAuthError = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -129,6 +133,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         reportStart.value = thirtyDaysAgo.toISOString().slice(0, 16);
         loadRoomsForReportFilter();
     }
+
+    const callbackQuery = new URLSearchParams(window.location.search);
+    if (callbackQuery.has('calendar_connected') || callbackQuery.has('google_error')) {
+        googleCalendarOAuthError = callbackQuery.get('google_error');
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('calendar_connected');
+        cleanUrl.searchParams.delete('google_error');
+        window.history.replaceState({}, document.title, `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+        switchMainTab('settings', document.getElementById('navSettings'));
+    }
 });
 
 /* ==========================================================================
@@ -184,6 +198,70 @@ function switchMainTab(tabName, el) {
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         loadCurrentUserProfile();
+        loadGoogleCalendarStatus();
+    }
+}
+
+async function loadGoogleCalendarStatus() {
+    const statusElement = document.getElementById('googleCalendarStatus');
+    const actionButton = document.getElementById('googleCalendarAction');
+    if (!statusElement || !actionButton) return;
+
+    actionButton.disabled = true;
+    statusElement.textContent = 'Đang kiểm tra kết nối...';
+    try {
+        const response = await fetch(`${API_BASE}/auth/google/calendar/status`, {
+            headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!response.ok) throw new Error(`Không thể kiểm tra kết nối Google Calendar (${response.status})`);
+        const result = await response.json();
+        const connected = result.connected === true;
+        const oauthErrorMessages = {
+            calendar_permission_denied: 'Bạn chưa cấp quyền Google Calendar. Có thể kết nối lại bất cứ lúc nào.',
+            oauth_failed: 'Không thể kết nối Google Calendar. Vui lòng thử lại.',
+        };
+        statusElement.textContent = connected
+            ? 'Tài khoản Google Calendar đã được kết nối.'
+            : oauthErrorMessages[googleCalendarOAuthError] || 'Chưa kết nối Google Calendar.';
+        googleCalendarOAuthError = null;
+        actionButton.textContent = connected ? 'Ngắt kết nối' : 'Kết nối ngay';
+        actionButton.dataset.connected = String(connected);
+        actionButton.disabled = false;
+    } catch (error) {
+        console.error('Không thể tải trạng thái Google Calendar:', error);
+        statusElement.textContent = 'Không thể tải trạng thái Google Calendar. Vui lòng thử lại.';
+    }
+}
+
+async function handleGoogleCalendarAction() {
+    const statusElement = document.getElementById('googleCalendarStatus');
+    const actionButton = document.getElementById('googleCalendarAction');
+    if (!statusElement || !actionButton) return;
+
+    actionButton.disabled = true;
+    try {
+        if (actionButton.dataset.connected === 'true') {
+            const response = await fetch(`${API_BASE}/auth/google/calendar/disconnect`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${getAuthToken()}` },
+            });
+            if (!response.ok) throw new Error(`Không thể ngắt kết nối Google Calendar (${response.status})`);
+            await loadGoogleCalendarStatus();
+            return;
+        }
+
+        const response = await fetch(`${API_BASE}/auth/google/calendar/authorize`, {
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!response.ok) throw new Error(`Không thể bắt đầu kết nối Google Calendar (${response.status})`);
+        const result = await response.json();
+        if (!result.authorization_url) throw new Error('Máy chủ không trả về địa chỉ xác thực Google');
+        window.location.assign(result.authorization_url);
+    } catch (error) {
+        console.error('Không thể cập nhật kết nối Google Calendar:', error);
+        statusElement.textContent = error.message || 'Không thể cập nhật kết nối Google Calendar.';
+        actionButton.disabled = false;
     }
 }
 
@@ -692,150 +770,266 @@ function closeScheduleModal() {
 /* ==========================================================================
    MY BOOKINGS MANAGEMENT
    ========================================================================== */
-async function fetchMyBookings() {
-    const token = getAuthToken();
-    if (!token) return;
-
+async function cancelBooking(meetingId) {
+    if (!confirm('Bạn có chắc chắn muốn hủy lịch họp này?')) return;
     try {
-        const res = await fetch(`${API_BASE}/meetings/`, {
-            headers: { 'Authorization': `Bearer ${token}` }
+        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + getAuthToken() }
         });
-
-        if (res.ok) {
-            myBookings = await res.json();
-            renderMyBookings();
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Không thể hủy lịch họp!');
         }
+        alert('Đã hủy lịch họp!');
+        await fetchMyBookings();
+        fetchRooms(localStorage.getItem('role') === 'admin');
     } catch (err) {
-        console.error("Lỗi lấy danh sách lịch họp:", err);
+        alert(`Lỗi: ${err.message}`);
+    }
+}
+async function fetchMyBookings() {
+    if (!getAuthToken()) return;
+    try {
+        const res = await fetch(`${API_BASE}/meetings/mine`, {
+            headers: { 'Authorization': 'Bearer ' + getAuthToken() }
+        });
+        if (!res.ok) throw new Error('Không thể tải danh sách lịch họp.');
+        myBookings = await res.json();
+        renderMyBookings();
+    } catch (err) {
+        console.error('Lỗi lấy danh sách lịch họp:', err);
+        ['myBookingsTableBody', 'invitedBookingsList', 'bookingCalendarGrid'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.innerHTML = '<div class="booking-list-empty">Không thể tải lịch họp. Vui lòng thử lại.</div>';
+        });
     }
 }
 
 function renderMyBookings() {
-    const tbody = document.getElementById('myBookingsTableBody');
-    if (!tbody) return;
+    renderOrganizerBookings(myBookings.filter(meeting => meeting.is_organizer));
+    renderInvitedBookings(myBookings.filter(meeting => !meeting.is_organizer));
+    renderBookingCalendar();
+}
 
-    if (!myBookings || myBookings.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#94a3b8;">Bạn chưa đăng ký lịch họp nào.</td></tr>';
+function bookingRoomName(meeting) {
+    if (String(meeting.meeting_type || '').toLowerCase() === 'online') return 'Cuộc họp online';
+    return meeting.room_name || allRooms.find(room => room.id === meeting.room_id)?.name
+        || (meeting.room_id ? `Phòng ${meeting.room_id}` : 'Phòng chưa xác định');
+}
+
+function bookingDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function bookingTime(date) {
+    return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function bookingDateKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function renderOrganizerBookings(meetings) {
+    const container = document.getElementById('myBookingsTableBody');
+    if (!container) return;
+    if (!meetings.length) {
+        container.innerHTML = '<div class="booking-list-empty">Bạn chưa chủ trì cuộc họp nào.</div>';
         return;
     }
-
-    const statusLabels = {
-        scheduled: { label: 'Đã lên lịch', className: 'booking-status-scheduled' },
-        confirmed: { label: 'Đã xác nhận', className: 'booking-status-scheduled' },
-        in_progress: { label: 'Đang diễn ra', className: 'booking-status-progress' },
-        completed: { label: 'Đã hoàn thành', className: 'booking-status-completed' },
-        canceled: { label: 'Đã hủy', className: 'booking-status-canceled' },
-        cancelled: { label: 'Đã hủy', className: 'booking-status-canceled' },
-    };
-    const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
-
-    tbody.innerHTML = myBookings.map(b => {
-        const meetingType = String(b.meeting_type || 'offline').toLowerCase();
-        const isOnline = meetingType === 'online';
-        const roomName = isOnline
-            ? 'Cuộc họp online'
-            : allRooms.find(room => room.id === b.room_id)?.name
-                || b.room?.name
-                || b.room_name
-                || (b.room_id ? `Phòng ${b.room_id}` : 'Phòng chưa xác định');
-        const meetingLink = String(b.meeting_link || b.online_link || '').trim();
-        let meetingLinkHTML = '';
-        if (meetingLink) {
-            try {
-                const linkUrl = new URL(meetingLink);
-                if (linkUrl.protocol === 'http:' || linkUrl.protocol === 'https:') {
-                    meetingLinkHTML = `<a class="booking-meeting-link" href="${escapeHtml(linkUrl.href)}" target="_blank" rel="noopener noreferrer">Tham gia cuộc họp</a>`;
-                }
-            } catch (error) {
-                meetingLinkHTML = '';
+    container.innerHTML = meetings.map(meeting => {
+        const start = bookingDate(meeting.start_time);
+        const end = bookingDate(meeting.end_time);
+        const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
+        const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
+        const participants = (meeting.participants || []).filter(person => person.user_id !== meeting.organizer_id);
+        const attendeeMarkup = participants.length ? participants.map(person => {
+            const response = ['accepted', 'declined'].includes(person.response_status) ? person.response_status : 'pending';
+            const label = response === 'accepted' ? 'Đã đồng ý' : response === 'declined' ? 'Đã từ chối' : 'Chưa phản hồi';
+            return `<div class="booking-guest ${response === 'accepted' ? '' : 'pending'}"><span>${escapeHtml(person.name || person.email || 'Người tham dự')}</span><span class="booking-guest-status ${response}">${response === 'accepted' ? '✓ ' : ''}${label}</span></div>`;
+        }).join('') : '<div class="booking-guest pending">Chưa có người được mời.</div>';
+        const cancel = `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`;
+        let joinLink = '';
+        try {
+            const url = new URL(String(meeting.meeting_link || meeting.online_link || ''));
+            if (url.protocol === 'http:' || url.protocol === 'https:') {
+                joinLink = `<a class="booking-rsvp-button" href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Tham gia</a>`;
             }
+        } catch (error) {
+            joinLink = '';
         }
-        const start = new Date(b.start_time);
-        const end = new Date(b.end_time);
-        const hasValidDate = !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime());
-        const dateLabel = hasValidDate
-            ? start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-            : 'Chưa có ngày';
-        const timeRange = hasValidDate
-            ? `${start.toLocaleTimeString('vi-VN', timeOptions)} – ${end.toLocaleTimeString('vi-VN', timeOptions)}`
-            : 'Chưa có thời gian';
-        let calendarLinkHTML = '';
-        if (hasValidDate) {
-            const toCalendarDate = date => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}00`;
-            const calendarUrl = new URL('https://calendar.google.com/calendar/render');
-            calendarUrl.searchParams.set('action', 'TEMPLATE');
-            calendarUrl.searchParams.set('text', b.title || 'Cuộc họp');
-            calendarUrl.searchParams.set('dates', `${toCalendarDate(start)}/${toCalendarDate(end)}`);
-            calendarUrl.searchParams.set('ctz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Ho_Chi_Minh');
-            calendarUrl.searchParams.set('location', isOnline ? meetingLink : roomName);
-            calendarUrl.searchParams.set(
-                'details',
-                [b.description, meetingLink ? `Link cuộc họp: ${meetingLink}` : ''].filter(Boolean).join('\n'),
-            );
-            calendarLinkHTML = `<a class="booking-calendar-link" href="${escapeHtml(calendarUrl.href)}" target="_blank" rel="noopener noreferrer">Thêm vào Google Calendar</a>`;
-        }
-        const statusKey = String(b.status || '').toLowerCase();
-        const status = statusLabels[statusKey] || { label: 'Không xác định', className: 'booking-status-unknown' };
-
-        let equipmentsHTML = '';
-        if (b.equipments && b.equipments.length > 0) {
-            const eqList = b.equipments.map(eq => {
-                const name = escapeHtml(eq.equipment_name || 'Thiết bị');
-                return `${name} (x${eq.quantity})`;
-            }).join(', ');
-
-            equipmentsHTML = `
-                <div class="booking-equipment-summary">
-                    Thiết bị: ${eqList}
-                </div>
-            `;
-        }
-
-        return `
-            <tr>
-                <td class="booking-room-cell">
-                    <strong>${escapeHtml(roomName)}</strong>
-                    <span class="booking-meeting-title">${escapeHtml(b.title || 'Cuộc họp')}</span>
-                    ${meetingLinkHTML}
-                    ${calendarLinkHTML}
-                    ${equipmentsHTML}
-                </td>
-                <td>
-                    <div>
-                        <span>${dateLabel}</span>
-                        <strong>${timeRange}</strong>
-                    </div>
-                </td>
-                <td><span class="booking-status ${status.className}">${status.label}</span></td>
-                <td><button class="booking-cancel-button" type="button" onclick="cancelBooking(${b.id})">Hủy đặt</button></td>
-            </tr>
-        `;
+        return `<article class="booking-list-card"><div class="booking-list-row">
+            <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span></div>
+            <div class="booking-list-time">${escapeHtml(time)}</div>
+            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${cancel}</div>
+        </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
 }
 
-async function cancelBooking(meetingId) {
-    if (!confirm("Bạn có chắc chắn muốn hủy lịch họp này?")) return;
-
-    const token = getAuthToken();
-    try {
-        const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (res.ok) {
-            alert("Đã hủy lịch họp!");
-            fetchMyBookings();
-            fetchRooms(localStorage.getItem('role') === 'admin');
-        } else {
-            const err = await res.json();
-            alert(`Lỗi: ${err.detail || 'Không thể hủy!'}`);
-        }
-    } catch (err) {
-        alert("Lỗi kết nối máy chủ!");
+function renderInvitedBookings(meetings) {
+    const container = document.getElementById('invitedBookingsList');
+    if (!container) return;
+    if (!meetings.length) {
+        container.innerHTML = '<div class="booking-list-empty">Bạn chưa được mời tham gia cuộc họp nào.</div>';
+        return;
     }
+    container.innerHTML = meetings.map(meeting => {
+        const start = bookingDate(meeting.start_time);
+        const end = bookingDate(meeting.end_time);
+        const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
+        const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
+        const response = meeting.my_response_status || 'pending';
+        const status = response === 'accepted' ? 'Đã xác nhận' : response === 'declined' ? 'Đã từ chối' : 'Chưa phản hồi';
+        const adminCancel = String(localStorage.getItem('role') || '').trim().toLowerCase() === 'admin'
+            ? `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`
+            : '';
+        return `<article class="booking-list-card"><div class="booking-list-row">
+            <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span><span>Chủ trì: ${escapeHtml(meeting.organizer_name || 'Người tổ chức')}</span></div>
+            <div class="booking-list-time">${escapeHtml(time)}<br>${escapeHtml(status)}</div>
+            <div class="booking-list-actions"><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'accepted')" ${response === 'accepted' ? 'disabled' : ''}>Xác nhận</button><button class="booking-rsvp-button" type="button" onclick="respondToMeeting(${meeting.id}, 'declined')" ${response === 'declined' ? 'disabled' : ''}>Từ chối</button>${adminCancel}</div>
+        </div></article>`;
+    }).join('');
 }
 
+function toggleBookingGuests(meetingId, button) {
+    const list = document.getElementById(`bookingGuests${meetingId}`);
+    if (!list) return;
+    list.hidden = !list.hidden;
+    button.setAttribute('aria-expanded', String(!list.hidden));
+}
+
+function switchBookingTab(tab) {
+    const tabs = { calendar: ['bookingTabCalendar', 'bookingPanelCalendar'], mine: ['bookingTabMine', 'bookingPanelMine'], invited: ['bookingTabInvited', 'bookingPanelInvited'] };
+    Object.entries(tabs).forEach(([name, ids]) => {
+        const active = name === tab;
+        const button = document.getElementById(ids[0]);
+        const panel = document.getElementById(ids[1]);
+        if (button) {
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', String(active));
+        }
+        if (panel) panel.hidden = !active;
+    });
+    if (tab === 'calendar') renderBookingCalendar();
+}
+
+function shiftBookingCalendar(amount) {
+    bookingCalendarDate = new Date(bookingCalendarDate);
+    if (bookingCalendarView === 'month') bookingCalendarDate.setMonth(bookingCalendarDate.getMonth() + amount, 1);
+    else bookingCalendarDate.setDate(bookingCalendarDate.getDate() + amount * (bookingCalendarView === 'week' ? 7 : 1));
+    bookingSelectedDate = new Date(bookingCalendarDate);
+    renderBookingCalendar();
+}
+
+function goToBookingCalendarToday() {
+    bookingCalendarDate = new Date();
+    bookingSelectedDate = new Date();
+    renderBookingCalendar();
+}
+
+function setBookingCalendarView(view) {
+    if (!['month', 'week', 'day'].includes(view)) return;
+    bookingCalendarView = view;
+    document.querySelectorAll('[data-calendar-view]').forEach(button => button.classList.toggle('active', button.dataset.calendarView === view));
+    renderBookingCalendar();
+}
+
+function renderBookingCalendar() {
+    const grid = document.getElementById('bookingCalendarGrid');
+    if (!grid) return;
+    const title = document.getElementById('bookingCalendarTitle');
+    const selectedKey = bookingDateKey(bookingSelectedDate);
+    let dates;
+    if (bookingCalendarView === 'month') {
+        const first = new Date(bookingCalendarDate.getFullYear(), bookingCalendarDate.getMonth(), 1);
+        const start = new Date(first);
+        start.setDate(1 - first.getDay());
+        dates = Array.from({ length: 42 }, (_, index) => {
+            const date = new Date(start);
+            date.setDate(start.getDate() + index);
+            return date;
+        });
+        if (title) title.textContent = bookingCalendarDate.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+    } else if (bookingCalendarView === 'week') {
+        const start = new Date(bookingCalendarDate);
+        start.setDate(start.getDate() - start.getDay());
+        dates = Array.from({ length: 7 }, (_, index) => {
+            const date = new Date(start);
+            date.setDate(start.getDate() + index);
+            return date;
+        });
+        if (title) title.textContent = `${dates[0].toLocaleDateString('vi-VN')} – ${dates[6].toLocaleDateString('vi-VN')}`;
+    } else {
+        dates = [new Date(bookingCalendarDate)];
+        if (title) title.textContent = bookingCalendarDate.toLocaleDateString('vi-VN', { day: 'numeric', month: 'long', year: 'numeric' });
+    }
+    const weekdays = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+    const columns = bookingCalendarView === 'day' ? 1 : 7;
+    grid.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+    grid.innerHTML = (bookingCalendarView === 'day' ? '' : weekdays.map(day => `<div class="booking-calendar-weekday">${day}</div>`).join(''))
+        + dates.map(date => {
+            const key = bookingDateKey(date);
+            const events = myBookings.filter(meeting => {
+                const start = bookingDate(meeting.start_time);
+                return start && bookingDateKey(start) === key;
+            }).sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+            const classes = [
+                bookingCalendarView === 'month' && date.getMonth() !== bookingCalendarDate.getMonth() ? 'outside' : '',
+                key === bookingDateKey(new Date()) ? 'today' : '',
+                key === selectedKey ? 'selected' : '',
+            ].filter(Boolean).join(' ');
+            const preview = events.slice(0, bookingCalendarView === 'day' ? events.length : 3).map(meeting => {
+                const start = bookingDate(meeting.start_time);
+                return `<span class="booking-calendar-event">${start ? `${bookingTime(start)} ` : ''}${escapeHtml(meeting.title || 'Cuộc họp')}</span>`;
+            }).join('');
+            const more = events.length > 3 && bookingCalendarView !== 'day' ? `<div class="booking-calendar-more">+${events.length - 3} cuộc họp</div>` : '';
+            return `<div class="booking-calendar-day ${classes}" role="button" tabindex="0" aria-label="${escapeHtml(date.toLocaleDateString('vi-VN'))}, ${events.length} cuộc họp" onclick="selectBookingCalendarDate('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectBookingCalendarDate('${key}')}"><span class="booking-calendar-day-number">${date.getDate()}</span>${preview}${more}</div>`;
+        }).join('');
+    renderBookingAgenda();
+}
+
+function selectBookingCalendarDate(key) {
+    const [year, month, day] = key.split('-').map(Number);
+    bookingSelectedDate = new Date(year, month - 1, day);
+    bookingCalendarDate = new Date(bookingSelectedDate);
+    renderBookingCalendar();
+}
+
+function renderBookingAgenda() {
+    const container = document.getElementById('bookingDayAgenda');
+    const title = document.getElementById('bookingAgendaTitle');
+    if (!container) return;
+    if (title) title.textContent = `Lịch ngày ${bookingSelectedDate.toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`;
+    const key = bookingDateKey(bookingSelectedDate);
+    const events = myBookings.filter(meeting => {
+        const start = bookingDate(meeting.start_time);
+        return start && bookingDateKey(start) === key;
+    }).sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    container.innerHTML = events.length ? events.map(meeting => {
+        const start = bookingDate(meeting.start_time);
+        const end = bookingDate(meeting.end_time);
+        const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
+        return `<div class="booking-agenda-item"><div class="booking-agenda-time">${escapeHtml(time)}</div><div class="booking-agenda-details"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))}${meeting.organizer_name ? ` · ${escapeHtml(meeting.organizer_name)}` : ''}</span></div></div>`;
+    }).join('') : '<div class="booking-list-empty">Không có cuộc họp trong ngày này.</div>';
+}
+
+async function respondToMeeting(meetingId, responseStatus) {
+    try {
+const res = await fetch(`${API_BASE}/meetings/${meetingId}/response`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+    body: JSON.stringify({ response_status: responseStatus }),
+});
+if (!res.ok) {
+    const result = await res.json();
+    throw new Error(result.detail || 'Không thể cập nhật phản hồi.');
+}
+await fetchMyBookings();
+    } catch (error) {
+alert(`Lỗi: ${error.message}`);
+    }
+}
 /* ==========================================================================
    SEARCH & FILTERING
    ========================================================================== */
