@@ -1,10 +1,10 @@
 services:
-  db:
+  roomsync_db:
     image: mysql:8.0
     container_name: roomsync_db
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: roomsync_db
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-03062006}
+      MYSQL_DATABASE: meeting_db
       MYSQL_USER: roomsync_user
       MYSQL_PASSWORD: roomsync_pass
     ports:
@@ -26,12 +26,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: mysql+pymysql://roomsync_user:roomsync_pass@db:3306/roomsync_db
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-03062006}@roomsync_db:3306/meeting_db
       SECRET_KEY: roomsync_super_secret_jwt_key
     volumes:
       - .:/app
     depends_on:
-      db:
+      roomsync_db:
         condition: service_healthy
 
 volumes:

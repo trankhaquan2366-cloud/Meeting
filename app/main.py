@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, configure_mappers
+from sqlalchemy import inspect
 
 # 1. DB & Models
 from app.db.session import Base
@@ -35,27 +36,40 @@ Base.metadata.create_all(bind=engine)
 def _auto_migrate_schema():
     try:
         with engine.begin() as conn:
-            # 1. Kiểm tra bảng meetings
-            cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
-            if "meeting_type" not in cols_meetings:
-                conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
-                print("✅ Đã tự động thêm cột 'meeting_type' vào bảng meetings.")
-            if "online_link" not in cols_meetings:
-                conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
-                print("✅ Đã tự động thêm cột 'online_link' vào bảng meetings.")
-            
-            # Cho phép room_id nhận giá trị NULL (cho cuộc họp trực tuyến)
-            room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
-            if room_id_col and room_id_col[2] == 'NO':
-                col_type = room_id_col[1]
-                conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
-                print("✅ Đã cập nhật cột 'room_id' cho phép NULL.")
+            if engine.dialect.name == "mysql":
+                # 1. Kiểm tra bảng meetings
+                cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
+                if "meeting_type" not in cols_meetings:
+                    conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
+                    print("✅ Đã tự động thêm cột 'meeting_type' vào bảng meetings.")
+                if "online_link" not in cols_meetings:
+                    conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
+                    print("✅ Đã tự động thêm cột 'online_link' vào bảng meetings.")
 
-            # 2. Kiểm tra bảng rooms
-            cols_rooms = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM rooms")).fetchall()]
-            if "amenities" not in cols_rooms:
-                conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
-                print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
+                # Cho phép room_id nhận giá trị NULL (cho cuộc họp trực tuyến)
+                room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
+                if room_id_col and room_id_col[2] == 'NO':
+                    col_type = room_id_col[1]
+                    conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
+                    print("✅ Đã cập nhật cột 'room_id' cho phép NULL.")
+
+                # 2. Kiểm tra bảng rooms
+                cols_rooms = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM rooms")).fetchall()]
+                if "amenities" not in cols_rooms:
+                    conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
+                    print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
+
+            if "meeting_participants" in inspect(conn).get_table_names():
+                participant_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("meeting_participants")
+                }
+                if "response_status" not in participant_columns:
+                    conn.execute(text(
+                        "ALTER TABLE meeting_participants "
+                        "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
+                    ))
+                    print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
     except Exception as e:
         print(f"⚠️ Thông báo cập nhật schema: {e}")
 

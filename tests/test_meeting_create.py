@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.routers import meetings as meetings_router
 from tests.helpers import _auth_header, _create_room, _create_user, _make_token
 
 
@@ -97,3 +98,34 @@ def test_create_online_meeting_without_link_returns_400(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Online meetings require a meeting_link"
+
+
+def test_create_meeting_schedules_google_sync_for_connected_organizer(
+    client: TestClient, db_session: Session, monkeypatch
+):
+    organizer = _create_user(db_session, "create-connected-organizer")
+    organizer.google_refresh_token = "encrypted-refresh-token"
+    db_session.commit()
+    room = _create_room(db_session, "Connected Organizer Room")
+    start, end = _future_window()
+    synced_user_ids = []
+    monkeypatch.setattr(
+        meetings_router,
+        "sync_user_meetings_to_google",
+        synced_user_ids.append,
+    )
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Automatically synced meeting",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    assert synced_user_ids == [organizer.id]

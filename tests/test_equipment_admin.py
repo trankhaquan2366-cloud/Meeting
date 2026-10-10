@@ -121,6 +121,7 @@ def test_update_total_qty_does_not_corrupt_meeting_equipments(client: TestClient
     assert put_resp.json()["total_qty"] == 12
 
     # Verify meeting_equipments link is intact
+    db_session.expire_all()
     me_db = db_session.query(MeetingEquipment).filter_by(meeting_id=meeting.id, equipment_id=equip.id).first()
     assert me_db is not None
     assert me_db.quantity == 2

@@ -18,11 +18,22 @@ Hệ thống Quản lý và Đặt lịch Phòng họp trực tuyến dành cho 
 * **Validation & Schemas:** Pydantic v2
 * **Server Runner:** Uvicorn ASGI Server
 
+## Docker (local development)
+
+Set `MYSQL_ROOT_PASSWORD` in `.env` if you want to override the local default, then start the stack and apply database migrations:
+
+```sh
+docker compose up --build -d
+docker compose exec web alembic upgrade head
+```
+
+Compose configures the backend to connect to the `roomsync_db` service and the `meeting_db` database; do not use `localhost` as the database host from inside the backend container. Check service health with `docker compose ps` and backend output with `docker compose logs web`.
+
 ## 🔐 Google OAuth 2.0
 
 The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).
 
-Invitees receive a Calendar consent email after they are invited. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` before deploying. For production, use HTTPS and the exact public callback/frontend URLs.
+Users can connect or disconnect their own Google Calendar from the dashboard Settings page. Once connected, newly created meetings are added to the organizer's calendar and Google sends invitations to meeting invitees; connecting also syncs the user's existing meetings. Invitees may still receive a Calendar consent email so their own calendar can be synchronized. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` and `migrations/008_add_meeting_participant_response_status.sql` before deploying. Set `FRONTEND_DASHBOARD_URL` to the dashboard's public URL (defaults to `/static/dashboard.html`). For production, use HTTPS and the exact public callback/frontend URLs.
 
 ---
 
