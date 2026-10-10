@@ -15,7 +15,7 @@ from app.models.notification import Notification
 from app.models.user import User
 from app.routers import meetings as meetings_router
 from app.schemas.meeting import MeetingCreateRequest
-from app.services import calendar_sync_service
+from app.services import calendar_sync_service, reminder_service
 from app.services.meeting_service import MeetingService
 from tests.helpers import _auth_header, _create_room, _create_user, _make_token
 
@@ -708,3 +708,148 @@ def test_moving_recurring_occurrence_marks_it_for_detachment(
     assert meeting.recurrence_is_detached is True
     assert meeting.recurrence_original_start == old_start
     assert queued_actions == [(meeting_id, EVENT_MEETING_UPDATED)]
+
+
+def test_meeting_detail_is_visible_to_organizer_and_participant_only(
+    client,
+    db_session,
+):
+    organizer = _create_calendar_user(db_session, "meeting-detail-organizer")
+    participant = _create_calendar_user(db_session, "meeting-detail-participant")
+    outsider = _create_calendar_user(db_session, "meeting-detail-outsider")
+    start_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)
+    meeting = Meeting(
+        title="Private meeting details",
+        meeting_type="online",
+        online_link="https://meet.example.com/private",
+        organizer_id=organizer.id,
+        start_time=start_time,
+        end_time=start_time + timedelta(hours=1),
+        status="CONFIRMED",
+    )
+    meeting.participants.append(MeetingParticipant(user_id=participant.id))
+    db_session.add(meeting)
+    db_session.commit()
+
+    organizer_response = client.get(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(organizer)),
+    )
+    participant_response = client.get(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(participant)),
+    )
+    outsider_response = client.get(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(outsider)),
+    )
+
+    assert organizer_response.status_code == 200
+    assert organizer_response.json()["id"] == meeting.id
+    assert participant_response.status_code == 200
+    assert outsider_response.status_code == 403
+
+
+def test_reschedule_meeting_resets_reminders_and_sends_again_at_new_24h_window(
+    client,
+    db_session,
+    monkeypatch,
+):
+    user = _create_calendar_user(db_session, "reschedule-reminder")
+    room = _create_room(db_session, "Reschedule Room")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    old_start = now + timedelta(hours=72)
+    new_start = now + timedelta(hours=48)
+    meeting = Meeting(
+        title="Rescheduled meeting",
+        room_id=room.id,
+        organizer_id=user.id,
+        start_time=old_start,
+        end_time=old_start + timedelta(hours=1),
+        status="CONFIRMED",
+        is_reminded_24h=True,
+        is_reminded_15m=True,
+    )
+    db_session.add(meeting)
+    db_session.commit()
+    meeting_id = meeting.id
+    monkeypatch.setattr(meetings_router, "sync_event_task", lambda *args: None)
+    monkeypatch.setattr(
+        meetings_router,
+        "send_meeting_notification_task",
+        lambda *args: None,
+    )
+
+    response = client.patch(
+        f"/api/meetings/{meeting_id}",
+        headers=_auth_header(_make_token(user)),
+        json={
+            "start_time": new_start.replace(tzinfo=timezone.utc).isoformat(),
+            "end_time": (new_start + timedelta(hours=1))
+            .replace(tzinfo=timezone.utc)
+            .isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    db_session.refresh(meeting)
+    assert meeting.is_reminded_24h is False
+    assert meeting.is_reminded_15m is False
+
+    reminder_now = new_start - timedelta(hours=24) + timedelta(seconds=30)
+    assert (
+        reminder_service.process_due_meeting_reminders(db_session, reminder_now)
+        == 1
+    )
+    db_session.refresh(meeting)
+    assert meeting.is_reminded_24h is True
+    assert db_session.query(Notification).filter_by(
+        meeting_id=meeting_id,
+        user_id=user.id,
+    ).count() == 1
+
+
+def test_reschedule_within_24_hours_skips_the_missed_24h_reminder(
+    client,
+    db_session,
+    monkeypatch,
+):
+    user = _create_calendar_user(db_session, "reschedule-near")
+    room = _create_room(db_session, "Reschedule Near Room")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    old_start = now + timedelta(days=2)
+    new_start = now + timedelta(hours=12)
+    meeting = Meeting(
+        title="Near rescheduled meeting",
+        room_id=room.id,
+        organizer_id=user.id,
+        start_time=old_start,
+        end_time=old_start + timedelta(hours=1),
+        status="CONFIRMED",
+        is_reminded_24h=True,
+        is_reminded_15m=True,
+    )
+    db_session.add(meeting)
+    db_session.commit()
+    monkeypatch.setattr(meetings_router, "sync_event_task", lambda *args: None)
+    monkeypatch.setattr(
+        meetings_router,
+        "send_meeting_notification_task",
+        lambda *args: None,
+    )
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}",
+        headers=_auth_header(_make_token(user)),
+        json={
+            "start_time": new_start.replace(tzinfo=timezone.utc).isoformat(),
+            "end_time": (new_start + timedelta(hours=1))
+            .replace(tzinfo=timezone.utc)
+            .isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    db_session.refresh(meeting)
+    assert meeting.is_reminded_24h is True
+    assert meeting.is_reminded_15m is False

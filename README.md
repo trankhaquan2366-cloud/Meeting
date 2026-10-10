@@ -58,18 +58,21 @@ Với database hiện hữu hoặc database mới, áp dụng các file SQL dư�
 11. `migrations/011_add_calendar_series_event_mapping.sql`
 12. `migrations/012_normalize_meeting_status_enum.sql`
 13. `migrations/013_create_email_delivery_retry_queue.sql`
+14. `migrations/014_add_meeting_id_to_notifications.sql`
 
 Sao lưu database trước khi chạy migration thay đổi dữ liệu, đặc biệt là `005`, `007` và `012`. Migration `007` có kiểm tra phiên bản để tránh chuyển đổi UTC lặp lại; các migration còn lại cần được áp dụng theo môi trường triển khai và xác minh schema sau khi chạy.
 
-Trên MySQL, có thể áp dụng riêng migration 013 và kiểm tra named lock bằng:
+Trên MySQL, script sau áp dụng migration 013 và 014 nếu chưa có, sau đó kiểm tra named lock:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\apply_db_migrations.py
 ```
 
-Script không in thông tin kết nối; script chỉ áp dụng migration 013 nếu bảng `email_deliveries` chưa tồn tại và kiểm tra named lock `meeting_reminder_scheduler` mà scheduler thực tế sử dụng.
+Script không in thông tin kết nối; script áp dụng migration 013 và 014 nếu chưa được áp dụng, sau đó kiểm tra named lock `meeting_reminder_scheduler` mà scheduler thực tế sử dụng.
 
 Thư mời họp, thông báo thay đổi và thông báo hủy được gửi qua in-app; nếu SMTP đã cấu hình, các thông báo này cũng gửi email. Khi hủy có thể nhập lý do; nếu bỏ trống, hệ thống ghi nội dung mặc định “Không cung cấp lý do.” Email hủy có lời xin lỗi. SMTP credentials không được ghi vào source hoặc gửi qua chat.
+
+Reminder hiển thị thời gian theo `Asia/Ho_Chi_Minh`, kèm tên phòng và link đến cuộc họp. Đặt `FRONTEND_BASE_URL` theo địa chỉ triển khai frontend để link trong email trỏ đúng môi trường; mặc định là `http://localhost:3000`.
 
 ## Đồng bộ Google Calendar / Outlook
 

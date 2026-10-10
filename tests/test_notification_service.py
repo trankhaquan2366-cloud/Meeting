@@ -1,6 +1,6 @@
 from app.models.notification import Notification
 from app.services import email_service, notification_service
-from tests.helpers import _create_user
+from tests.helpers import _auth_header, _create_user, _make_token
 
 
 def test_meeting_notification_task_sends_email_and_persists_in_app_notice(
@@ -38,3 +38,35 @@ def test_meeting_notification_task_sends_email_and_persists_in_app_notice(
             "Lý do: lịch thay đổi. Chúng tôi xin lỗi.",
         )
     ]
+
+
+def test_notification_read_supports_patch_and_legacy_put(
+    client,
+    db_session,
+):
+    user = _create_user(db_session, "notification-reader")
+    notifications = [
+        Notification(
+            user_id=user.id,
+            title="Reminder",
+            content="Meeting details",
+        )
+        for _ in range(2)
+    ]
+    db_session.add_all(notifications)
+    db_session.commit()
+    headers = _auth_header(_make_token(user))
+
+    patch_response = client.patch(
+        f"/api/notifications/{notifications[0].id}/read",
+        headers=headers,
+    )
+    put_response = client.put(
+        f"/api/notifications/{notifications[1].id}/read",
+        headers=headers,
+    )
+
+    assert patch_response.status_code == 200
+    assert put_response.status_code == 200
+    assert patch_response.json()["is_read"] is True
+    assert put_response.json()["is_read"] is True

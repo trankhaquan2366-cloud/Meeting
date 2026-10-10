@@ -26,6 +26,7 @@ def get_user_notifications(
     )
 
 
+@router.patch("/{notification_id}/read", response_model=NotificationResponse)
 @router.put("/{notification_id}/read", response_model=NotificationResponse)
 def mark_notification_as_read(
     notification_id: int,

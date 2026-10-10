@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import smtplib
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -44,7 +45,7 @@ def _format_start_time(start_time: datetime) -> str:
         if start_time.tzinfo is None
         else start_time.astimezone(timezone.utc)
     )
-    return utc_start.astimezone(_VIETNAM_TZ).strftime("%d/%m/%Y lúc %H:%M")
+    return utc_start.astimezone(_VIETNAM_TZ).strftime("%H:%M %d/%m/%Y")
 
 
 def process_pending_email_retries(
@@ -147,6 +148,7 @@ def process_due_meeting_reminders(
             db.query(Meeting)
             .options(
                 joinedload(Meeting.organizer),
+                joinedload(Meeting.room),
                 selectinload(Meeting.participants).joinedload(MeetingParticipant.user),
             )
             .filter(
@@ -172,16 +174,31 @@ def process_due_meeting_reminders(
 
             start_time = _format_start_time(meeting.start_time)
             title = f"Nhắc họp: {meeting.title} (nhắc trước {lead_label})"
+            room_name = (
+                meeting.room.name
+                if meeting.room is not None
+                else (
+                    f"Trực tuyến ({meeting.online_link})"
+                    if meeting.meeting_type == "online" and meeting.online_link
+                    else "Chưa xác định"
+                )
+            )
+            meeting_url = (
+                os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+                + f"/dashboard.html?meeting_id={meeting.id}"
+            )
             content = (
                 f"Đây là lời nhắc được thiết lập trước {lead_label}. "
                 f"Cuộc họp '{meeting.title}' bắt đầu lúc {start_time} "
-                f"(giờ Việt Nam)."
+                f"(giờ Việt Nam) tại {room_name}. "
+                f"Chi tiết cuộc họp: {meeting_url}"
             )
 
             for user in recipients.values():
                 db.add(
                     Notification(
                         user_id=user.id,
+                        meeting_id=meeting.id,
                         title=title,
                         content=content,
                     )

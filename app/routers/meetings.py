@@ -1,5 +1,5 @@
 # app/routers/meetings.py
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -59,6 +59,7 @@ def _queue_meeting_cancellation_tasks(
         "Cuộc họp đã bị hủy",
         f"Cuộc họp '{meeting.title}' đã bị hủy. "
         f"Lý do: {reason}.\nChúng tôi xin lỗi vì sự bất tiện này.",
+        meeting.id,
     )
 
 
@@ -113,6 +114,7 @@ def create_meeting(
                 "Lời mời tham dự cuộc họp mới",
                 f"Bạn được mời tham gia cuộc họp '{first_meeting.title}' "
                 f"diễn ra vào lúc {start_str}.",
+                first_meeting.id,
             )
 
     return created_meetings
@@ -191,6 +193,44 @@ def get_meeting_history(
     return query.all()
 
 
+@router.get(
+    "/{meeting_id}",
+    response_model=MeetingResponse,
+    summary="Chi tiết cuộc họp",
+)
+def get_meeting(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).one_or_none()
+    if meeting is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy cuộc họp",
+        )
+
+    is_participant = (
+        db.query(MeetingParticipant.id)
+        .filter(
+            MeetingParticipant.meeting_id == meeting_id,
+            MeetingParticipant.user_id == current_user.id,
+        )
+        .first()
+        is not None
+    )
+    if (
+        meeting.organizer_id != current_user.id
+        and current_user.role != "admin"
+        and not is_participant
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền xem cuộc họp này",
+        )
+    return meeting
+
+
 @router.patch(
     "/{meeting_id}",
     response_model=MeetingResponse,
@@ -249,6 +289,9 @@ def update_meeting(
     schedule_changed = any(
         field in updates
         for field in ("meeting_type", "room_id", "start_time", "end_time")
+    )
+    start_time_changed = (
+        "start_time" in updates and start_time != meeting.start_time
     )
     moved_recurring_occurrence = (
         meeting.recurring_series_id is not None
@@ -311,6 +354,17 @@ def update_meeting(
         if field in updates:
             setattr(meeting, field, updates[field])
 
+    if start_time_changed:
+        time_until_start = start_time - datetime.now(timezone.utc).replace(
+            tzinfo=None
+        )
+        if time_until_start > timedelta(hours=24):
+            meeting.is_reminded_24h = False
+            meeting.is_reminded_15m = False
+        else:
+            meeting.is_reminded_24h = True
+            meeting.is_reminded_15m = False
+
     if participant_ids is not None:
         unique_participant_ids = set(participant_ids) - {current_user.id}
         existing_ids = {
@@ -364,6 +418,7 @@ def update_meeting(
             "Cuộc họp đã được cập nhật",
             f"Lịch cuộc họp '{meeting.title}' đã thay đổi. "
             f"Thời gian hiện tại: {start_str}.",
+            meeting.id,
         )
     return meeting
 

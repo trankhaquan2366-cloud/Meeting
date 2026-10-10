@@ -14,6 +14,7 @@ def send_meeting_notification_task(
     recipient_ids: list[int],
     subject: str,
     content: str,
+    meeting_id: int | None = None,
 ) -> None:
     db = SessionLocal()
     try:
@@ -26,7 +27,12 @@ def send_meeting_notification_task(
             return
 
         db.add_all(
-            Notification(user_id=user.id, title=subject, content=content)
+            Notification(
+                user_id=user.id,
+                meeting_id=meeting_id,
+                title=subject,
+                content=content,
+            )
             for user in recipients
         )
         db.commit()

@@ -5,6 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.email_delivery import EmailDelivery
 from app.models.notification import Notification
+from app.models.room import Room
 from app.models.user import User
 from app.services import email_service, reminder_service
 
@@ -95,6 +96,78 @@ def test_sends_email_and_in_app_reminder_for_15_minute_window(db_session, monkey
     assert meeting.is_reminded_15m is True
     assert {email[0] for email in sent_emails} == {organizer.email, participant.email}
     assert db_session.query(Notification).count() == 2
+
+
+def test_reminder_content_includes_room_meeting_link_and_vietnam_time(
+    db_session,
+    monkeypatch,
+):
+    _clear_smtp_config(monkeypatch)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "meetings@example.com")
+    now = datetime(2030, 1, 1, 2)
+    meeting, organizer, _ = _create_meeting(
+        db_session,
+        datetime(2030, 1, 2, 2),
+        suffix="timezone",
+    )
+    room = Room(
+        name="Phòng Hội Đồng",
+        capacity=10,
+        location="Tầng 1",
+        is_active=True,
+    )
+    db_session.add(room)
+    db_session.flush()
+    meeting.room_id = room.id
+    db_session.commit()
+    sent_emails = []
+    monkeypatch.setattr(
+        email_service,
+        "send_email",
+        lambda recipient, subject, content, settings: sent_emails.append(
+            (recipient, subject, content)
+        ),
+    )
+
+    assert reminder_service.process_due_meeting_reminders(db_session, now) == 1
+
+    notification = db_session.query(Notification).filter_by(
+        user_id=organizer.id
+    ).one()
+    assert notification.meeting_id == meeting.id
+    assert "09:00 02/01/2030" in notification.content
+    assert "Phòng Hội Đồng" in notification.content
+    assert (
+        f"http://localhost:3000/dashboard.html?meeting_id={meeting.id}"
+        in notification.content
+    )
+    assert len(sent_emails) == 2
+    assert all("09:00 02/01/2030" in email[2] for email in sent_emails)
+    assert all("Phòng Hội Đồng" in email[2] for email in sent_emails)
+
+
+def test_cancelled_meeting_generates_no_reminders(db_session, monkeypatch):
+    _clear_smtp_config(monkeypatch)
+    now = datetime(2030, 1, 1, 12)
+    _create_meeting(
+        db_session,
+        now + timedelta(minutes=15) - timedelta(seconds=30),
+        status="CANCELLED",
+        suffix="cancelled",
+    )
+    sent_emails = []
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "meetings@example.com")
+    monkeypatch.setattr(
+        email_service,
+        "send_email",
+        lambda *args: sent_emails.append(args),
+    )
+
+    assert reminder_service.process_due_meeting_reminders(db_session, now) == 0
+    assert db_session.query(Notification).count() == 0
+    assert sent_emails == []
 
 
 def test_sends_message_over_configured_smtp(monkeypatch):

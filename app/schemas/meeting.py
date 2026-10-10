@@ -155,6 +155,7 @@ class FrequentUserResponse(BaseModel):
 class NotificationResponse(BaseModel):
     id: int
     user_id: int
+    meeting_id: Optional[int] = None
     title: str
     content: str
     is_read: bool

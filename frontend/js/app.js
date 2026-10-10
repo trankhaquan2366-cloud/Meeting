@@ -98,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
         switchMainTab('settings', document.getElementById('navSettings'));
         window.history.replaceState(null, '', `${location.pathname}#settings`);
     }
+
 });
 
 /* ==========================================================================
@@ -195,12 +196,7 @@ function renderNotifications(notifications) {
 
     const unreadCount = notifications.filter(n => !n.is_read).length;
 
-    // Chỉ cập nhật chấm đỏ khi popup ĐANG ĐÓNG (fetch nền / trang tải)
-    // Khi popup đang mở thì không tự động ẩn chấm đỏ qua hàm này
-    const popupVisible = popup.style.display !== 'none';
-    if (!popupVisible) {
-        updateNotificationDot(unreadCount);
-    }
+    updateNotificationDot(unreadCount);
 
     popup.innerHTML = `
         <div style="padding: 12px 16px; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
@@ -209,13 +205,45 @@ function renderNotifications(notifications) {
         </div>
         <div style="max-height: 320px; overflow-y: auto;">
             ${notifications.map(n => `
-                <div style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9; background-color: ${n.is_read ? '#ffffff' : '#f0fdf4'}; cursor: pointer;">
-                    <div style="font-weight: 600; font-size: 0.85rem; color: #0f172a; margin-bottom: 4px;">${escapeHtml(n.title)}</div>
-                    <div style="font-size: 0.8rem; color: #475569; line-height: 1.4;">${escapeHtml(n.content)}</div>
-                </div>
+                <button type="button" data-notification-id="${n.id}" data-meeting-id="${n.meeting_id || ''}" aria-label="Mở thông báo: ${escapeHtml(n.title)}" style="display: block; width: 100%; padding: 12px 16px; border: 0; border-bottom: 1px solid #f1f5f9; text-align: left; background-color: ${n.is_read ? '#ffffff' : '#f0fdf4'}; cursor: pointer;">
+                    <span style="display: block; font-weight: 600; font-size: 0.85rem; color: #0f172a; margin-bottom: 4px;">${escapeHtml(n.title)}</span>
+                    <span style="display: block; font-size: 0.8rem; color: #475569; line-height: 1.4;">${escapeHtml(n.content)}</span>
+                </button>
             `).join('')}
         </div>
     `;
+
+    popup.querySelectorAll('[data-notification-id]').forEach(item => {
+        item.addEventListener('click', () => openNotification(item));
+    });
+}
+
+async function openNotification(item) {
+    const token = getAuthToken();
+    const notificationId = item.dataset.notificationId;
+    const meetingId = item.dataset.meetingId;
+
+    try {
+        const response = await fetch(
+            `${API_BASE}/notifications/${notificationId}/read`,
+            {
+                method: 'PATCH',
+                headers: { 'Authorization': `Bearer ${token}` },
+            }
+        );
+        if (!response.ok) {
+            throw new Error(`Không thể đánh dấu thông báo đã đọc (HTTP ${response.status})`);
+        }
+        await fetchNotifications();
+    } catch (error) {
+        console.error('Lỗi cập nhật trạng thái thông báo:', error);
+        alert('Không thể cập nhật trạng thái thông báo. Vui lòng thử lại.');
+        return;
+    }
+
+    if (meetingId) {
+        window.location.href = `dashboard.html?meeting_id=${encodeURIComponent(meetingId)}`;
+    }
 }
 
 // Hiển thị hoặc ẩn chấm đỏ nhấp nháy trên nút chuông
@@ -225,7 +253,7 @@ function updateNotificationDot(unreadCount) {
     dot.style.display = unreadCount > 0 ? 'block' : 'none';
 }
 
-// Toggle popup thông báo: mở thì ẩn chấm đỏ ngay + load data; đóng thì ẩn popup
+// Toggle popup thông báo; việc mở popup không tự đánh dấu các thông báo đã đọc.
 function toggleNotificationPopup() {
     const popup = document.getElementById('notificationPopup');
     if (!popup) return;
@@ -234,8 +262,6 @@ function toggleNotificationPopup() {
     popup.style.display = isHidden ? 'block' : 'none';
 
     if (isHidden) {
-        // Ẩn chấm đỏ ngay khi người dùng mở popup (đã "xem" thông báo)
-        updateNotificationDot(0);
         fetchNotifications();
     }
 }
@@ -1116,10 +1142,93 @@ async function fetchMyBookings() {
         if (res.ok) {
             myBookings = await res.json();
             renderMyBookings();
+            focusMeetingFromQuery();
         }
     } catch (err) {
         console.error("Lỗi lấy danh sách lịch họp:", err);
     }
+}
+
+async function focusMeetingFromQuery() {
+    const meetingId = new URLSearchParams(location.search).get('meeting_id');
+    if (!meetingId || !/^\d+$/.test(meetingId)) return;
+
+    const row = document.getElementById(`meeting-${meetingId}`);
+    let meeting = myBookings.find(item => String(item.id) === meetingId);
+    if (row) {
+        document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+        document.getElementById('navMyBookings')?.classList.add('active');
+        document.querySelectorAll('.tab-view').forEach(view => { view.style.display = 'none'; });
+        const bookingsView = document.getElementById('viewMyBookings');
+        if (bookingsView) bookingsView.style.display = 'block';
+        const searchContainer = document.getElementById('topbarSearchContainer');
+        if (searchContainer) searchContainer.style.display = 'none';
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.style.backgroundColor = '#fef3c7';
+        window.setTimeout(() => { row.style.backgroundColor = ''; }, 3000);
+    }
+
+    if (!meeting) {
+        try {
+            const response = await fetch(`${API_BASE}/meetings/${meetingId}`, {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+            });
+            if (!response.ok) {
+                throw new Error(`Không thể tải chi tiết cuộc họp (HTTP ${response.status})`);
+            }
+            meeting = await response.json();
+        } catch (error) {
+            console.error('Lỗi tải chi tiết cuộc họp:', error);
+            alert('Không thể mở chi tiết cuộc họp. Vui lòng thử lại.');
+            return;
+        }
+    }
+
+    showMeetingDetails(meeting);
+    const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.delete('meeting_id');
+    window.history.replaceState(
+        null,
+        '',
+        `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+    );
+}
+
+function showMeetingDetails(meeting) {
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute('aria-labelledby', 'meetingDetailsTitle');
+    dialog.style.cssText = 'max-width: 560px; width: calc(100% - 32px); padding: 24px; border: 0; border-radius: 16px; box-shadow: 0 24px 64px #0f172a44;';
+    const roomName = allRooms.find(room => room.id === meeting.room_id)?.name
+        || meeting.room?.name
+        || (meeting.meeting_type === 'online' ? 'Trực tuyến' : 'Chưa xác định');
+    const dateFormatter = new Intl.DateTimeFormat('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        dateStyle: 'long',
+        timeStyle: 'short',
+    });
+    const start = new Date(meeting.start_time);
+    const end = new Date(meeting.end_time);
+    const timeLabel = Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())
+        ? 'Chưa có thời gian'
+        : `${dateFormatter.format(start)} – ${dateFormatter.format(end)}`;
+    const statusLabels = {
+        CONFIRMED: 'Đã xác nhận',
+        COMPLETED: 'Đã hoàn thành',
+        CANCELLED: 'Đã hủy',
+    };
+    dialog.innerHTML = `
+        <h2 id="meetingDetailsTitle" style="margin: 0 0 16px; font-size: 1.25rem; font-weight: 700;">${escapeHtml(meeting.title || 'Cuộc họp')}</h2>
+        <p><strong>Phòng:</strong> ${escapeHtml(roomName)}</p>
+        <p><strong>Thời gian:</strong> ${escapeHtml(timeLabel)}</p>
+        <p><strong>Trạng thái:</strong> ${escapeHtml(statusLabels[meeting.status] || meeting.status || 'Không xác định')}</p>
+        <p><strong>Mô tả:</strong> ${escapeHtml(meeting.description || 'Không có mô tả.')}</p>
+        ${meeting.online_link ? `<p><strong>Đường dẫn trực tuyến:</strong> ${escapeHtml(meeting.online_link)}</p>` : ''}
+        <button type="button" style="margin-top: 12px; padding: 8px 16px; border: 0; border-radius: 8px; color: white; background: #2563eb; cursor: pointer;">Đóng</button>
+    `;
+    dialog.querySelector('button').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    document.body.appendChild(dialog);
+    dialog.showModal();
 }
 
 function renderMyBookings() {
@@ -1170,7 +1279,7 @@ function renderMyBookings() {
         }
 
         return `
-            <tr>
+            <tr id="meeting-${b.id}">
                 <td class="booking-room-cell">
                     <strong class="booking-room-name">${escapeHtml(roomName)}</strong>
                     <span class="booking-meeting-title">${escapeHtml(b.title || 'Cuộc họp')}</span>

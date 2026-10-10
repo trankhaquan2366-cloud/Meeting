@@ -1,4 +1,4 @@
-"""Apply the email retry queue migration and verify the MySQL scheduler lock."""
+"""Apply reminder-related migrations and verify the MySQL scheduler lock."""
 
 import os
 from pathlib import Path
@@ -21,24 +21,50 @@ def main() -> int:
     try:
         if engine.dialect.name != "mysql":
             print(
-                "ERROR: Migration 013 and the named-lock check require MySQL; "
+                "ERROR: Reminder migrations and the named-lock check require MySQL; "
                 f"detected dialect {engine.dialect.name!r}"
             )
             return 1
 
-        migration_path = (
-            PROJECT_ROOT
-            / "migrations"
-            / "013_create_email_delivery_retry_queue.sql"
-        )
-        if not migration_path.is_file():
-            print(f"ERROR: Migration file not found: {migration_path}")
-            return 1
-
         with engine.begin() as connection:
-            if inspect(connection).has_table("email_deliveries"):
-                print("Migration 013: email_deliveries already exists; skipped")
-            else:
+            migrations = (
+                (
+                    "013",
+                    "013_create_email_delivery_retry_queue.sql",
+                    lambda inspector: inspector.has_table("email_deliveries"),
+                ),
+                (
+                    "014",
+                    "014_add_meeting_id_to_notifications.sql",
+                    lambda inspector: any(
+                        column["name"] == "meeting_id"
+                        for column in inspector.get_columns("notifications")
+                    ),
+                ),
+            )
+            for migration_number, filename, already_applied in migrations:
+                migration_path = PROJECT_ROOT / "migrations" / filename
+                if not migration_path.is_file():
+                    print(f"ERROR: Migration file not found: {migration_path}")
+                    return 1
+                inspector = inspect(connection)
+                if not inspector.has_table(
+                    "notifications"
+                    if migration_number == "014"
+                    else "email_deliveries"
+                ):
+                    if migration_number == "014":
+                        print(
+                            "ERROR: Migration 014 requires the notifications "
+                            "table; apply earlier migrations first"
+                        )
+                        return 1
+                elif already_applied(inspector):
+                    print(
+                        f"Migration {migration_number}: already applied; skipped"
+                    )
+                    continue
+
                 statements = [
                     statement.strip()
                     for statement in migration_path.read_text(encoding="utf-8")
@@ -48,7 +74,7 @@ def main() -> int:
                 ]
                 for statement in statements:
                     connection.exec_driver_sql(statement)
-                print("Migration 013: email_deliveries created")
+                print(f"Migration {migration_number}: applied")
 
         with engine.connect() as connection:
             lock_name = "meeting_reminder_scheduler"
