@@ -64,6 +64,18 @@ class MeetingParticipationResponse(RSVPRequest):
 
 
 
+class MeetingCheckInRequest(BaseModel):
+    qr_token: str
+
+
+class MeetingCheckOutRequest(BaseModel):
+    qr_token: str
+
+
+class MeetingCancelRequest(BaseModel):
+    cancellation_reason: Optional[str] = None
+
+
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
 class MeetingCreateRequest(BaseModel):
     title: str
@@ -117,6 +129,9 @@ class MeetingResponse(BaseModel):
     is_recurring: bool = False
     recurring_type: Optional[str] = None
     status: str
+    cancellation_reason: Optional[str] = None
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
     equipments: Optional[List[MeetingEquipmentItemOutput]] = Field(default_factory=list)
     participant_ids: Optional[List[int]] = Field(default_factory=list)
 

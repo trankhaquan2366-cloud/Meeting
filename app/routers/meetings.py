@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,9 @@ from app.db.session import get_db
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
 from app.schemas.meeting import (
+    MeetingCheckInRequest,
+    MeetingCheckOutRequest,
+    MeetingCancelRequest,
     MeetingCreateRequest,
     MeetingParticipationResponse,
     MeetingResponse,
@@ -105,6 +108,26 @@ def suggest_time(
     return MeetingService.suggest_time(db=db, payload=payload)
 
 
+@router.post("/{meeting_id}/check-in", response_model=MeetingResponse)
+def check_in_meeting(
+    meeting_id: int,
+    payload: MeetingCheckInRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.check_in_meeting(db, meeting_id, payload.qr_token, current_user)
+
+
+@router.post("/{meeting_id}/check-out", response_model=MeetingResponse)
+def check_out_meeting(
+    meeting_id: int,
+    payload: MeetingCheckOutRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.check_out_meeting(db, meeting_id, payload.qr_token, current_user)
+
+
 @router.get(
     "/",
     response_model=List[MeetingResponse],
@@ -117,7 +140,9 @@ def get_meetings(
     end_date: Optional[datetime] = Query(None, description="Lọc đến ngày"),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Meeting).filter(Meeting.status.notin_(["CANCELLED", "canceled"]))
+    query = db.query(Meeting).filter(
+        Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"])
+    )
 
     if room_id:
         query = query.filter(Meeting.room_id == room_id)
@@ -155,7 +180,11 @@ def get_my_meetings(
                 (Meeting.organizer_id == current_user.id)
                 | (MeetingParticipant.user_id == current_user.id)
             )
-            .filter(Meeting.status.notin_(["CANCELLED", "canceled", "cancelled"]))
+            .filter(
+                Meeting.status.notin_(
+                    ["CANCELLED", "canceled", "cancelled", "CANCELLED_NO_SHOW"]
+                )
+            )
             .distinct()
             .order_by(Meeting.start_time)
             .all()
@@ -341,7 +370,7 @@ def get_meeting_history(
         db.query(Meeting)
         .filter(
             Meeting.end_time < now,
-            Meeting.status.notin_(["CANCELLED", "canceled"]),
+            Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
             (
                 (Meeting.organizer_id == current_user.id)
                 | Meeting.id.in_(participant_meeting_ids)
@@ -373,10 +402,16 @@ def get_meeting_history(
 def cancel_meeting(
     meeting_id: int,
     background_tasks: BackgroundTasks,
+    payload: MeetingCancelRequest | None = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    meeting = MeetingService.cancel_meeting(
+        db,
+        meeting_id,
+        current_user,
+        payload.cancellation_reason if payload else None,
+    )
     background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
     return meeting
 
@@ -391,9 +426,15 @@ def cancel_meeting(
 def cancel_meeting_legacy(
     meeting_id: int,
     background_tasks: BackgroundTasks,
+    payload: MeetingCancelRequest | None = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    meeting = MeetingService.cancel_meeting(
+        db,
+        meeting_id,
+        current_user,
+        payload.cancellation_reason if payload else None,
+    )
     background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
     return meeting

@@ -21,6 +21,8 @@ class Meeting(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String(200), nullable=False, index=True)
     description = Column(Text, nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
     # meeting_type: 'online' | 'offline' — online meetings do not require a room
     meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
     meeting_link = Column(String(255), nullable=True)
@@ -33,6 +35,9 @@ class Meeting(Base):
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     status = Column(String(20), nullable=False, default="scheduled")
+    check_in_time = Column(DateTime, nullable=True)
+    check_out_time = Column(DateTime, nullable=True)
+    reminder_sent = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 

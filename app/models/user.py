@@ -1,5 +1,6 @@
 # app/models/user.py
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
@@ -20,8 +21,11 @@ class User(Base):
     google_calendar_connected_at = Column(DateTime, nullable=True)
     role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
     is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
     updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
+
+    department = relationship("Department", back_populates="users", lazy="joined")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} username={self.username!r} role={self.role!r}>"

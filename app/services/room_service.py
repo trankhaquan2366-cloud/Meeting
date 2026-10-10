@@ -1,4 +1,5 @@
 from datetime import datetime
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.meeting import Meeting
 from app.models.room import Room
@@ -14,7 +15,10 @@ def get_available_rooms(
     occupied_room_ids = (
         db.query(Meeting.room_id)
         .filter(
-            Meeting.status != "CANCELLED",
+            func.upper(Meeting.status).notin_(
+                ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
+            ),
+            Meeting.check_out_time.is_(None),
             Meeting.start_time < end_time,
             Meeting.end_time > start_time,
         )

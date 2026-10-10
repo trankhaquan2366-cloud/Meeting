@@ -84,7 +84,7 @@ def request_calendar_access_for_invitees(user_ids: list[int], meeting_ids: list[
                 .filter(
                     MeetingParticipant.user_id == user_id,
                     Meeting.id.in_(unique_meeting_ids),
-                    Meeting.status.notin_(["CANCELLED", "canceled"]),
+                    Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
                 )
                 .order_by(Meeting.start_time)
                 .all()
