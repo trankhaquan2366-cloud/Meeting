@@ -18,6 +18,8 @@ from app.schemas.meeting import (
 from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
 from app.services.notification_service import send_meeting_invitation_notifications
+from app.services.calendar_email_service import request_calendar_access_for_invitees
+from app.services.google_calendar_service import delete_google_events_for_meeting
 
 router = APIRouter()
 
@@ -65,6 +67,11 @@ def create_meeting(
                 participant_ids=notify_ids,
                 meeting_title=first_meeting.title,
                 start_time_str=start_str,
+            )
+            background_tasks.add_task(
+                request_calendar_access_for_invitees,
+                user_ids=notify_ids,
+                meeting_ids=[meeting.id for meeting in created_meetings],
             )
 
     return created_meetings
@@ -152,10 +159,13 @@ def get_meeting_history(
 )
 def cancel_meeting(
     meeting_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return MeetingService.cancel_meeting(db, meeting_id, current_user)
+    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
+    return meeting
 
 
 @router.delete(
@@ -167,7 +177,10 @@ def cancel_meeting(
 )
 def cancel_meeting_legacy(
     meeting_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return MeetingService.cancel_meeting(db, meeting_id, current_user)
+    meeting = MeetingService.cancel_meeting(db, meeting_id, current_user)
+    background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
+    return meeting

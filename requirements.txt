@@ -1,29 +1,40 @@
-# Web Framework & Server
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-
-# Database & ORM
-SQLAlchemy>=2.0.23
-PyMySQL>=1.1.0
-alembic>=1.12.0
-
-# Data Validation & Serialization
-pydantic>=2.5.0
-pydantic-settings>=2.0.0
-email-validator>=2.0.0
-
-# Security & Authentication
-python-jose[cryptography]>=3.3.0
-cryptography>=41.0.0
-python-multipart>=0.0.6
-
-# Environment & Config
-python-dotenv>=1.0.0
-
-# Template & Utilities
-Jinja2>=3.1.2
-requests>=2.31.0
-httpx>=0.25.0
-
-# Testing & Dev
-pytest>=8.0.0
+fastapi==0.104.1
+fastapi-cli==0.0.32
+google-auth==2.56.3
+google-api-python-client>=2.150,<3.0
+google-genai==2.18.1
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.18
+iniconfig==2.3.0
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+orjson==3.12.0
+packaging==26.3
+passlib==1.7.4
+pluggy==1.6.0
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+aiomysql==0.2.0
+pymysql==1.1.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+alembic==1.12.1
+python-dotenv==1.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+openpyxl==3.1.2
+reportlab==4.0.7
+qrcode==7.4.2
+pillow==10.1.0
+requests==2.31.0
+pytest==8.3.2

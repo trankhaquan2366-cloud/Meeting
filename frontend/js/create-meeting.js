@@ -385,15 +385,19 @@ function setCreateMeetingMode(mode) {
     const roomSection = cmEl('cmResources');
     if (onlineBox) onlineBox.classList.toggle('is-open', mode === 'online');
     if (roomSection) roomSection.classList.toggle('is-open', mode === 'offline');
+    onlineBox?.setAttribute('aria-hidden', String(mode !== 'online'));
+    roomSection?.setAttribute('aria-hidden', String(mode !== 'offline'));
 
     const roomSearchBtn = document.getElementById('cmSearchRoomsBtn');
     if (roomSearchBtn) roomSearchBtn.disabled = mode !== 'offline';
 
+    const onlineLink = cmEl('cmMeetingLink');
     if (mode === 'online') {
-        const onlineLink = cmEl('cmMeetingLink');
-        if (onlineLink && !onlineLink.value.trim()) {
-            onlineLink.value = '';
-        }
+        if (onlineLink) onlineLink.required = true;
+    } else if (onlineLink) {
+        onlineLink.value = '';
+        onlineLink.required = false;
+        onlineLink.classList.remove('is-invalid');
     }
 
     renderRoomResults();
@@ -1027,7 +1031,7 @@ async function handleCreateMeetingSubmit(event) {
         title,
         description: descriptionParts.join('\n') || null,
         meeting_type: cmState.mode,
-        online_link: cmState.mode === 'online'
+        meeting_link: cmState.mode === 'online'
             ? (cmEl('cmMeetingLink')?.value.trim() || null)
             : null,
         room_id: cmState.mode === 'offline'

@@ -62,11 +62,21 @@ class MeetingService:
 
         # 1. Xác định meeting_type và kiểm tra phòng (chỉ khi offline)
         meeting_type = getattr(payload, 'meeting_type', 'offline') or 'offline'
-        online_link  = (getattr(payload, 'online_link', None) or '').strip() or None
+        meeting_link = (
+            getattr(payload, 'meeting_link', None)
+            or getattr(payload, 'online_link', None)
+            or ''
+        ).strip() or None
+        room_id = payload.room_id
 
         if meeting_type == 'offline':
+            if room_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Offline meetings require a room_id",
+                )
             room = db.query(Room).filter(
-                Room.id == payload.room_id,
+                Room.id == room_id,
                 Room.is_active == True
             ).first()
             if not room:
@@ -74,8 +84,19 @@ class MeetingService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Phòng họp không tồn tại hoặc đã ngưng hoạt động!"
                 )
-        else:
+        elif meeting_type == 'online':
+            if not meeting_link:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Online meetings require a meeting_link",
+                )
+            room_id = None
             room = None
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="meeting_type must be 'offline' or 'online'",
+            )
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
         meeting_dates = []
@@ -124,7 +145,7 @@ class MeetingService:
                 # Kiểm tra conflict phòng — chỉ áp dụng cho OFFLINE meeting
                 if meeting_type == 'offline':
                     overlapping_meeting = db.query(Meeting).filter(
-                        Meeting.room_id == payload.room_id,
+                        Meeting.room_id == room_id,
                         Meeting.status.notin_(["CANCELLED", "canceled"]),
                         and_(
                             Meeting.start_time < e_time,
@@ -149,8 +170,8 @@ class MeetingService:
                     title=payload.title,
                     description=payload.description,
                     meeting_type=meeting_type,
-                    online_link=online_link,
-                    room_id=payload.room_id if meeting_type == 'offline' else None,
+                    meeting_link=meeting_link,
+                    room_id=room_id,
                     organizer_id=organizer_id,
                     start_time=s_time,
                     end_time=e_time,

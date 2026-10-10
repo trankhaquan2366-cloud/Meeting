@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.setItem('token', token);
 
                 if (result.full_name) localStorage.setItem('user_name', result.full_name);
+                const email = result.email || result.user?.email;
+                if (email) localStorage.setItem('user_email', email);
+                if (result.user_name) localStorage.setItem('user_name', result.user_name);
                 if (result.role) localStorage.setItem('role', result.role);
 
                 // 👉 LƯU THÊM EMAIL THẬT TỪ DATABASE VÀO LOCALSTORAGE

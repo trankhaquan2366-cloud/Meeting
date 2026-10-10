@@ -11,7 +11,8 @@ class MeetingCreateRequest(BaseModel):
     description: Optional[str] = None
     # meeting_type: 'online' | 'offline'
     meeting_type: str = 'offline'
-    # online_link: bắt buộc khi meeting_type='online'
+    meeting_link: Optional[str] = None
+    # Retained for compatibility with existing clients and service code.
     online_link: Optional[str] = None
     # room_id: bắt buộc khi meeting_type='offline', phải NULL khi 'online'
     room_id: Optional[int] = None
@@ -36,16 +37,9 @@ class MeetingCreateRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_meeting_mode(self) -> 'MeetingCreateRequest':
-        if self.meeting_type == 'online':
-            if self.room_id is not None:
-                raise ValueError(
-                    "Cuộc họp online không được có room_id. Hãy gửi room_id = null."
-                )
-            if not self.online_link or not self.online_link.strip():
-                raise ValueError("Cuộc họp online cần có online_link.")
-        elif self.meeting_type == 'offline':
-            if not self.room_id:
-                raise ValueError("Cuộc họp offline cần có room_id hợp lệ.")
+        link = (self.meeting_link or self.online_link or '').strip() or None
+        self.meeting_link = link
+        self.online_link = link
         return self
 
 
@@ -55,6 +49,7 @@ class MeetingResponse(BaseModel):
     title: str
     description: Optional[str] = None
     meeting_type: str = 'offline'
+    meeting_link: Optional[str] = None
     online_link: Optional[str] = None
     room_id: Optional[int] = None
     organizer_id: Optional[int] = None
