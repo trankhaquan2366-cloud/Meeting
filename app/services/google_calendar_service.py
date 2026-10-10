@@ -384,3 +384,29 @@ def delete_google_events_for_meeting(meeting_id: int) -> None:
         logger.exception("Could not process Google events for meeting_id=%s", meeting_id)
     finally:
         db.close()
+
+
+def delete_google_event_for_user_meeting(user_id: int, meeting_id: int) -> None:
+    """Delete a single participant's Google Calendar event mapping when they reject."""
+    db: Session = SessionLocal()
+    try:
+        event_record = (
+            db.query(GoogleCalendarEvent)
+            .filter(
+                GoogleCalendarEvent.user_id == user_id,
+                GoogleCalendarEvent.meeting_id == meeting_id,
+            )
+            .first()
+        )
+        if event_record:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                delete_google_calendar_event(user, event_record.google_event_id)
+            db.delete(event_record)
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Could not delete Google event for user_id=%s meeting_id=%s", user_id, meeting_id)
+    finally:
+        db.close()
+

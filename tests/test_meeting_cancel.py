@@ -12,6 +12,7 @@ from tests.helpers import (
     _make_token,
 )
 from app.models.meeting import MeetingParticipant
+from app.models.notification import Notification
 
 
 def _future_window():
@@ -40,6 +41,51 @@ def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: 
     saved = db_session.get(type(meeting), meeting.id)
     assert saved.status == "CANCELLED"
     assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
+
+
+def test_cancel_updates_invitation_notification_for_invitee(client: TestClient, db_session: Session):
+    organizer = _create_user(db_session, "cancel-notification-organizer")
+    invitee = _create_user(db_session, "cancel-notification-invitee")
+    room = _create_room(db_session, "Cancel Notification Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, invitee)
+    invitation = Notification(
+        user_id=invitee.id,
+        meeting_id=meeting.id,
+        title="Lời mời tham dự cuộc họp mới",
+        content=f"Bạn được mời tham gia cuộc họp '{meeting.title}'.",
+        is_read=True,
+    )
+    db_session.add(invitation)
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(organizer)),
+    )
+    notifications = client.get(
+        "/api/notifications/",
+        headers=_auth_header(_make_token(invitee)),
+    )
+
+    assert response.status_code == 200
+    assert notifications.status_code == 200
+    canceled_notification = next(
+        item for item in notifications.json() if item["id"] == invitation.id
+    )
+    assert canceled_notification["title"] == "Cuộc họp đã bị hủy"
+    assert canceled_notification["meeting_title"] == meeting.title
+    assert canceled_notification["meeting_status"] == "CANCELLED"
+    assert canceled_notification["is_read"] is False
+    assert db_session.query(Notification).filter_by(meeting_id=meeting.id).count() == 1
+
+    repeated = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=_auth_header(_make_token(organizer)),
+    )
+    assert repeated.status_code == 200
+    assert db_session.query(Notification).filter_by(meeting_id=meeting.id).count() == 1
 
 
 def test_admin_can_cancel(client: TestClient, db_session: Session):

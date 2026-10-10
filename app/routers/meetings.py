@@ -15,14 +15,17 @@ from app.schemas.meeting import (
     MeetingCreateRequest,
     MeetingParticipationResponse,
     MeetingResponse,
+    RSVPRequest,
     SuggestTimeRequest,
     SuggestTimeResponse,
 )
 from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
-from app.services.notification_service import send_meeting_invitation_notifications
+from app.services.notification_service import create_notification, send_meeting_invitation_notifications
 from app.services.calendar_email_service import request_calendar_access_for_invitees
+from app.services.email_service import send_rsvp_notification_email
 from app.services.google_calendar_service import (
+    delete_google_event_for_user_meeting,
     delete_google_events_for_meeting,
     sync_user_meetings_to_google,
 )
@@ -77,6 +80,7 @@ def create_meeting(
                 participant_ids=notify_ids,
                 meeting_title=first_meeting.title,
                 start_time_str=start_str,
+                meeting_id=first_meeting.id,
             )
             background_tasks.add_task(
                 request_calendar_access_for_invitees,
@@ -200,18 +204,39 @@ def get_my_meetings(
         ) from exc
 
 
+@router.put(
+    "/{meeting_id}/respond",
+    summary="Phản hồi lời mời họp (RSVP)",
+    description="Người được mời cập nhật trạng thái tham gia (accepted / rejected). Gửi thông báo in-app và email cho organizer.",
+)
+@router.put(
+    "/{meeting_id}/response",
+    summary="Phản hồi lời mời họp (Alias PUT)",
+    include_in_schema=False,
+)
 @router.patch(
     "/{meeting_id}/response",
-    summary="Phản hồi lời mời họp",
-    description="Cho phép người được mời xác nhận tham gia hoặc từ chối; không cấp quyền hủy cuộc họp.",
+    summary="Phản hồi lời mời họp (Tương thích PATCH)",
+    include_in_schema=False,
 )
 def respond_to_meeting_invitation(
     meeting_id: int,
-    payload: MeetingParticipationResponse,
+    payload: RSVPRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+
+        if current_user.id == meeting.organizer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Organizer cannot respond to their own meeting",
+            )
+
         participant = (
             db.query(MeetingParticipant)
             .filter(
@@ -221,10 +246,65 @@ def respond_to_meeting_invitation(
             .first()
         )
         if participant is None:
-            raise HTTPException(status_code=404, detail="Không tìm thấy lời mời họp.")
-        participant.response_status = payload.response_status
+            raise HTTPException(
+                status_code=403,
+                detail="You are not invited to this meeting",
+            )
+
+        new_status = payload.status.value if hasattr(payload.status, "value") else str(payload.status).lower()
+        response_status_for_client = (payload.raw_status_input or new_status).lower()
+        participant.response_status = new_status
         db.commit()
-        return {"meeting_id": meeting_id, "response_status": participant.response_status}
+        db.refresh(participant)
+
+        # 1. Gửi In-app notification cho organizer (nếu không phải tự phản hồi cuộc họp của mình)
+        is_accepted = new_status == "accepted"
+        action_vi = "đồng ý tham gia" if is_accepted else "từ chối tham gia"
+        user_name = current_user.full_name or current_user.username
+        start_str = meeting.start_time.strftime("%H:%M ngày %d/%m/%Y")
+
+        if meeting.organizer_id and meeting.organizer_id != current_user.id:
+            title_notif = f"Thành viên {action_vi} cuộc họp"
+            content_notif = (
+                f"{user_name} đã {action_vi} cuộc họp '{meeting.title}' "
+                f"(bắt đầu lúc {start_str})."
+            )
+            create_notification(
+                db=db,
+                user_id=meeting.organizer_id,
+                title=title_notif,
+                content=content_notif,
+                meeting_id=meeting.id,
+            )
+
+            # 2. Gửi Email thông báo ngược lại cho organizer
+            if meeting.organizer and meeting.organizer.email:
+                background_tasks.add_task(
+                    send_rsvp_notification_email,
+                    organizer_email=meeting.organizer.email,
+                    organizer_name=meeting.organizer.full_name or meeting.organizer.username,
+                    participant_name=user_name,
+                    participant_email=current_user.email or "",
+                    meeting_title=meeting.title,
+                    start_time_str=start_str,
+                    status=new_status,
+                )
+
+        # 3. Logic lịch trình cá nhân / Google Calendar:
+        # Sự kiện chỉ được xác nhận chính thức vào lịch cá nhân khi ở trạng thái ACCEPTED
+        if is_accepted and current_user.google_refresh_token:
+            background_tasks.add_task(sync_user_meetings_to_google, current_user.id)
+        elif not is_accepted:
+            background_tasks.add_task(delete_google_event_for_user_meeting, current_user.id, meeting.id)
+
+        return {
+            "message": f"Đã {action_vi} cuộc họp thành công",
+            "meeting_id": meeting_id,
+            "status": response_status_for_client,
+            "response_status": response_status_for_client,
+        }
+    except HTTPException:
+        raise
     except SQLAlchemyError as exc:
         db.rollback()
         logger.exception(

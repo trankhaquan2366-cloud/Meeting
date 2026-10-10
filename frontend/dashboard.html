@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=15">
+    <link rel="stylesheet" href="css/style.css?v=18">
     <link rel="stylesheet" href="css/booking.css?v=3">
     <link rel="stylesheet" href="css/create-meeting.css?v=1">
 </head>
@@ -107,20 +107,19 @@
                     <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                     <div class="notification-wrapper">
                         <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()"
-                            title="Thông báo">
+                            title="Thông báo" aria-label="Thông báo" aria-expanded="false"
+                            aria-controls="notificationPopup">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2">
                                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                                 <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
                             </svg>
-                            <span id="notificationDot" class="notification-dot" style="display: none;"></span>
+                            <span id="notificationDot" class="notification-dot" style="display: none;"
+                                aria-live="polite"></span>
                         </button>
-                        <div id="notificationPopup" class="notification-popup" style="display: none;">
-                            <h4>Thông báo mới</h4>
-                            <ul>
-                                <li>📌 Lịch họp Phòng Hội Đồng bắt đầu sau 15 phút.</li>
-                                <li>✅ Bạn đã đặt thành công Phòng Sáng Tạo.</li>
-                            </ul>
+                        <div id="notificationPopup" class="notification-popup" style="display: none;"
+                            role="region" aria-label="Danh sách thông báo">
+                            <div class="notification-empty">Đang tải thông báo...</div>
                         </div>
                     </div>
 
@@ -794,8 +793,9 @@
         </section>
     </div>
 
-    <script src="js/app.js?v=13"></script>
+    <script src="js/app.js?v=18"></script>
     <script src="js/create-meeting.js?v=3"></script>
+    <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
 </body>
 
 </html>

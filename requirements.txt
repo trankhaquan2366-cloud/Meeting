@@ -38,3 +38,4 @@ qrcode==7.4.2
 pillow==10.1.0
 requests==2.31.0
 pytest==8.3.2
+apscheduler>=3.10.4,<4.0.0

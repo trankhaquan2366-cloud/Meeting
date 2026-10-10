@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting, MeetingParticipant
+from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
@@ -32,9 +33,40 @@ class MeetingService:
             )
 
         # Idempotent: repeating the operation is a successful no-op.
-        if meeting.status != "CANCELLED":
+        if str(meeting.status or "").strip().casefold() not in {"cancelled", "canceled"}:
+            invitee_ids = {
+                participant.user_id
+                for participant in meeting.participants
+                if participant.user_id != meeting.organizer_id
+            }
+            notifications = (
+                db.query(Notification)
+                .filter(
+                    Notification.meeting_id == meeting.id,
+                    Notification.user_id.in_(invitee_ids),
+                    Notification.title.ilike("%mời%"),
+                )
+                .all()
+            ) if invitee_ids else []
+            invitation_by_user = {item.user_id: item for item in notifications}
+
             meeting.status = "CANCELLED"
             try:
+                for user_id in invitee_ids:
+                    notification = invitation_by_user.get(user_id)
+                    if notification is None:
+                        notification = Notification(
+                            user_id=user_id,
+                            meeting_id=meeting.id,
+                        )
+                        db.add(notification)
+
+                    notification.title = "Cuộc họp đã bị hủy"
+                    notification.content = (
+                        f"Cuộc họp '{meeting.title}' đã bị người tổ chức hủy."
+                    )
+                    notification.is_read = False
+
                 db.commit()
                 db.refresh(meeting)
             except SQLAlchemyError as exc:

@@ -215,32 +215,60 @@ body {
 .notification-wrapper { position: relative; }
 .icon-btn { background: transparent; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; position: relative; }
 
-/* Chấm đỏ nhấp nháy trên nút chuông */
+/* Unread notification count badge */
 .notification-dot {
     position: absolute;
-    top: 2px;
-    right: 2px;
-    width: 9px;
-    height: 9px;
+    top: -5px;
+    right: -8px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
     background-color: #ef4444;
-    border-radius: 50%;
     border: 2px solid #ffffff;
-    animation: notifPulse 1.5s ease-in-out infinite;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    border-radius: 999px;
     z-index: 10;
 }
 
-@keyframes notifPulse {
-    0%   { transform: scale(1);   opacity: 1; }
-    50%  { transform: scale(1.35); opacity: 0.7; }
-    100% { transform: scale(1);   opacity: 1; }
-}
-
 .notification-popup {
-    position: absolute; right: 0; top: 36px; width: 280px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 10px 20px -5px rgba(0,0,0,0.1); padding: 14px; z-index: 20;
+    position: absolute; right: 0; top: 36px; width: min(360px, calc(100vw - 32px)); max-height: 440px; overflow: hidden; background: white; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 10px 20px -5px rgba(0,0,0,0.1); padding: 0; z-index: 20;
 }
 .notification-popup h4 { font-size: 13px; margin-bottom: 10px; }
 .notification-popup ul { list-style: none; font-size: 12px; color: #475569; }
 .notification-popup li { padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+.notification-list { max-height: 385px; overflow-y: auto; }
+.notification-entry { border-bottom: 1px solid #f1f5f9; }
+.notification-entry.unread { background: #f0fdf4; }
+.notification-item { display: block; width: 100%; padding: 12px 16px 6px; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.notification-item:hover, .notification-item:focus-visible { background: #f8fafc; outline: none; }
+.notification-item.unread { background: #f0fdf4; }
+.notification-item-title { display: block; margin-bottom: 4px; color: #0f172a; font-size: 12px; font-weight: 600; }
+.notification-item-content { display: block; color: #475569; font-size: 12px; line-height: 1.45; }
+.notification-item-time { display: block; margin-top: 6px; color: #94a3b8; font-size: 10px; }
+.notification-rsvp-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 5px 16px 12px; }
+.notification-rsvp-actions .badge-status { margin: 0 auto 0 0; }
+.notification-empty { padding: 18px 16px; color: #64748b; text-align: center; font-size: 12px; }
+.booking-rsvp-button:disabled { cursor: not-allowed; opacity: 0.55; }
+.rsvp-actions { flex-wrap: wrap; }
+.btn-rsvp { padding: 8px 11px; border: 1px solid transparent; border-radius: 7px; font-size: 11px; font-weight: 700; cursor: pointer; transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .15s ease; }
+.btn-rsvp:active:not(:disabled) { transform: translateY(1px); }
+.btn-rsvp:disabled { cursor: not-allowed; opacity: .55; }
+.btn-accept { color: #fff; background: #16a34a; border-color: #15803d; }
+.btn-accept:hover:not(:disabled) { background: #15803d; }
+.btn-reject { color: #b91c1c; background: #fff; border-color: #fecaca; }
+.btn-reject:hover:not(:disabled) { color: #991b1b; background: #fef2f2; border-color: #fca5a5; }
+.badge-status { display: inline-block; margin-top: 5px; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.badge-status.accepted { color: #166534; background: #dcfce7; }
+.badge-status.rejected { color: #991b1b; background: #fee2e2; }
+.badge-status.pending { color: #475569; background: #f1f5f9; }
+.app-toast-container { position: fixed; right: 20px; bottom: 20px; z-index: 1000; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); }
+.app-toast { padding: 12px 16px; border: 1px solid; border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 23, 42, .16); font-size: 13px; font-weight: 600; }
+.app-toast.success { color: #166534; background: #f0fdf4; border-color: #86efac; }
+.app-toast.error { color: #991b1b; background: #fef2f2; border-color: #fca5a5; }
 
 .header-avatar {
     width: 34px; height: 34px; background: #3b82f6; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; cursor: pointer;
@@ -447,7 +475,7 @@ body {
 .booking-guest { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; color: #334155; font-size: 12px; }
 .booking-guest.pending { color: #94a3b8; }
 .booking-guest-status.accepted { color: #15803d; font-weight: 700; }
-.booking-guest-status.declined { color: #b91c1c; }
+.booking-guest-status.rejected, .booking-guest-status.declined { color: #b91c1c; }
 .booking-guest-status.pending { color: #94a3b8; }
 .booking-list-empty { padding: 28px 16px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 10px; text-align: center; font-size: 13px; }
 
