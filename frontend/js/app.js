@@ -596,13 +596,7 @@ function resolveNotificationMeeting(notification) {
 }
 
 function renderNotificationRsvpActions(notification, meeting) {
-    const response = String(
-        notificationRsvpOverrides.get(Number(meeting.id))
-        || meeting.my_response_status
-        || meeting.response_status
-        || 'pending'
-    ).toLowerCase();
-    const normalizedResponse = response === 'declined' ? 'rejected' : response;
+    const normalizedResponse = getMeetingRsvpStatus(meeting);
     const notificationId = Number(notification.id);
     const meetingId = Number(meeting.id);
     if (normalizedResponse === 'accepted') {
@@ -1141,14 +1135,11 @@ function renderInvitedBookings(meetings) {
         const end = bookingDate(meeting.end_time);
         const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
         const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
-        const rawResponse = meeting.my_response_status || meeting.response_status || 'pending';
-        const response = String(rawResponse).toLowerCase() === 'declined'
-            ? 'rejected'
-            : String(rawResponse).toLowerCase();
+        const response = getMeetingRsvpStatus(meeting);
         const statusLabel = response === 'accepted' ? 'Đã đồng ý'
             : response === 'rejected' ? 'Đã từ chối' : 'Chưa phản hồi';
-        const acceptButton = `<button class="btn-rsvp btn-accept" type="button" data-rsvp-meeting="${meeting.id}" data-rsvp-status="accepted">${response === 'rejected' ? 'Đổi sang chấp nhận' : 'Chấp nhận'}</button>`;
-        const rejectButton = `<button class="btn-rsvp btn-reject" type="button" data-rsvp-meeting="${meeting.id}" data-rsvp-status="rejected">${response === 'accepted' ? 'Đổi sang từ chối' : 'Từ chối'}</button>`;
+        const acceptButton = `<button class="btn-rsvp btn-accept" type="button" data-meeting-id="${meeting.id}" data-rsvp-meeting="${meeting.id}" data-rsvp-status="accepted">${response === 'rejected' ? 'Đổi sang chấp nhận' : 'Chấp nhận'}</button>`;
+        const rejectButton = `<button class="btn-rsvp btn-reject" type="button" data-meeting-id="${meeting.id}" data-rsvp-meeting="${meeting.id}" data-rsvp-status="rejected">${response === 'accepted' ? 'Đổi sang từ chối' : 'Từ chối'}</button>`;
         const rsvpActions = response === 'accepted' ? rejectButton
             : response === 'rejected' ? acceptButton
                 : `${acceptButton}${rejectButton}`;
@@ -1156,7 +1147,7 @@ function renderInvitedBookings(meetings) {
             ? `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`
             : '';
         const qrActions = meetingQrActions(meeting, response === 'accepted');
-        return `<article class="booking-list-card"><div class="booking-list-row">
+        return `<article class="booking-list-card"><div class="booking-list-row invited-booking-row">
             <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span><span>Chủ trì: ${escapeHtml(meeting.organizer_name || 'Người tổ chức')}</span></div>
             <div class="booking-list-time">${escapeHtml(time)}<br><span class="badge-status ${escapeHtml(response)}">${escapeHtml(statusLabel)}</span></div>
             <div class="booking-list-actions rsvp-actions">
@@ -1164,6 +1155,18 @@ function renderInvitedBookings(meetings) {
             </div>
         </div></article>`;
     }).join('');
+}
+
+function getMeetingRsvpStatus(meeting) {
+    const response = notificationRsvpOverrides.get(Number(meeting.id))
+        || meeting.my_response_status
+        || meeting.response_status
+        || meeting.participant_response_status
+        || meeting.rsvp_status
+        || meeting.status;
+    const normalized = String(response || '').trim().toLowerCase();
+    if (normalized === 'declined' || normalized === 'decline') return 'rejected';
+    return ['pending', 'accepted', 'rejected'].includes(normalized) ? normalized : 'pending';
 }
 
 function initializeRsvpActions() {

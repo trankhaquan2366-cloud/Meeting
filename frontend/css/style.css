@@ -472,6 +472,7 @@ body {
 .booking-list { display: grid; gap: 10px; }
 .booking-list-card { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
 .booking-list-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) auto auto; align-items: center; gap: 14px; padding: 14px 16px; }
+.booking-list-row.invited-booking-row { grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) auto; }
 .booking-list-main { min-width: 0; }
 .booking-list-main strong, .booking-list-main span { display: block; }
 .booking-list-main strong { overflow: hidden; color: #0f172a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
@@ -644,6 +645,7 @@ body {
     .booking-list-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
     .booking-list-time { grid-column: 1; }
     .booking-list-actions { grid-column: 2; grid-row: 1 / span 2; flex-direction: column; align-items: stretch; }
+    .booking-list-row.invited-booking-row .booking-list-actions { grid-column: 1 / -1; grid-row: auto; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
     .booking-agenda-item { grid-template-columns: 82px minmax(0, 1fr); }
 }
 

@@ -163,7 +163,7 @@ def check_and_send_meeting_reminders() -> Dict[str, int]:
     return stats
 
 
-def start_reminder_scheduler(interval_seconds: int = 60) -> BackgroundScheduler:
+def start_reminder_scheduler(interval_seconds: int = 30) -> BackgroundScheduler:
     """Khởi động tiến trình APScheduler chạy nền định kỳ kiểm tra nhắc nhở."""
     global _scheduler
     if _scheduler is not None and _scheduler.running:

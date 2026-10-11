@@ -120,6 +120,7 @@ def _auto_migrate_schema():
 _auto_migrate_schema()
 
 logger = logging.getLogger(__name__)
+MEETING_SCHEDULER_INTERVAL_SECONDS = 30
 
 
 def _run_meeting_scheduler_cycle() -> None:
@@ -140,7 +141,7 @@ def _run_meeting_scheduler_cycle() -> None:
 
 async def _meeting_scheduler_loop() -> None:
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(MEETING_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_meeting_scheduler_cycle)
 
 
@@ -149,7 +150,7 @@ async def lifespan(app: FastAPI):
     scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
     try:
         from app.services.reminder_service import start_reminder_scheduler
-        start_reminder_scheduler(interval_seconds=60)
+        start_reminder_scheduler(interval_seconds=MEETING_SCHEDULER_INTERVAL_SECONDS)
         yield
     finally:
         scheduler_task.cancel()
