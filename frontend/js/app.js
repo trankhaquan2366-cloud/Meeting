@@ -13,6 +13,10 @@ let googleCalendarOAuthError = null;
 let userNotifications = [];
 const notificationRsvpOverrides = new Map();
 let activeQrScanner = null;
+let quickQrScanner = null;
+let quickQrSubmissionInProgress = false;
+let quickQrResumeTimer = null;
+let quickQrCloseTimer = null;
 let activeQrMeetingId = null;
 let activeQrAction = null;
 let qrSubmissionInProgress = false;
@@ -24,6 +28,23 @@ let pendingCancelMeetingId = null;
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
     return localStorage.getItem('token') || localStorage.getItem('access_token') || '';
+}
+
+async function fetchAPI(...args) {
+    const response = await window.fetch(...args);
+    if (response.status === 401 && getAuthToken()) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('access_token');
+
+        const pathname = window.location.pathname;
+        const loginPath = pathname.endsWith('/dashboard.html')
+            ? pathname.replace(/dashboard\.html$/, 'index.html')
+            : pathname === '/dashboard'
+                ? '/app'
+                : '/static/index.html';
+        window.location.replace(loginPath);
+    }
+    return response;
 }
 
 // Xử lý Escape HTML an toàn
@@ -55,7 +76,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Gọi API lấy thông tin chuẩn từ Database trực tiếp
     try {
-        const profileRes = await fetch(`${API_BASE}/users/me`, {
+        const profileRes = await fetchAPI(`${API_BASE}/users/me`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (profileRes.ok) {
@@ -186,8 +207,40 @@ document.addEventListener('DOMContentLoaded', async () => {
    NAVIGATION & UI CONTROLS
    ========================================================================== */
 function toggleSidebar() {
-    const layout = document.getElementById('appLayout');
-    if (layout) layout.classList.toggle('collapsed');
+    toggleMobileMenu();
+}
+
+function toggleMobileMenu() {
+    const sidebar = document.getElementById('sidebar');
+    const backdrop = document.getElementById('mobileMenuBackdrop');
+    const menuButton = document.querySelector('.btn-toggle-menu');
+    if (!sidebar || !backdrop) return;
+
+    const isOpen = sidebar.classList.contains('translate-x-0');
+    if (isOpen) {
+        closeMobileMenu();
+        return;
+    }
+
+    sidebar.classList.remove('-translate-x-full');
+    sidebar.classList.add('translate-x-0');
+    backdrop.classList.remove('hidden');
+    document.body.classList.add('mobile-menu-open');
+    if (menuButton) menuButton.setAttribute('aria-expanded', 'true');
+}
+
+function closeMobileMenu() {
+    const sidebar = document.getElementById('sidebar');
+    const backdrop = document.getElementById('mobileMenuBackdrop');
+    const menuButton = document.querySelector('.btn-toggle-menu');
+
+    if (sidebar) {
+        sidebar.classList.remove('translate-x-0');
+        sidebar.classList.add('-translate-x-full');
+    }
+    if (backdrop) backdrop.classList.add('hidden');
+    document.body.classList.remove('mobile-menu-open');
+    if (menuButton) menuButton.setAttribute('aria-expanded', 'false');
 }
 
 function switchToOverview() {
@@ -196,8 +249,14 @@ function switchToOverview() {
 }
 
 function switchMainTab(tabName, el) {
+    closeMobileMenu();
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
     if (el) el.classList.add('active');
+    document.querySelectorAll('.mobile-nav-item[data-tab]').forEach(item => {
+        const isActive = item.dataset.tab === tabName;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-current', isActive ? 'page' : 'false');
+    });
 
     document.querySelectorAll('.tab-view').forEach(view => view.style.display = 'none');
 
@@ -245,6 +304,14 @@ function switchMainTab(tabName, el) {
     }
 }
 
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeMobileMenu();
+});
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth >= 1024) closeMobileMenu();
+});
+
 async function loadGoogleCalendarStatus() {
     const statusElement = document.getElementById('googleCalendarStatus');
     const actionButton = document.getElementById('googleCalendarAction');
@@ -253,7 +320,7 @@ async function loadGoogleCalendarStatus() {
     actionButton.disabled = true;
     statusElement.textContent = 'Đang kiểm tra kết nối...';
     try {
-        const response = await fetch(`${API_BASE}/auth/google/calendar/status`, {
+        const response = await fetchAPI(`${API_BASE}/auth/google/calendar/status`, {
             headers: { Authorization: `Bearer ${getAuthToken()}` },
         });
         if (!response.ok) throw new Error(`Không thể kiểm tra kết nối Google Calendar (${response.status})`);
@@ -284,7 +351,7 @@ async function handleGoogleCalendarAction() {
     actionButton.disabled = true;
     try {
         if (actionButton.dataset.connected === 'true') {
-            const response = await fetch(`${API_BASE}/auth/google/calendar/disconnect`, {
+            const response = await fetchAPI(`${API_BASE}/auth/google/calendar/disconnect`, {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${getAuthToken()}` },
             });
@@ -293,7 +360,7 @@ async function handleGoogleCalendarAction() {
             return;
         }
 
-        const response = await fetch(`${API_BASE}/auth/google/calendar/authorize`, {
+        const response = await fetchAPI(`${API_BASE}/auth/google/calendar/authorize`, {
             credentials: 'include',
             headers: { Authorization: `Bearer ${getAuthToken()}` },
         });
@@ -343,7 +410,7 @@ async function loadCurrentUserProfile() {
     if (!token) return;
 
     try {
-        const response = await fetch(`${API_BASE}/auth/me`, {
+        const response = await fetchAPI(`${API_BASE}/auth/me`, {
             headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) return;
@@ -393,7 +460,7 @@ async function updateUserSettings() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/users/me`, {
+        const res = await fetchAPI(`${API_BASE}/users/me`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -462,7 +529,7 @@ async function fetchNotifications() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/notifications/`, {
+        const res = await fetchAPI(`${API_BASE}/notifications/`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -839,7 +906,7 @@ function setDefaultBookingTimes() {
 async function fetchRooms(isAdmin) {
     try {
         const token = getAuthToken();
-        const res = await fetch(`${API_BASE}/rooms/`, {
+        const res = await fetchAPI(`${API_BASE}/rooms/`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -1013,7 +1080,7 @@ async function submitCancelBooking() {
     const submitButton = document.querySelector('.cancellation-confirm-button');
     if (submitButton) submitButton.disabled = true;
     try {
-        const res = await fetch(`${API_BASE}/meetings/${meetingId}/cancel`, {
+        const res = await fetchAPI(`${API_BASE}/meetings/${meetingId}/cancel`, {
             method: 'PATCH',
             headers: {
                 'Authorization': 'Bearer ' + getAuthToken(),
@@ -1043,7 +1110,7 @@ async function fetchMyBookings() {
         return;
     }
     try {
-        const res = await fetch(`${API_BASE}/meetings/mine`, {
+        const res = await fetchAPI(`${API_BASE}/meetings/mine`, {
             headers: { 'Authorization': 'Bearer ' + getAuthToken() }
         });
         if (handleUnauthorizedResponse(res)) return;
@@ -1243,7 +1310,7 @@ function buildQrCode(container, token, size) {
 
 async function fetchRoomQrToken(roomId, meetingId = null) {
     const meetingQuery = meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : '';
-    const response = await fetch(`${API_BASE}/rooms/${roomId}/qr-code${meetingQuery}`, {
+    const response = await fetchAPI(`${API_BASE}/rooms/${roomId}/qr-code${meetingQuery}`, {
         headers: { Authorization: `Bearer ${getAuthToken()}` },
     });
     const result = await response.json();
@@ -1394,6 +1461,104 @@ function copyPresenterQrToken() {
 
 document.addEventListener('fullscreenchange', syncPresenterFullscreenButton);
 
+async function openQuickQrScanner() {
+    const modal = document.getElementById('qrScannerModal');
+    const feedback = document.getElementById('quickQrFeedback');
+    if (!modal) return;
+    if (quickQrCloseTimer) clearTimeout(quickQrCloseTimer);
+    if (quickQrResumeTimer) clearTimeout(quickQrResumeTimer);
+    if (quickQrScanner) await closeQuickQrScanner();
+    if (feedback) feedback.textContent = '';
+    modal.style.display = 'flex';
+    if (typeof Html5Qrcode === 'undefined') {
+        if (feedback) feedback.textContent = 'Không tải được trình quét QR. Vui lòng tải lại trang.';
+        return;
+    }
+
+    try {
+        quickQrScanner = new Html5Qrcode('quickQrReader');
+        await quickQrScanner.start(
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            handleSmartQrResult,
+            () => {}
+        );
+    } catch (error) {
+        console.warn('Không thể khởi động camera quét QR nhanh:', error);
+        if (feedback) {
+            feedback.textContent = 'Không thể mở camera. Hãy kiểm tra quyền truy cập camera của trình duyệt.';
+        }
+    }
+}
+
+async function handleSmartQrResult(decodedText) {
+    if (!quickQrScanner || quickQrSubmissionInProgress) return;
+    quickQrSubmissionInProgress = true;
+    const scanner = quickQrScanner;
+    const feedback = document.getElementById('quickQrFeedback');
+    if (feedback) feedback.textContent = '';
+
+    try {
+        scanner.pause();
+        const response = await fetchAPI(`${API_BASE}/v1/meetings/smart-qr-action`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ qr_payload: decodedText }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || 'Không thể xử lý mã QR.');
+
+        const actionLabel = result.action === 'CHECK_OUT' ? 'CHECK-OUT' : 'CHECK-IN';
+        await stopQuickQrScanner();
+        showQrToast(`✅ [${actionLabel} THÀNH CÔNG] - ${result.message || 'Đã cập nhật cuộc họp.'}`);
+        await fetchMyBookings();
+        quickQrCloseTimer = setTimeout(() => {
+            closeQuickQrScanner();
+        }, 1500);
+    } catch (error) {
+        if (feedback) feedback.textContent = `❌ ${error.message || 'Không thể xử lý mã QR.'}`;
+        quickQrSubmissionInProgress = false;
+        if (quickQrResumeTimer) clearTimeout(quickQrResumeTimer);
+        quickQrResumeTimer = setTimeout(() => {
+            if (quickQrScanner !== scanner) return;
+            try {
+                scanner.resume();
+            } catch (resumeError) {
+                console.warn('Không thể tiếp tục trình quét QR:', resumeError);
+                if (feedback) feedback.textContent = 'Không thể tiếp tục camera. Hãy đóng và mở lại trình quét.';
+                return;
+            }
+            if (feedback) feedback.textContent = '';
+        }, 2500);
+    }
+}
+
+async function stopQuickQrScanner() {
+    if (!quickQrScanner) return;
+    const scanner = quickQrScanner;
+    quickQrScanner = null;
+    try {
+        if (scanner.isScanning) await scanner.stop();
+        scanner.clear();
+    } catch (error) {
+        console.warn('Không thể dừng trình quét QR nhanh:', error);
+    }
+}
+
+async function closeQuickQrScanner() {
+    if (quickQrResumeTimer) clearTimeout(quickQrResumeTimer);
+    if (quickQrCloseTimer) clearTimeout(quickQrCloseTimer);
+    quickQrResumeTimer = null;
+    quickQrCloseTimer = null;
+    quickQrSubmissionInProgress = false;
+    await stopQuickQrScanner();
+    const modal = document.getElementById('qrScannerModal');
+    if (modal) modal.style.display = 'none';
+}
+
 async function openQrCheckModal(meetingId, action) {
     activeQrMeetingId = meetingId;
     activeQrAction = action;
@@ -1469,7 +1634,7 @@ async function submitQrCheck() {
     }
     qrSubmissionInProgress = true;
     try {
-        const response = await fetch(
+        const response = await fetchAPI(
             `${API_BASE}/v1/meetings/${activeQrMeetingId}/${activeQrAction}`,
             {
                 method: 'POST',
@@ -1620,30 +1785,30 @@ async function respondToMeeting(meetingId, responseStatus, notificationId = null
     const buttons = document.querySelectorAll(`[data-rsvp-meeting="${Number(meetingId)}"]`);
     buttons.forEach(button => { button.disabled = true; });
     try {
-        const token = getAuthToken();
-        if (!token) {
-            redirectToLogin();
-            return;
-        }
-        const res = await fetch(`${API_BASE}/meetings/${meetingId}/respond`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ status: responseStatus }),
-        });
-        if (handleUnauthorizedResponse(res)) return;
-        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Không thể cập nhật phản hồi.'));
+const token = getAuthToken();
+    if (!token) {
+        redirectToLogin();
+        return;
+    }
+    const res = await fetchAPI(`${API_BASE}/meetings/${meetingId}/respond`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ status: responseStatus }),
+    });
+    if (handleUnauthorizedResponse(res)) return;
+    if (!res.ok) throw new Error(await apiErrorMessage(res, 'Không thể cập nhật phản hồi.'));
 
-        const meeting = myBookings.find(item => Number(item.id) === Number(meetingId));
-        notificationRsvpOverrides.set(Number(meetingId), responseStatus);
-        if (meeting) {
-            meeting.my_response_status = responseStatus;
-            renderInvitedBookings(myBookings.filter(item => !item.is_organizer));
-        }
-        if (userNotifications.length) renderNotifications(userNotifications);
-        if (notificationId) await markNotificationAsRead(notificationId);
-        showAppToast(responseStatus === 'accepted'
-            ? 'Bạn đã chấp nhận tham gia cuộc họp.'
-            : 'Bạn đã từ chối lời mời họp.');
+    const meeting = myBookings.find(item => Number(item.id) === Number(meetingId));
+    notificationRsvpOverrides.set(Number(meetingId), responseStatus);
+    if (meeting) {
+        meeting.my_response_status = responseStatus;
+        renderInvitedBookings(myBookings.filter(item => !item.is_organizer));
+    }
+    if (userNotifications.length) renderNotifications(userNotifications);
+    if (notificationId) await markNotificationAsRead(notificationId);
+    showAppToast(responseStatus === 'accepted'
+        ? 'Bạn đã chấp nhận tham gia cuộc họp.'
+        : 'Bạn đã từ chối lời mời họp.');
     } catch (error) {
         buttons.forEach(button => { button.disabled = false; });
         showAppToast(error.message || 'Không thể cập nhật phản hồi.', 'error');
@@ -1756,7 +1921,7 @@ async function handleFormSubmit(e) {
     const url = editId ? `${API_BASE}/rooms/${editId}/` : `${API_BASE}/rooms/`;
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchAPI(url, {
             method: method,
             headers: { 'Content-Type': 'application/json', "Authorization": `Bearer ${token}` },
             body: JSON.stringify(payload)
@@ -1777,7 +1942,7 @@ async function deleteRoom(roomId) {
     if (!confirm("Bạn có chắc chắn muốn xóa phòng này?")) return;
     const token = getAuthToken();
     try {
-        const res = await fetch(`${API_BASE}/rooms/${roomId}/`, {
+        const res = await fetchAPI(`${API_BASE}/rooms/${roomId}/`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -1835,7 +2000,7 @@ async function fetchEquipmentAvailability() {
     tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Đang cập nhật...</td></tr>';
     try {
         const token = getAuthToken();
-        const res = await fetch(`${API_BASE}/equipments/availability?${params.toString()}`, {
+        const res = await fetchAPI(`${API_BASE}/equipments/availability?${params.toString()}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) throw new Error('Không thể tải trạng thái thiết bị');
@@ -1877,7 +2042,7 @@ async function fetchAdminEquipments() {
     const token = getAuthToken();
     tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>';
     try {
-        const res = await fetch(`${API_BASE}/equipments/?include_inactive=true`, {
+        const res = await fetchAPI(`${API_BASE}/equipments/?include_inactive=true`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) throw new Error();
@@ -1921,7 +2086,7 @@ async function fetchAdminEquipments() {
 async function toggleEquipmentActive(equipmentId, isActive) {
     const token = getAuthToken();
     try {
-        await fetch(`${API_BASE}/equipments/${equipmentId}`, {
+        await fetchAPI(`${API_BASE}/equipments/${equipmentId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ is_active: isActive })
@@ -1969,7 +2134,7 @@ async function handleEquipmentFormSubmit(event) {
     const url = isEdit ? `${API_BASE}/equipments/${editId}` : `${API_BASE}/equipments/`;
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchAPI(url, {
             method: isEdit ? 'PUT' : 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify(payload)
@@ -1986,7 +2151,7 @@ async function deleteEquipment(id) {
     if (!confirm('Bạn có chắc chắn muốn xóa thiết bị này?')) return;
     const token = getAuthToken();
     try {
-        await fetch(`${API_BASE}/equipments/${id}`, {
+        await fetchAPI(`${API_BASE}/equipments/${id}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -2000,7 +2165,7 @@ async function deleteEquipment(id) {
    ========================================================================== */
 async function loadRoomsForReportFilter() {
     try {
-        const response = await fetch(`${API_BASE}/rooms/`);
+        const response = await fetchAPI(`${API_BASE}/rooms/`);
         if (response.ok) {
             const rooms = await response.json();
             const select = document.getElementById("reportRoomIdSelect");
@@ -2033,18 +2198,13 @@ async function fetchRoomUsageReport() {
     if (roomIdVal) params.append("room_id", roomIdVal);
 
     try {
-        const response = await fetch(url + params.toString(), {
+        const response = await fetchAPI(url + params.toString(), {
             method: "GET",
             headers: {
                 "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json"
             }
         });
-
-        if (response.status === 401) {
-            alert("Phiên đăng nhập hết hạn hoặc bạn không có quyền Quản trị viên (Admin)!");
-            return;
-        }
 
         if (response.status === 400) {
             const errData = await response.json();
@@ -2130,7 +2290,7 @@ async function fetchCancellationAnalytics(e) {
     if (roomId) params.set('room_id', roomId);
 
     try {
-        const response = await fetch(
+        const response = await fetchAPI(
             `${API_BASE}/v1/admin/analytics/cancellations?${params.toString()}`,
             { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
         );
@@ -2174,7 +2334,7 @@ async function exportCancellationAnalytics(format) {
     if (roomId) params.set('room_id', roomId);
 
     try {
-        const response = await fetch(
+        const response = await fetchAPI(
             `${API_BASE}/v1/admin/analytics/cancellations/export?${params.toString()}`,
             { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
         );
@@ -2222,7 +2382,7 @@ async function exportExecutiveReport(format) {
     if (departmentId) params.set('department_id', departmentId);
 
     try {
-        const response = await fetch(
+        const response = await fetchAPI(
             `${API_BASE}/v1/admin/analytics/executive-report/export?${params.toString()}`,
             { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
         );
@@ -2323,6 +2483,8 @@ function renderCancellationAnalytics(data) {
 
 /* GLOBAL EXPORTS (GẮN VÀO WINDOW CHO EVENT HANDLER) */
 window.toggleSidebar = toggleSidebar;
+window.toggleMobileMenu = toggleMobileMenu;
+window.closeMobileMenu = closeMobileMenu;
 window.switchToOverview = switchToOverview;
 window.switchMainTab = switchMainTab;
 window.navigateToSettings = navigateToSettings;
@@ -2333,6 +2495,9 @@ window.closeScheduleModal = closeScheduleModal;
 window.openQrCheckModal = openQrCheckModal;
 window.closeQrCheckModal = closeQrCheckModal;
 window.submitQrCheck = submitQrCheck;
+window.openQuickQrScanner = openQuickQrScanner;
+window.handleSmartQrResult = handleSmartQrResult;
+window.closeQuickQrScanner = closeQuickQrScanner;
 window.openRoomQrModal = openRoomQrModal;
 window.closeRoomQrModal = closeRoomQrModal;
 window.copyRoomQrToken = copyRoomQrToken;

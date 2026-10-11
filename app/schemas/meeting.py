@@ -72,6 +72,10 @@ class MeetingCheckOutRequest(BaseModel):
     qr_token: str
 
 
+class SmartQrActionRequest(BaseModel):
+    qr_payload: str
+
+
 class MeetingCancelRequest(BaseModel):
     cancellation_reason: Optional[str] = None
 

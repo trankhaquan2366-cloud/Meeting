@@ -144,8 +144,13 @@ class TestResponseShape:
             "meeting_type", "meeting_link", "online_link",
             "room_id", "organizer_id",
             "start_time", "end_time", "status",
-            "cancellation_reason", "check_in_time", "check_out_time",
-            "is_recurring", "recurring_type",
-            "equipments", "participant_ids",
-        }
+expected = {
+        "id", "title", "description",
+        "meeting_type", "meeting_link", "online_link",
+        "room_id", "organizer_id",
+        "start_time", "end_time", "status",
+        "cancellation_reason", "check_in_time", "check_out_time",
+        "is_recurring", "recurring_type",
+        "equipments", "participant_ids",
+    }
         assert set(item.keys()) == expected

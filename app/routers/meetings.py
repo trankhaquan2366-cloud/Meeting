@@ -19,6 +19,11 @@ from app.schemas.meeting import (
     MeetingParticipationResponse,
     MeetingResponse,
     RSVPRequest,
+    SmartQrActionRequest,
+    SuggestTimeRequest,
+    SuggestTimeResponse,
+)
+main
     SuggestTimeRequest,
     SuggestTimeResponse,
 )
@@ -106,6 +111,15 @@ def suggest_time(
     current_user: User = Depends(get_current_user),
 ):
     return MeetingService.suggest_time(db=db, payload=payload)
+
+
+@router.post("/smart-qr-action")
+def smart_qr_action(
+    payload: SmartQrActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.smart_qr_action(db, payload.qr_payload, current_user)
 
 
 @router.post("/{meeting_id}/check-in", response_model=MeetingResponse)

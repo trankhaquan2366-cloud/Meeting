@@ -3,18 +3,26 @@
 
 <head>
     <meta charset="UTF-8">
+    <head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/style.css?v=18">
     <link rel="stylesheet" href="css/booking.css?v=3">
-    <link rel="stylesheet" href="css/create-meeting.css?v=1">
+    <link rel="stylesheet" href="css/create-meeting.css?v=2">
+</head>
+
+    <link rel="stylesheet" href="css/style.css?v=17">
+ main
+    <link rel="stylesheet" href="css/booking.css?v=3">
+    <link rel="stylesheet" href="css/create-meeting.css?v=2">
 </head>
 
 <body>
     <div class="app-layout" id="appLayout">
         <!-- SIDEBAR -->
-        <aside class="sidebar" id="sidebar">
+        <aside class="sidebar -translate-x-full lg:translate-x-0" id="sidebar">
             <div class="sidebar-brand" onclick="switchToOverview()" title="Quay về Trang chủ">
                 <span class="logo-icon">RS</span>
                 <span class="brand-name">RoomSync</span>
@@ -86,13 +94,16 @@
                 </div>
             </div>
         </aside>
+        <div id="mobileMenuBackdrop" class="mobile-menu-backdrop hidden lg:hidden"
+            onclick="closeMobileMenu()" aria-hidden="true"></div>
 
         <!-- MAIN CONTENT -->
         <main class="main-content" id="mainContent">
             <!-- TOPBAR -->
             <header class="topbar">
                 <div class="topbar-left">
-                    <button class="btn-toggle-menu" onclick="toggleSidebar()" title="Ẩn / Hiện Menu">
+                    <button class="btn-toggle-menu" type="button" onclick="toggleMobileMenu()"
+                        aria-controls="sidebar" aria-expanded="false" title="Mở menu">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="3" y1="12" x2="21" y2="12"></line>
@@ -112,6 +123,16 @@
                 </div>
 
                 <div class="topbar-right">
+                    <button id="btnHeaderQrScan" type="button" onclick="openQuickQrScanner()"
+                        class="p-2.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200 flex items-center justify-center"
+                        title="Quét mã QR Check-in/Check-out nhanh"
+                        aria-label="Quét mã QR Check-in/Check-out nhanh">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 3h6v6H3V3zm12 0h6v6h-6V3zM3 15h6v6H3v-6zm12 6h3v-3h-3v3zm0-6h3v3h-3v-3zm3 3h3v3h-3v-3z" />
+                        </svg>
+                    </button>
                     <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
                     <div class="notification-wrapper">
                         <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()"
@@ -137,7 +158,7 @@
                 </div>
             </header>
 
-            <div class="content-body">
+            <div class="content-body p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
                 <!-- VIEW 1: TỔNG QUAN -->
                 <div id="viewOverview" class="tab-view">
                     <div class="hero-banner-overview">
@@ -272,24 +293,26 @@
                         </label>
                     </div>
                     <div class="table-card equipment-availability-table-wrap">
-                        <table class="data-table equipment-availability-table">
-                            <thead>
-                                <tr>
-                                    <th>Mã</th>
-                                    <th>Tên</th>
-                                    <th>Phân loại</th>
-                                    <th>Tổng số</th>
-                                    <th>Đã đặt</th>
-                                    <th>Khả dụng</th>
-                                    <th>Trạng thái</th>
-                                </tr>
-                            </thead>
-                            <tbody id="equipmentAvailabilityTableBody">
-                                <tr>
-                                    <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table equipment-availability-table">
+                                <thead>
+                                    <tr>
+                                        <th>Mã</th>
+                                        <th>Tên</th>
+                                        <th>Phân loại</th>
+                                        <th>Tổng số</th>
+                                        <th>Đã đặt</th>
+                                        <th>Khả dụng</th>
+                                        <th>Trạng thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="equipmentAvailabilityTableBody">
+                                    <tr>
+                                        <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
                     <!-- BẢNG DỮ LIỆU ADMIN (ADMIN TABLE) -->
@@ -303,23 +326,25 @@
                             </div>
                         </div>
                         <div class="table-card equipment-availability-table-wrap">
-                            <table class="data-table equipment-availability-table">
-                                <thead>
-                                    <tr>
-                                        <th>Mã thiết bị</th>
-                                        <th>Tên</th>
-                                        <th>Phân loại</th>
-                                        <th>Số lượng tổng</th>
-                                        <th>Trạng thái (Bật/Tắt)</th>
-                                        <th>Hành động</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="adminEquipmentTableBody">
-                                    <tr>
-                                        <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table equipment-availability-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Mã thiết bị</th>
+                                            <th>Tên</th>
+                                            <th>Phân loại</th>
+                                            <th>Số lượng tổng</th>
+                                            <th>Trạng thái (Bật/Tắt)</th>
+                                            <th>Hành động</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="adminEquipmentTableBody">
+                                        <tr>
+                                            <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -452,7 +477,7 @@
                     <div class="table-card">
                         <div style="padding: 16px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #1e293b;">
                             Chi tiết theo từng phòng họp</div>
-                        <div class="table-scroll">
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
                             <table class="data-table">
                                 <thead>
                                     <tr>
@@ -539,7 +564,7 @@
                     <div class="cancellation-analytics-columns">
                         <div class="table-card">
                             <h3>Phòng có nhiều lịch hủy</h3>
-                            <div class="table-scroll">
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
                                 <table class="data-table">
                                     <thead><tr><th>Phòng</th><th>Số lần hủy</th></tr></thead>
                                     <tbody id="cancellationRoomsBody"></tbody>
@@ -548,7 +573,7 @@
                         </div>
                         <div class="table-card">
                             <h3>Lý do hủy phổ biến</h3>
-                            <div class="table-scroll">
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
                                 <table class="data-table">
                                     <thead><tr><th>Lý do</th><th>Số lượng</th></tr></thead>
                                     <tbody id="cancellationReasonsBody"></tbody>
@@ -558,7 +583,7 @@
                     </div>
                     <div class="table-card cancellation-offenders-card">
                         <h3>Người đặt có lịch hủy nhiều</h3>
-                        <div class="table-scroll">
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
                             <table class="data-table">
                                 <thead><tr><th>Người đặt</th><th>Số lần hủy / no-show</th></tr></thead>
                                 <tbody id="cancellationOffendersBody"></tbody>
@@ -651,6 +676,31 @@
                 </div>
             </div>
         </main>
+
+        <nav class="mobile-bottom-nav fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 lg:hidden flex justify-around items-center h-16 shadow-lg"
+            aria-label="Điều hướng nhanh">
+            <button type="button" class="mobile-nav-item" data-tab="overview"
+                onclick="switchMainTab('overview', document.getElementById('navOverview'))" aria-label="Tổng quan"
+                aria-current="page">
+                <span aria-hidden="true">🏠</span><span>Tổng quan</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-tab="my-bookings"
+                onclick="switchMainTab('my-bookings', document.getElementById('navMyBookings'))"
+                aria-label="Lịch của tôi">
+                <span aria-hidden="true">📅</span><span>Lịch của tôi</span>
+            </button>
+            <button type="button" class="mobile-nav-item mobile-nav-scan" onclick="openQuickQrScanner()"
+                aria-label="Quét QR">
+                <span aria-hidden="true">📷</span><span>Quét QR</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-tab="rooms"
+                onclick="switchMainTab('rooms', document.getElementById('navRooms'))" aria-label="Phòng họp">
+                <span aria-hidden="true">🚪</span><span>Phòng họp</span>
+            </button>
+            <button type="button" class="mobile-nav-item" onclick="toggleMobileMenu()" aria-label="Mở menu">
+                <span aria-hidden="true">☰</span><span>Menu</span>
+            </button>
+        </nav>
     </div>
 
     <!-- MODAL XEM LỊCH TRÌNH -->
@@ -693,6 +743,18 @@
             <div class="modal-actions" style="margin-top: 20px;">
                 <button type="button" class="btn-cancel" onclick="closeQrCheckModal()">Đóng</button>
                 <button type="button" class="btn-primary" onclick="submitQrCheck()">Xác nhận</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrScannerModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="quickQrTitle">
+        <div class="modal-content">
+            <h3 id="quickQrTitle">Quét QR nhanh</h3>
+            <p class="subtitle">Quét mã QR phòng họp hoặc cuộc họp để tự động check-in/check-out.</p>
+            <div id="quickQrReader" class="qr-reader"></div>
+            <p id="quickQrFeedback" class="quick-qr-feedback" role="alert" aria-live="assertive"></p>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQuickQrScanner()">Đóng</button>
             </div>
         </div>
     </div>
@@ -817,7 +879,8 @@
 
     <!-- MODAL TẠO CUỘC HỌP -->
     <div id="createMeetingModal" class="cm-overlay" aria-hidden="true">
-        <section id="cmDialog" class="cm-dialog" role="dialog" aria-modal="true" aria-labelledby="cmHeading">
+        <section id="cmDialog" class="cm-dialog cm-dialog--mobile-scroll" role="dialog" aria-modal="true"
+            aria-labelledby="cmHeading">
             <header class="cm-header">
                 <div>
                     <p class="cm-kicker">Cuộc họp</p>
@@ -886,7 +949,7 @@
                         </div>
                     </section>
 
-                    <section class="cm-section">
+                    <section class="cm-section cm-attendees-section">
                         <div class="cm-inline-actions">
                             <label class="cm-label" for="cmAttendeeSearch">Người tham dự</label>
                             <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
@@ -982,7 +1045,7 @@
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="js/app.js?v=18"></script>
+    <script src="js/app.js?v=20"></script>
     <script src="js/create-meeting.js?v=3"></script>
     <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
 </body>
