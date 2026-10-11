@@ -1,18 +1,18 @@
 """Periodic meeting lifecycle jobs."""
 
 import logging
-import os
 import smtplib
-import ssl
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import get_smtp_settings
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.notification import Notification
 from app.models.user import User
+from app.services.email_service import smtp_connection
 
 logger = logging.getLogger(__name__)
 
@@ -37,34 +37,29 @@ def _meeting_recipients(db: Session, meeting: Meeting, accepted_only: bool) -> l
 
 
 def _send_meeting_email(recipients: list[User], subject: str, body: str) -> None:
-    host = os.getenv("SMTP_HOST")
-    username = os.getenv("SMTP_USERNAME")
-    password = os.getenv("SMTP_PASSWORD")
-    from_email = os.getenv("SMTP_FROM_EMAIL") or username
-    if not all((host, username, password, from_email)):
+    settings = get_smtp_settings()
+    if (
+        settings is None
+        or not settings.host
+        or not settings.username
+        or not settings.password
+        or not settings.from_email
+    ):
         logger.warning("Meeting lifecycle email skipped: SMTP settings are incomplete")
         return
 
-    port = int(os.getenv("SMTP_PORT", "587"))
-    use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().casefold() in {
-        "1", "true", "yes",
-    }
     for user in recipients:
         if not user.email:
             logger.warning("Meeting lifecycle email skipped: user_id=%s has no email", user.id)
             continue
         message = EmailMessage()
         message["Subject"] = subject
-        message["From"] = from_email
+        message["From"] = settings.from_email
         message["To"] = user.email
         message.set_content(f"Chào {user.full_name or user.username},\n\n{body}")
         try:
-            with smtplib.SMTP(host, port, timeout=20) as smtp:
-                smtp.ehlo()
-                if use_starttls:
-                    smtp.starttls(context=ssl.create_default_context())
-                    smtp.ehlo()
-                smtp.login(username, password)
+            with smtp_connection(settings, timeout=20) as smtp:
+                smtp.login(settings.username, settings.password)
                 smtp.send_message(message)
         except (OSError, smtplib.SMTPException):
             logger.exception("Meeting lifecycle email failed for user_id=%s", user.id)

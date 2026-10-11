@@ -205,7 +205,9 @@ function openCreateMeeting(options = {}) {
     if (!overlay) return;
 
     resetCreateMeeting();
-    cmEl('cmDialog')?.classList.remove('is-success');
+    const dialog = cmEl('cmDialog');
+    dialog?.classList.remove('is-success');
+    if (dialog) dialog.scrollTop = 0;
     overlay.classList.add('is-open');
     overlay.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
@@ -230,7 +232,7 @@ function closeCreateMeeting() {
     overlay.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
     const dialog = cmEl('cmDialog');
-    if (dialog) dialog.classList.remove('is-success');
+    dialog?.classList.remove('is-success');
 }
 
 function resetCreateMeeting() {
@@ -952,7 +954,11 @@ function validateCreateMeeting() {
         cmEl('cmTitleError')?.classList.remove('is-visible');
     }
 
-    if (!date || !start || !end) {
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(date || '') ||
+        !/^\d{2}:\d{2}$/.test(start || '') ||
+        !/^\d{2}:\d{2}$/.test(end || '')
+    ) {
         [dateInput, startInput, endInput].forEach(el => {
             if (el) el.classList.add('is-invalid');
         });
@@ -987,9 +993,12 @@ function validateCreateMeeting() {
         }
     }
 
-    if (cmState.mode === 'offline' && !cmState.selectedRoom) {
-        showFormError('Vui lòng chọn phòng họp.');
-        ok = false;
+    if (cmState.mode === 'offline') {
+        const roomId = Number.parseInt(String(cmState.selectedRoom?.id ?? ''), 10);
+        if (!Number.isSafeInteger(roomId) || roomId <= 0) {
+            showFormError('Vui lòng chọn phòng họp hợp lệ.');
+            ok = false;
+        }
     }
 
     if (collectConflicts().length && !(cmState.mode === 'offline' && !cmState.selectedRoom)) {
@@ -1026,6 +1035,11 @@ async function handleCreateMeetingSubmit(event) {
             .map(a => a.id)
             .filter(id => Number.isInteger(id))
     )];
+    const roomId = cmState.mode === 'offline'
+        ? Number.parseInt(String(cmState.selectedRoom.id), 10)
+        : null;
+    const startTime = `${date}T${start}:00`;
+    const endTime = `${date}T${end}:00`;
 
     const payload = {
         title,
@@ -1034,11 +1048,9 @@ async function handleCreateMeetingSubmit(event) {
         meeting_link: cmState.mode === 'online'
             ? (cmEl('cmMeetingLink')?.value.trim() || null)
             : null,
-        room_id: cmState.mode === 'offline'
-            ? (cmState.selectedRoom ? parseInt(cmState.selectedRoom.id, 10) : null)
-            : null,
-        start_time: `${date}T${start}:00`,
-        end_time:   `${date}T${end}:00`,
+        room_id: roomId,
+        start_time: startTime,
+        end_time: endTime,
         is_recurring: recurrenceType !== 'none',
         recurrence_type: recurrenceType,
         recurrence_end_date: recurrenceEndDate,
@@ -1101,7 +1113,10 @@ function findFallbackRoomId() {
 }
 
 function showCreateMeetingSuccess() {
-    cmEl('cmDialog')?.classList.add('is-success');
+    const dialog = cmEl('cmDialog');
+    if (!dialog) return;
+    dialog.classList.add('is-success');
+    dialog.scrollTop = 0;
 }
 
 function showOnlineLocalSuccess() {

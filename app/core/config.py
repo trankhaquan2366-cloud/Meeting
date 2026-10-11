@@ -1,5 +1,6 @@
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -8,9 +9,38 @@ logger = logging.getLogger(__name__)
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
+@dataclass(frozen=True)
+class SMTPSettings:
+    host: str
+    port: int
+    username: str | None
+    password: str | None
+    from_email: str | None
+    starttls: bool
+
+
 def load_environment() -> None:
     """Load project environment variables without overriding process settings."""
     load_dotenv(dotenv_path=ENV_FILE, override=False)
+
+
+def get_smtp_settings() -> SMTPSettings | None:
+    load_environment()
+    try:
+        port = int(os.getenv("SMTP_PORT", "587"))
+    except ValueError:
+        logger.error("SMTP_PORT must be a valid integer")
+        return None
+
+    username = os.getenv("SMTP_USER") or os.getenv("SMTP_USERNAME")
+    return SMTPSettings(
+        host=os.getenv("SMTP_HOST") or "smtp.gmail.com",
+        port=port,
+        username=username,
+        password=os.getenv("SMTP_PASSWORD"),
+        from_email=os.getenv("EMAILS_FROM_EMAIL") or os.getenv("SMTP_FROM_EMAIL") or username,
+        starttls=os.getenv("SMTP_STARTTLS", "true").strip().casefold() in {"1", "true", "yes"},
+    )
 
 
 def get_google_oauth_credentials() -> tuple[str, str] | None:

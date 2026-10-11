@@ -13,6 +13,7 @@ from tests.helpers import (
 )
 from app.models.meeting import MeetingParticipant
 from app.models.notification import Notification
+from app.routers import meetings as meetings_router
 
 
 def _future_window():
@@ -41,6 +42,45 @@ def test_organizer_can_cancel_and_repeat_safely(client: TestClient, db_session: 
     saved = db_session.get(type(meeting), meeting.id)
     assert saved.status == "CANCELLED"
     assert db_session.query(MeetingParticipant).filter_by(meeting_id=meeting.id).count() == 1
+
+
+def test_cancel_schedules_email_once_for_invitee(
+    client: TestClient, db_session: Session, monkeypatch
+):
+    organizer = _create_user(db_session, "cancel-email-organizer")
+    invitee = _create_user(db_session, "cancel-email-invitee")
+    room = _create_room(db_session, "Cancel Email Room")
+    start, end = _future_window()
+    meeting = _create_meeting(db_session, room, organizer, start, end)
+    _add_participant(db_session, meeting, invitee)
+    sent_emails = []
+    monkeypatch.setattr(
+        meetings_router,
+        "send_meeting_cancellation_email",
+        lambda **kwargs: sent_emails.append(kwargs),
+    )
+
+    headers = _auth_header(_make_token(organizer))
+    response = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        json={"cancellation_reason": "Room unavailable"},
+        headers=headers,
+    )
+    repeated = client.patch(
+        f"/api/meetings/{meeting.id}/cancel",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert repeated.status_code == 200
+    assert sent_emails == [{
+        "to_email": invitee.email,
+        "user_name": invitee.full_name,
+        "meeting_title": meeting.title,
+        "start_time_str": start.strftime("%H:%M ngày %d/%m/%Y"),
+        "location_str": f"Phòng {room.name}",
+        "cancellation_reason": "Room unavailable",
+    }]
 
 
 def test_cancel_updates_invitation_notification_for_invitee(client: TestClient, db_session: Session):

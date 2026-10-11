@@ -1,11 +1,37 @@
 import logging
-import os
 import smtplib
 import ssl
+from contextlib import contextmanager
 from email.message import EmailMessage
-from typing import Optional
+from html import escape
+from typing import Iterator, Optional
+
+from app.core.config import SMTPSettings, get_smtp_settings
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def smtp_connection(
+    settings: SMTPSettings,
+    timeout: int = 15,
+) -> Iterator[smtplib.SMTP]:
+    if settings.port == 465:
+        with smtplib.SMTP_SSL(
+            settings.host,
+            settings.port,
+            timeout=timeout,
+            context=ssl.create_default_context(),
+        ) as smtp:
+            yield smtp
+        return
+
+    with smtplib.SMTP(settings.host, settings.port, timeout=timeout) as smtp:
+        smtp.ehlo()
+        if settings.starttls:
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.ehlo()
+        yield smtp
 
 
 def send_email(
@@ -19,16 +45,17 @@ def send_email(
         logger.warning("Bỏ qua gửi email: Địa chỉ người nhận không hợp lệ (%s)", to_email)
         return False
 
-    host = os.getenv("SMTP_HOST")
-    username = os.getenv("SMTP_USERNAME")
-    password = os.getenv("SMTP_PASSWORD")
-    from_email = os.getenv("SMTP_FROM_EMAIL") or username
-    port = int(os.getenv("SMTP_PORT", "587"))
-    use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().lower() in {"1", "true", "yes"}
+    settings = get_smtp_settings()
 
-    if not all((host, username, password, from_email)):
+    if (
+        settings is None
+        or not settings.host
+        or not settings.username
+        or not settings.password
+        or not settings.from_email
+    ):
         logger.info(
-            "Cấu hình SMTP chưa đầy đủ (SMTP_HOST/USERNAME/PASSWORD/FROM_EMAIL). "
+            "Cấu hình SMTP chưa đầy đủ (SMTP_HOST/SMTP_USER/SMTP_PASSWORD/EMAILS_FROM_EMAIL). "
             "Email '%s' tới %s được ghi log nội bộ.",
             subject,
             to_email,
@@ -37,7 +64,7 @@ def send_email(
 
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = from_email
+    message["From"] = settings.from_email
     message["To"] = to_email
     message.set_content(body_text)
 
@@ -45,18 +72,116 @@ def send_email(
         message.add_alternative(body_html, subtype="html")
 
     try:
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            smtp.ehlo()
-            if use_starttls:
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
-            smtp.login(username, password)
+        with smtp_connection(settings) as smtp:
+            smtp.login(settings.username, settings.password)
             smtp.send_message(message)
         logger.info("Đã gửi email thành công tới %s (Subject: %s)", to_email, subject)
         return True
     except (OSError, smtplib.SMTPException) as exc:
         logger.exception("Gửi email tới %s thất bại: %s", to_email, exc)
         return False
+
+
+def send_meeting_invitation_email(
+    to_email: str,
+    user_name: str,
+    meeting_title: str,
+    start_time_str: str,
+    location_str: str,
+    meeting_link: Optional[str] = None,
+) -> bool:
+    """Send a meeting invitation email without propagating SMTP failures."""
+    safe_name = escape(user_name)
+    safe_title = escape(meeting_title)
+    safe_start = escape(start_time_str)
+    safe_location = escape(location_str)
+    safe_link = escape(meeting_link, quote=True) if meeting_link else None
+    link_text = f"\n• Link tham gia: {meeting_link}" if meeting_link else ""
+    link_html = (
+        f'<p style="margin:6px 0"><strong>Link tham gia:</strong> '
+        f'<a href="{safe_link}">{safe_link}</a></p>'
+        if safe_link
+        else ""
+    )
+    body_text = (
+        f"Xin chào {user_name},\n\n"
+        f"Bạn được mời tham dự cuộc họp '{meeting_title}'.\n\n"
+        f"• Thời gian: {start_time_str}\n"
+        f"• Địa điểm: {location_str}{link_text}\n\n"
+        "Vui lòng đăng nhập RoomSync để xem chi tiết và phản hồi lời mời."
+    )
+    body_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;line-height:1.6;color:#1e293b;background:#f8fafc;padding:20px">
+  <div style="max-width:580px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+    <h2 style="margin-top:0;color:#1d4ed8">Bạn được mời họp trên RoomSync</h2>
+    <p>Xin chào <strong>{safe_name}</strong>,</p>
+    <p>Bạn được mời tham dự cuộc họp:</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px">
+      <h3 style="margin:0 0 12px;color:#0f172a">{safe_title}</h3>
+      <p style="margin:6px 0"><strong>Thời gian:</strong> {safe_start}</p>
+      <p style="margin:6px 0"><strong>Địa điểm:</strong> {safe_location}</p>
+      {link_html}
+    </div>
+    <p>Đăng nhập RoomSync để xem chi tiết và phản hồi lời mời.</p>
+  </div>
+</body></html>"""
+    return send_email(
+        to_email,
+        f"[RoomSync] Lời mời tham dự cuộc họp: {meeting_title}",
+        body_text,
+        body_html,
+    )
+
+
+def send_meeting_cancellation_email(
+    to_email: str,
+    user_name: str,
+    meeting_title: str,
+    start_time_str: str,
+    location_str: str,
+    cancellation_reason: Optional[str] = None,
+) -> bool:
+    """Notify an attendee that a meeting was canceled."""
+    safe_name = escape(user_name)
+    safe_title = escape(meeting_title)
+    safe_start = escape(start_time_str)
+    safe_location = escape(location_str)
+    safe_reason = escape(cancellation_reason) if cancellation_reason else None
+    reason_text = f"\n• Lý do: {cancellation_reason}" if cancellation_reason else ""
+    reason_html = (
+        f'<p style="margin:6px 0"><strong>Lý do:</strong> {safe_reason}</p>'
+        if safe_reason
+        else ""
+    )
+    body_text = (
+        f"Xin chào {user_name},\n\n"
+        f"Cuộc họp '{meeting_title}' đã bị hủy.\n"
+        f"• Thời gian dự kiến: {start_time_str}\n"
+        f"• Địa điểm: {location_str}{reason_text}\n\n"
+        "Thông tin trên RoomSync đã được cập nhật."
+    )
+    body_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;line-height:1.6;color:#1e293b;background:#f8fafc;padding:20px">
+  <div style="max-width:580px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px">
+    <h2 style="margin-top:0;color:#b91c1c">Cuộc họp đã bị hủy</h2>
+    <p>Xin chào <strong>{safe_name}</strong>,</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px">
+      <h3 style="margin:0 0 12px;color:#0f172a">{safe_title}</h3>
+      <p style="margin:6px 0"><strong>Thời gian dự kiến:</strong> {safe_start}</p>
+      <p style="margin:6px 0"><strong>Địa điểm:</strong> {safe_location}</p>
+      {reason_html}
+    </div>
+    <p>Thông tin trên RoomSync đã được cập nhật.</p>
+  </div>
+</body></html>"""
+    return send_email(
+        to_email,
+        f"[RoomSync] Cuộc họp đã bị hủy: {meeting_title}",
+        body_text,
+        body_html,
+    )
 
 
 def send_rsvp_notification_email(

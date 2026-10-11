@@ -149,7 +149,12 @@ def check_and_send_meeting_reminders() -> Dict[str, int]:
                                 online_link=meeting.meeting_link or meeting.online_link,
                             )
                         except Exception as email_err:
-                            logger.warning("Không thể gửi email nhắc nhở cho %s: %s", user.email, email_err)
+                            logger.error(
+                                "Không thể gửi email nhắc nhở cho %s: %s",
+                                user.email,
+                                email_err,
+                                exc_info=True,
+                            )
 
             db.commit()
 

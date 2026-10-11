@@ -129,3 +129,46 @@ def test_create_meeting_schedules_google_sync_for_connected_organizer(
 
     assert response.status_code == 201
     assert synced_user_ids == [organizer.id]
+
+
+def test_create_meeting_schedules_invitation_email_for_invitee(
+    client: TestClient, db_session: Session, monkeypatch
+):
+    organizer = _create_user(db_session, "create-email-organizer")
+    invitee = _create_user(db_session, "create-email-invitee")
+    room = _create_room(db_session, "Invitation Email Room")
+    start, end = _future_window()
+    sent_emails = []
+    monkeypatch.setattr(
+        meetings_router,
+        "send_meeting_invitation_email",
+        lambda **kwargs: sent_emails.append(kwargs),
+    )
+    monkeypatch.setattr(
+        meetings_router,
+        "request_calendar_access_for_invitees",
+        lambda **kwargs: None,
+    )
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Invitation email test",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "participant_ids": [organizer.id, invitee.id],
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    assert sent_emails == [{
+        "to_email": invitee.email,
+        "user_name": invitee.full_name,
+        "meeting_title": "Invitation email test",
+        "start_time_str": start.strftime("%H:%M %d/%m/%Y"),
+        "location_str": f"Phòng {room.name}",
+        "meeting_link": None,
+    }]

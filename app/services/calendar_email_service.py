@@ -1,25 +1,28 @@
 import logging
-import os
 import smtplib
-import ssl
 from email.message import EmailMessage
 
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.core.config import get_smtp_settings
 from app.models.meeting import Meeting, MeetingParticipant
 from app.models.user import User
+from app.services.email_service import smtp_connection
 from app.services.google_calendar_service import make_calendar_consent_url, sync_user_meetings_to_google
 
 logger = logging.getLogger(__name__)
 
 
 def _send_calendar_consent_email(user: User, meetings: list[Meeting]) -> None:
-    host = os.getenv("SMTP_HOST")
-    username = os.getenv("SMTP_USERNAME")
-    password = os.getenv("SMTP_PASSWORD")
-    from_email = os.getenv("SMTP_FROM_EMAIL") or username
-    if not all((host, username, password, from_email)):
+    settings = get_smtp_settings()
+    if (
+        settings is None
+        or not settings.host
+        or not settings.username
+        or not settings.password
+        or not settings.from_email
+    ):
         logger.warning("Calendar permission email skipped: SMTP settings are incomplete")
         return
 
@@ -36,7 +39,7 @@ def _send_calendar_consent_email(user: User, meetings: list[Meeting]) -> None:
 
     message = EmailMessage()
     message["Subject"] = "Kết nối Google Calendar với RoomSync"
-    message["From"] = from_email
+    message["From"] = settings.from_email
     message["To"] = user.email
     message.set_content(
         f"Chào {user.full_name or user.username},\n\n"
@@ -49,15 +52,9 @@ def _send_calendar_consent_email(user: User, meetings: list[Meeting]) -> None:
         "Nếu bạn không mong đợi email này, có thể bỏ qua."
     )
 
-    port = int(os.getenv("SMTP_PORT", "587"))
-    use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().lower() in {"1", "true", "yes"}
     try:
-        with smtplib.SMTP(host, port, timeout=20) as smtp:
-            smtp.ehlo()
-            if use_starttls:
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
-            smtp.login(username, password)
+        with smtp_connection(settings, timeout=20) as smtp:
+            smtp.login(settings.username, settings.password)
             smtp.send_message(message)
         logger.info("Calendar permission email sent to user_id=%s", user.id)
     except (OSError, smtplib.SMTPException):

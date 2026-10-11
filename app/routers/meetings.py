@@ -23,15 +23,15 @@ from app.schemas.meeting import (
     SuggestTimeRequest,
     SuggestTimeResponse,
 )
-main
-    SuggestTimeRequest,
-    SuggestTimeResponse,
-)
 from app.schemas.room import RoomResponse
 from app.services.meeting_service import MeetingService
 from app.services.notification_service import create_notification, send_meeting_invitation_notifications
 from app.services.calendar_email_service import request_calendar_access_for_invitees
-from app.services.email_service import send_rsvp_notification_email
+from app.services.email_service import (
+    send_meeting_cancellation_email,
+    send_meeting_invitation_email,
+    send_rsvp_notification_email,
+)
 from app.services.google_calendar_service import (
     delete_google_event_for_user_meeting,
     delete_google_events_for_meeting,
@@ -40,6 +40,35 @@ from app.services.google_calendar_service import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _meeting_location(meeting: Meeting) -> str:
+    if meeting.room is not None:
+        return f"Phòng {meeting.room.name}"
+    if meeting.meeting_link:
+        return f"Trực tuyến ({meeting.meeting_link})"
+    return "Trực tuyến"
+
+
+def _schedule_cancellation_emails(
+    background_tasks: BackgroundTasks,
+    meeting: Meeting,
+) -> None:
+    location = _meeting_location(meeting)
+    start_time = meeting.start_time.strftime("%H:%M ngày %d/%m/%Y")
+    for participant in meeting.participants:
+        user = participant.user
+        if user is None or not user.email or user.id == meeting.organizer_id:
+            continue
+        background_tasks.add_task(
+            send_meeting_cancellation_email,
+            to_email=user.email,
+            user_name=user.full_name or user.username,
+            meeting_title=meeting.title,
+            start_time_str=start_time,
+            location_str=location,
+            cancellation_reason=meeting.cancellation_reason,
+        )
 
 
 @router.get(
@@ -95,6 +124,24 @@ def create_meeting(
                 user_ids=notify_ids,
                 meeting_ids=[meeting.id for meeting in created_meetings],
             )
+            location = _meeting_location(first_meeting)
+            invitees = db.query(User).filter(User.id.in_(notify_ids)).all()
+            for invitee in invitees:
+                if not invitee.email:
+                    logger.warning(
+                        "Meeting invitation email skipped: user_id=%s has no email",
+                        invitee.id,
+                    )
+                    continue
+                background_tasks.add_task(
+                    send_meeting_invitation_email,
+                    to_email=invitee.email,
+                    user_name=invitee.full_name or invitee.username,
+                    meeting_title=first_meeting.title,
+                    start_time_str=start_str,
+                    location_str=location,
+                    meeting_link=first_meeting.meeting_link,
+                )
 
     return created_meetings
 
@@ -420,6 +467,7 @@ def cancel_meeting(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    meeting_status = db.query(Meeting.status).filter(Meeting.id == meeting_id).scalar()
     meeting = MeetingService.cancel_meeting(
         db,
         meeting_id,
@@ -427,6 +475,12 @@ def cancel_meeting(
         payload.cancellation_reason if payload else None,
     )
     background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
+    if str(meeting_status or "").strip().casefold() not in {
+        "cancelled",
+        "canceled",
+        "cancelled_no_show",
+    }:
+        _schedule_cancellation_emails(background_tasks, meeting)
     return meeting
 
 
@@ -444,6 +498,7 @@ def cancel_meeting_legacy(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    meeting_status = db.query(Meeting.status).filter(Meeting.id == meeting_id).scalar()
     meeting = MeetingService.cancel_meeting(
         db,
         meeting_id,
@@ -451,4 +506,10 @@ def cancel_meeting_legacy(
         payload.cancellation_reason if payload else None,
     )
     background_tasks.add_task(delete_google_events_for_meeting, meeting.id)
+    if str(meeting_status or "").strip().casefold() not in {
+        "cancelled",
+        "canceled",
+        "cancelled_no_show",
+    }:
+        _schedule_cancellation_emails(background_tasks, meeting)
     return meeting
