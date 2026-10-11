@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoomSync - Quản Lý Đặt Phòng Họp</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css?v=18">
+    <link rel="stylesheet" href="css/booking.css?v=3">
+    <link rel="stylesheet" href="css/create-meeting.css?v=3">
+</head>
+
+    <link rel="stylesheet" href="css/style.css?v=17">
+ main
+    <link rel="stylesheet" href="css/booking.css?v=3">
+    <link rel="stylesheet" href="css/create-meeting.css?v=2">
+</head>
+
+<body>
+    <div class="app-layout" id="appLayout">
+        <!-- SIDEBAR -->
+        <aside class="sidebar -translate-x-full lg:translate-x-0" id="sidebar">
+            <div class="sidebar-brand" onclick="switchToOverview()" title="Quay về Trang chủ">
+                <span class="logo-icon">RS</span>
+                <span class="brand-name">RoomSync</span>
+            </div>
+
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    <span class="nav-text">Tổng quan</span>
+                </a>
+                <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path>
+                    </svg>
+                    <span class="nav-text">Phòng họp</span>
+                </a>
+                <a href="#" class="nav-item" id="navEquipments" onclick="switchMainTab('equipments', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                        <path d="M9 9h6v6H9zM9 2v2m6-2v2M9 20v2m6-2v2M2 9h2m-2 6h2m16-6h2m-2 6h2"></path>
+                    </svg>
+                    <span class="nav-text">Thiết bị</span>
+                </a>
+                <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    <span class="nav-text">Đặt lịch của tôi</span>
+                </a>
+                <!-- TAB BÁO CÁO TRÊN NAVBAR -->
+                <a href="#" class="nav-item" id="navReport" onclick="switchMainTab('report', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 20V10M12 20V4M6 20v-6"></path>
+                    </svg>
+                    <span class="nav-text">Báo cáo sử dụng</span>
+                </a>
+                <a href="#" class="nav-item" id="navCancellationAnalytics"
+                    onclick="switchMainTab('cancellations', this)" style="display: none;">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19h16M7 16V9m5 7V5m5 11v-4"></path>
+                        <path d="M3 4l17 17"></path>
+                    </svg>
+                    <span class="nav-text">Thống kê Hủy phòng</span>
+                </a>
+                <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
+                    <span class="nav-text">Cài đặt</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-user" onclick="navigateToSettings()" title="Cài đặt tài khoản">
+                <div class="user-avatar" id="avatarText">N</div>
+                <div class="user-info">
+                    <span class="user-name" id="userNameDisplay">Nguyễn Minh Tuấn</span>
+                    <span class="user-role" id="userRoleBadge">Quản trị viên</span>
+                </div>
+            </div>
+        </aside>
+        <div id="mobileMenuBackdrop" class="mobile-menu-backdrop hidden lg:hidden"
+            onclick="closeMobileMenu()" aria-hidden="true"></div>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content" id="mainContent">
+            <!-- TOPBAR -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="btn-toggle-menu" type="button" onclick="toggleMobileMenu()"
+                        aria-controls="sidebar" aria-expanded="false" title="Mở menu">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
+
+                    <div class="search-box" id="topbarSearchContainer">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..."
+                            oninput="handleSearch()">
+                    </div>
+                </div>
+
+                <div class="topbar-right">
+                    <button id="btnHeaderQrScan" type="button" onclick="openQuickQrScanner()"
+                        class="p-2.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200 flex items-center justify-center"
+                        title="Quét mã QR Check-in/Check-out nhanh"
+                        aria-label="Quét mã QR Check-in/Check-out nhanh">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 3h6v6H3V3zm12 0h6v6h-6V3zM3 15h6v6H3v-6zm12 6h3v-3h-3v3zm0-6h3v3h-3v-3zm3 3h3v3h-3v-3z" />
+                        </svg>
+                    </button>
+                    <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
+                    <div class="notification-wrapper">
+                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()"
+                            title="Thông báo" aria-label="Thông báo" aria-expanded="false"
+                            aria-controls="notificationPopup">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
+                            <span id="notificationDot" class="notification-dot" style="display: none;"
+                                aria-live="polite"></span>
+                        </button>
+                        <div id="notificationPopup" class="notification-popup" style="display: none;"
+                            role="region" aria-label="Danh sách thông báo">
+                            <div class="notification-empty">Đang tải thông báo...</div>
+                        </div>
+                    </div>
+
+                    <div class="user-profile-header" onclick="navigateToSettings()" title="Bấm để vào Cài đặt">
+                        <div class="header-avatar" id="headerAvatarText">N</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content-body p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
+                <!-- VIEW 1: TỔNG QUAN -->
+                <div id="viewOverview" class="tab-view">
+                    <div class="hero-banner-overview">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Hệ thống Quản lý Doanh nghiệp</span>
+                            <h2>RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh</h2>
+                            <p>Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm dự án
+                                kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.</p>
+                            <div class="hero-actions">
+                                <button class="btn-hero-primary" onclick="openCreateMeeting()">Tạo cuộc họp</button>
+                                <button class="btn-hero-secondary"
+                                    onclick="alert('Tính năng hướng dẫn đang được cập nhật!')">Xem hướng dẫn</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="page-header" id="roomsSection">
+                        <div>
+                            <h2>Phòng họp hiện có</h2>
+                            <p class="subtitle" id="currentDateText">Đang tải...</p>
+                        </div>
+                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng phòng họp</span>
+                            <div class="stat-value" id="statTotal">0</div>
+                            <span class="stat-sub text-gray">+2 so với tháng trước</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Đang sử dụng</span>
+                            <div class="stat-value text-orange" id="statInUse">0</div>
+                            <span class="stat-sub text-orange" id="statCapacityText">0% công suất</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Còn trống hôm nay</span>
+                            <div class="stat-value text-green" id="statAvailable">0</div>
+                            <span class="stat-sub text-gray" id="statRatioText">trong 0 phòng</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Lượt đặt trong tuần</span>
+                            <div class="stat-value text-purple" id="statBookings">142</div>
+                            <span class="stat-sub text-gray">↑ 12% so với tuần trước</span>
+                        </div>
+                    </div>
+
+                    <div class="filter-wrapper">
+                        <div class="filter-left">
+                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span
+                                    id="filterDateLabel">26/09/2026</span></button>
+                            <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
+                                <option value="all">Sức chứa ˅</option>
+                                <option value="small">Nhỏ (1 - 5 người)</option>
+                                <option value="medium">Vừa (6 - 12 người)</option>
+                                <option value="large">Lớn (15+ người)</option>
+                            </select>
+                            <div class="filter-chips">
+                                <button class="chip active" onclick="setFilter('all', this)">Tất cả</button>
+                                <button class="chip" onclick="setFilter('Màn hình', this)">Màn hình</button>
+                                <button class="chip" onclick="setFilter('Wifi', this)">Wifi</button>
+                                <button class="chip" onclick="setFilter('Video', this)">Video</button>
+                                <button class="chip" onclick="setFilter('Đồ uống', this)">Đồ uống</button>
+                            </div>
+                        </div>
+                        <div class="filter-right">
+                            <span class="status-summary"><strong id="summaryAvailable">0</strong> còn trống</span>
+                            <span class="status-summary"><strong id="summaryInUse">0</strong> đã đặt</span>
+                        </div>
+                    </div>
+
+                    <div class="room-grid" id="roomGridOverview"></div>
+                </div>
+
+                <!-- VIEW 2: PHÒNG HỌP -->
+                <div id="viewRooms" class="tab-view" style="display: none;">
+                    <div class="hero-banner-rooms">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Không gian làm việc</span>
+                            <h2>Danh Mục & Không Gian Phòng Họp</h2>
+                            <p>Khám phá hệ thống phòng họp được trang bị đầy đủ thiết bị công nghệ hiện đại.</p>
+                        </div>
+                    </div>
+
+                    <div class="page-header">
+                        <h2>Tất cả phòng họp</h2>
+                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
+
+                    <div class="room-grid" id="roomGridRooms"></div>
+                </div>
+
+                <!-- VIEW 3: TRẠNG THÁI THIẾT BỊ -->
+                <div id="viewEquipments" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <div>
+                            <h2>Trạng thái và khả dụng thiết bị</h2>
+                            <p class="subtitle">Số lượng khả dụng được tính theo khung thời gian đã chọn.</p>
+                        </div>
+                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()"
+                            style="display: none;">
+                            + Thêm thiết bị mới
+                        </button>
+                    </div>
+                    <div class="equipment-availability-filters">
+                        <label class="equipment-filter-field">
+                            <span>Bắt đầu</span>
+                            <input id="equipmentStartTime" type="datetime-local"
+                                onchange="fetchEquipmentAvailability()">
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Kết thúc</span>
+                            <input id="equipmentEndTime" type="datetime-local" onchange="fetchEquipmentAvailability()">
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Phân loại</span>
+                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Tìm thiết bị</span>
+                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
+                        </label>
+                    </div>
+                    <div class="table-card equipment-availability-table-wrap">
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table equipment-availability-table">
+                                <thead>
+                                    <tr>
+                                        <th>Mã</th>
+                                        <th>Tên</th>
+                                        <th>Phân loại</th>
+                                        <th>Tổng số</th>
+                                        <th>Đã đặt</th>
+                                        <th>Khả dụng</th>
+                                        <th>Trạng thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="equipmentAvailabilityTableBody">
+                                    <tr>
+                                        <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- BẢNG DỮ LIỆU ADMIN (ADMIN TABLE) -->
+                    <div id="adminEquipmentSection" style="display: none; margin-top: 28px;">
+                        <div class="page-header" style="margin-bottom: 14px;">
+                            <div>
+                                <h3 style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">Bảng Quản Lý Thiết Bị
+                                    (Admin Table)</h3>
+                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle
+                                    Bật/Tắt và Chỉnh sửa / Xóa.</p>
+                            </div>
+                        </div>
+                        <div class="table-card equipment-availability-table-wrap">
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table equipment-availability-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Mã thiết bị</th>
+                                            <th>Tên</th>
+                                            <th>Phân loại</th>
+                                            <th>Số lượng tổng</th>
+                                            <th>Trạng thái (Bật/Tắt)</th>
+                                            <th>Hành động</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="adminEquipmentTableBody">
+                                        <tr>
+                                            <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 4: ĐẶT LỊCH CỦA TÔI -->
+                <div id="viewMyBookings" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>Lịch họp đã đặt của tôi</h2>
+                    </div>
+                    <div class="booking-tabs" role="tablist" aria-label="Các lịch họp của tôi">
+                        <button class="booking-tab active" id="bookingTabCalendar" type="button" role="tab"
+                            aria-selected="true" aria-controls="bookingPanelCalendar"
+                            onclick="switchBookingTab('calendar')">Lịch họp</button>
+                        <button class="booking-tab" id="bookingTabMine" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelMine"
+                            onclick="switchBookingTab('mine')">Của tôi</button>
+                        <button class="booking-tab" id="bookingTabInvited" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelInvited"
+                            onclick="switchBookingTab('invited')">Được mời</button>
+                    </div>
+
+                    <section id="bookingPanelCalendar" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabCalendar">
+                        <div class="booking-calendar-toolbar">
+                            <div class="booking-calendar-nav">
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(-1)"
+                                    aria-label="Khoảng thời gian trước">‹</button>
+                                <button type="button" class="booking-calendar-button" onclick="goToBookingCalendarToday()">Hôm nay</button>
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(1)"
+                                    aria-label="Khoảng thời gian sau">›</button>
+                                <h3 id="bookingCalendarTitle" class="booking-calendar-title"></h3>
+                            </div>
+                            <div class="booking-calendar-views" role="group" aria-label="Chế độ xem lịch">
+                                <button type="button" data-calendar-view="month" class="active"
+                                    onclick="setBookingCalendarView('month')">Tháng</button>
+                                <button type="button" data-calendar-view="week"
+                                    onclick="setBookingCalendarView('week')">Tuần</button>
+                                <button type="button" data-calendar-view="day"
+                                    onclick="setBookingCalendarView('day')">Ngày</button>
+                            </div>
+                        </div>
+                        <div id="bookingCalendarGrid" class="booking-calendar-grid"></div>
+                        <div class="booking-day-agenda">
+                            <h3 id="bookingAgendaTitle">Lịch trong ngày</h3>
+                            <div id="bookingDayAgenda"></div>
+                        </div>
+                    </section>
+
+                    <section id="bookingPanelMine" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabMine" hidden>
+                        <div id="myBookingsTableBody" class="booking-list"></div>
+                    </section>
+
+                    <section id="bookingPanelInvited" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabInvited" hidden>
+                        <div id="invitedBookingsList" class="booking-list"></div>
+                    </section>
+                </div>
+
+                <!-- VIEW 5: BÁO CÁO SỬ DỤNG PHÒNG HỌP (TAB BÁO CÁO CHÍNH THỨC) -->
+                <div id="viewReport" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>
+                            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                                <line x1="3" y1="20" x2="21" y2="20"></line>
+                            </svg>
+                            Báo cáo & Thống kê Sử dụng Phòng họp
+                        </h2>
+                        <p class="subtitle">Cung cấp dữ liệu phân tích tỷ lệ lấp đầy và tổng số giờ họp của từng phòng.
+                        </p>
+                    </div>
+
+                    <!-- Bộ lọc báo cáo -->
+                    <div class="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap gap-4 items-end"
+                        style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; display: flex; gap: 16px; align-items: flex-end;">
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Từ
+                                ngày:</label>
+                            <input type="datetime-local" id="reportStartDate"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Đến
+                                ngày:</label>
+                            <input type="datetime-local" id="reportEndDate"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Phòng
+                                họp:</label>
+                            <select id="reportRoomIdSelect"
+                                style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 0.9rem; background: #fff;">
+                                <option value="">Tất cả các phòng</option>
+                            </select>
+                        </div>
+                        <button onclick="fetchRoomUsageReport()"
+                            style="background: #2563eb; color: #fff; border: none; padding: 9px 16px; border-radius: 6px; font-weight: 600; cursor: pointer;">
+                            Xem Báo Cáo
+                        </button>
+                    </div>
+
+                    <!-- Khối Tổng quan (Summary Cards) -->
+                    <div class="stats-grid" style="margin-bottom: 24px;">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số phòng</span>
+                            <div class="stat-value" id="sumTotalRooms">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số cuộc họp</span>
+                            <div class="stat-value text-green" id="sumTotalMeetings">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số giờ họp</span>
+                            <div class="stat-value text-orange" id="sumTotalHours">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ lấp đầy TB</span>
+                            <div class="stat-value text-purple" id="sumAvgOccupancy">-</div>
+                        </div>
+                    </div>
+
+                    <!-- Bảng chi tiết -->
+                    <div class="table-card">
+                        <div style="padding: 16px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #1e293b;">
+                            Chi tiết theo từng phòng họp</div>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Tên phòng</th>
+                                        <th>Số cuộc họp</th>
+                                        <th>Tổng số giờ</th>
+                                        <th>Tỷ lệ lấp đầy (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="roomDetailsTableBody">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">Chưa
+                                            có dữ liệu. Bấm "Xem Báo Cáo" để tải.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ADMIN VIEW: CANCELLATION ANALYTICS -->
+                <div id="viewCancellationAnalytics" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <div>
+                            <h2>Thống kê Hủy phòng</h2>
+                            <p class="subtitle">Tổng hợp lịch hủy thủ công và cuộc họp không check-in.</p>
+                        </div>
+                    </div>
+                    <div class="cancellation-analytics-filters">
+                        <label>Từ ngày <input type="date" id="cancellationStartDate"></label>
+                        <label>Đến ngày <input type="date" id="cancellationEndDate"></label>
+                        <label>Phòng họp
+                            <select id="cancellationRoomId">
+                                <option value="">Tất cả phòng</option>
+                            </select>
+                        </label>
+                        <button type="button" id="btnFilterCancellation"
+                            onclick="fetchCancellationAnalytics(event)">Xem thống kê</button>
+                        <button type="button" onclick="exportCancellationAnalytics('excel')"
+                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất Excel</button>
+                        <button type="button" onclick="exportCancellationAnalytics('pdf')"
+                            class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất PDF</button>
+                    </div>
+                    <div id="cancellationAnalyticsMessage"
+                        class="hidden mb-4 p-3 rounded-lg bg-red-50 text-red-600 text-sm font-medium"
+                        role="alert" aria-live="assertive"></div>
+                    <section class="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div class="mb-4">
+                            <h3 class="text-lg font-bold text-slate-800">Báo cáo Quản trị Lãnh đạo (Executive Report)</h3>
+                            <p class="text-sm text-slate-500">Tổng hợp hiệu quả sử dụng phòng họp, khung giờ cao điểm và lãng phí tài nguyên.</p>
+                        </div>
+                        <div class="flex flex-wrap items-end gap-3">
+                            <label class="text-sm font-medium text-slate-600">Từ ngày
+                                <input type="date" id="executiveStartDate" class="ml-1 rounded border border-slate-300 px-2 py-2">
+                            </label>
+                            <label class="text-sm font-medium text-slate-600">Đến ngày
+                                <input type="date" id="executiveEndDate" class="ml-1 rounded border border-slate-300 px-2 py-2">
+                            </label>
+                            <label class="text-sm font-medium text-slate-600">Phòng ban (ID, tùy chọn)
+                                <input type="number" min="1" id="executiveDepartmentId" placeholder="Tất cả"
+                                    class="ml-1 w-28 rounded border border-slate-300 px-2 py-2">
+                            </label>
+                            <button type="button" onclick="exportExecutiveReport('excel')"
+                                class="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">📊 Báo cáo Executive (Excel)</button>
+                            <button type="button" onclick="exportExecutiveReport('pdf')"
+                                class="rounded-lg bg-rose-600 px-4 py-2 font-medium text-white hover:bg-rose-700">📄 Báo cáo Executive (PDF)</button>
+                        </div>
+                    </section>
+                    <div class="stats-grid cancellation-analytics-stats">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng cuộc họp bị hủy</span>
+                            <div class="stat-value text-orange" id="cancelledTotal">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Số giờ lãng phí</span>
+                            <div class="stat-value text-purple" id="cancelledWastedHours">0 giờ</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ không check-in</span>
+                            <div class="stat-value text-orange" id="cancelledNoShowRate">0%</div>
+                        </div>
+                    </div>
+                    <div class="cancellation-analytics-columns">
+                        <div class="table-card">
+                            <h3>Phòng có nhiều lịch hủy</h3>
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table">
+                                    <thead><tr><th>Phòng</th><th>Số lần hủy</th></tr></thead>
+                                    <tbody id="cancellationRoomsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="table-card">
+                            <h3>Lý do hủy phổ biến</h3>
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table">
+                                    <thead><tr><th>Lý do</th><th>Số lượng</th></tr></thead>
+                                    <tbody id="cancellationReasonsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-card cancellation-offenders-card">
+                        <h3>Người đặt có lịch hủy nhiều</h3>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Người đặt</th><th>Số lần hủy / no-show</th></tr></thead>
+                                <tbody id="cancellationOffendersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 7: CÀI ĐẶT -->
+                <div id="viewSettings" class="tab-view max-w-4xl mx-auto py-6 px-4" style="display: none;">
+                    <!-- Tiêu đề trang -->
+                    <div class="mb-6">
+                        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Cài đặt tài khoản</h1>
+                        <p class="text-sm text-gray-500 mt-1">Quản lý thông tin cá nhân và bảo mật tài khoản của bạn.
+                        </p>
+                    </div>
+
+                    <div class="space-y-6">
+                        <!-- Thẻ 1: Thông tin hồ sơ -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <div class="flex items-center gap-4 pb-6 border-b border-gray-100">
+                                <div id="settingsAvatar"
+                                    class="w-16 h-16 rounded-full bg-[#004CFF] text-white flex items-center justify-center text-2xl font-bold shadow-inner">
+                                    Q
+                                </div>
+                                <div>
+                                    <h3 id="settingsName" class="text-lg font-semibold text-gray-900">Quản trị viên</h3>
+                                    <p id="settingsRole" class="text-sm text-gray-500">Quản trị viên</p>
+                                </div>
+                            </div>
+
+                            <!-- Form cập nhật thông tin -->
+                            <div class="mt-6 space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Họ và tên</label>
+                                    <input type="text" id="settingsInputName"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Email liên hệ</label>
+                                    <input type="email" id="settingsInputEmail"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div class="pt-2">
+                                    <button type="button" onclick="updateUserSettings()"
+                                        class="px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-all shadow-sm focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                                        Lưu thay đổi
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Google Calendar</h3>
+                            <p class="text-sm text-gray-500 mb-4">
+                                Kết nối tài khoản Google để tự động đồng bộ cuộc họp và gửi lời mời cho người tham dự.
+                            </p>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span id="googleCalendarStatus" class="text-sm text-gray-600" role="status"
+                                    aria-live="polite">Đang kiểm tra kết nối...</span>
+                                <button id="googleCalendarAction" type="button"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#004CFF] hover:bg-[#0038CC] transition-colors"
+                                    onclick="handleGoogleCalendarAction()" disabled>
+                                    Kết nối ngay
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Thẻ 2: Phiên đăng nhập & Bảo mật -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Phiên đăng nhập</h3>
+                            <p class="text-sm text-gray-500 mb-4">Quản lý trạng thái kết nối của bạn trên hệ thống
+                                RoomSync.</p>
+
+                            <div class="pt-4 border-t border-gray-100 flex items-center justify-between">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900 block">Đăng xuất tài khoản</span>
+                                    <span class="text-xs text-gray-500">Kết thúc phiên làm việc hiện tại trên thiết bị
+                                        này.</span>
+                                </div>
+                                <button type="button" onclick="logout()"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors">
+                                    Đăng xuất
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <nav class="mobile-bottom-nav fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 lg:hidden flex justify-around items-center h-16 shadow-lg"
+            aria-label="Điều hướng nhanh">
+            <button type="button" class="mobile-nav-item" data-tab="overview"
+                onclick="switchMainTab('overview', document.getElementById('navOverview'))" aria-label="Tổng quan"
+                aria-current="page">
+                <span aria-hidden="true">🏠</span><span>Tổng quan</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-tab="my-bookings"
+                onclick="switchMainTab('my-bookings', document.getElementById('navMyBookings'))"
+                aria-label="Lịch của tôi">
+                <span aria-hidden="true">📅</span><span>Lịch của tôi</span>
+            </button>
+            <button type="button" class="mobile-nav-item mobile-nav-scan" onclick="openQuickQrScanner()"
+                aria-label="Quét QR">
+                <span aria-hidden="true">📷</span><span>Quét QR</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-tab="rooms"
+                onclick="switchMainTab('rooms', document.getElementById('navRooms'))" aria-label="Phòng họp">
+                <span aria-hidden="true">🚪</span><span>Phòng họp</span>
+            </button>
+            <button type="button" class="mobile-nav-item" onclick="toggleMobileMenu()" aria-label="Mở menu">
+                <span aria-hidden="true">☰</span><span>Menu</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- MODAL XEM LỊCH TRÌNH -->
+    <div id="scheduleModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="scheduleRoomTitle">Lịch trình phòng họp</h3>
+            <p class="subtitle" style="margin-bottom: 16px;">Danh sách khung giờ hoạt động trong ngày</p>
+            <div id="timelineContainer" class="timeline-list"></div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" onclick="closeScheduleModal()" class="btn-cancel">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="cancelMeetingModal" class="modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="cancelMeetingTitle">
+        <div class="modal-content cancellation-modal-content">
+            <h3 id="cancelMeetingTitle">Hủy cuộc họp</h3>
+            <p class="subtitle">Bạn có thể ghi lại lý do để quản trị viên tổng hợp thống kê.</p>
+            <label for="cancellationReasonInput">Lý do hủy (không bắt buộc)</label>
+            <textarea id="cancellationReasonInput" rows="4" maxlength="1000"
+                placeholder="Nhập lý do hủy cuộc họp..."></textarea>
+            <div class="modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeCancelMeetingModal()">Quay lại</button>
+                <button type="button" class="btn-save cancellation-confirm-button"
+                    onclick="submitCancelBooking()">Xác nhận hủy</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="qrCheckModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="qrCheckTitle">
+        <div class="modal-content">
+            <h3 id="qrCheckTitle">Quét mã QR phòng họp</h3>
+            <p id="qrCheckDescription" class="subtitle">Đưa mã QR phòng họp vào khung quét.</p>
+            <div id="qrReader" class="qr-reader"></div>
+            <label class="qr-manual-label" for="qrTokenInput">Hoặc nhập mã QR</label>
+            <input id="qrTokenInput" class="form-control" type="text" autocomplete="off"
+                placeholder="Mã QR phòng họp">
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQrCheckModal()">Đóng</button>
+                <button type="button" class="btn-primary" onclick="submitQrCheck()">Xác nhận</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrScannerModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="quickQrTitle">
+        <div class="modal-content">
+            <h3 id="quickQrTitle">Quét QR nhanh</h3>
+            <p class="subtitle">Quét mã QR phòng họp hoặc cuộc họp để tự động check-in/check-out.</p>
+            <div id="quickQrReader" class="qr-reader"></div>
+            <p id="quickQrFeedback" class="quick-qr-feedback" role="alert" aria-live="assertive"></p>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQuickQrScanner()">Đóng</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrToast" class="qr-toast" role="status" aria-live="polite"></div>
+
+    <div id="roomQrModal" class="modal qr-display-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="roomQrName">
+        <div class="modal-content qr-display-card">
+            <div class="qr-display-heading">
+                <div>
+                    <p class="qr-display-eyebrow">MÃ QR PHÒNG HỌP</p>
+                    <h3 id="roomQrName">Phòng họp</h3>
+                    <p id="roomQrLocation" class="qr-display-subtitle"></p>
+                </div>
+                <div class="qr-header-actions">
+                    <button class="qr-icon-button" type="button" onclick="copyRoomQrToken()" title="Sao chép Token"
+                        aria-label="Sao chép Token">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="8" y="8" width="12" height="12" rx="2"></rect>
+                            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-icon-button" type="button" onclick="downloadRoomQrImage()" title="Tải ảnh QR"
+                        aria-label="Tải ảnh QR">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M12 3v12m0 0 4-4m-4 4-4-4"></path>
+                            <path d="M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-close-button" type="button" onclick="closeRoomQrModal()" title="Đóng"
+                        aria-label="Đóng">×</button>
+                </div>
+            </div>
+            <div id="roomQrImage" class="qr-image-frame qr-image-room"></div>
+        </div>
+    </div>
+
+    <div id="presenterQRModal" class="modal qr-presenter-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="presenterQRTitle">
+        <div class="qr-presenter-card">
+            <button class="qr-close-button qr-presenter-close" type="button" onclick="closePresenterQrModal()"
+                aria-label="Đóng">×</button>
+            <div class="qr-presenter-info">
+                <p class="qr-display-eyebrow">CHECK-IN CUỘC HỌP</p>
+                <h2 id="presenterQRTitle">Cuộc họp</h2>
+                <p id="presenterQRRoom" class="qr-presenter-room"></p>
+                <p id="presenterQRTime" class="qr-presenter-time"></p>
+            </div>
+            <div id="presenterQRImage" class="qr-image-frame qr-image-presenter"></div>
+            <p class="qr-presenter-hint">Mở camera điện thoại và quét mã để check-in</p>
+            <div class="qr-display-actions qr-presenter-actions">
+                <button id="presenterQRFullscreenButton" type="button" class="qr-secondary-button"
+                    onclick="togglePresenterQrFullscreen()">Phóng to / Fullscreen</button>
+                <button type="button" class="qr-primary-button" onclick="copyPresenterQrToken()">Sao chép Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
+    <div id="roomModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
+            <form id="roomForm" onsubmit="handleFormSubmit(event)">
+                <input type="hidden" id="editRoomId">
+                <div class="form-group">
+                    <label>Tên phòng họp</label>
+                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
+                        required>
+                </div>
+                <div class="form-group">
+                    <label>Vị trí (Tầng)</label>
+                    <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
+                </div>
+                <div class="form-group">
+                    <label>Sức chứa</label>
+                    <input type="text" id="roomCapacity" class="form-control" placeholder="Ví dụ: 8-10 người" required>
+                </div>
+                <div class="form-group">
+                    <label>Tiện ích (phân cách bằng dấu phẩy)</label>
+                    <input type="text" id="roomAmenities" class="form-control"
+                        placeholder="Màn hình, Wifi, Video, Đồ uống">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL QUẢN LÝ THIẾT BỊ (ADMIN - CRUD FORM) -->
+    <div id="equipmentModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="equipmentModalTitle">Thêm Thiết Bị Mới</h3>
+            <form id="equipmentForm" onsubmit="handleEquipmentFormSubmit(event)">
+                <input type="hidden" id="editEquipmentId">
+                <div class="form-group">
+                    <label>Tên thiết bị <span style="color:red;">*</span></label>
+                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony"
+                        required>
+                </div>
+                <div class="form-group">
+                    <label>Mã thiết bị</label>
+                    <input type="text" id="equipmentCode" class="form-control" placeholder="Ví dụ: MIC-001">
+                </div>
+                <div class="form-group">
+                    <label>Phân loại</label>
+                    <input type="text" id="equipmentCategory" class="form-control"
+                        placeholder="Ví dụ: Audio, Visual, Cable">
+                </div>
+                <div class="form-group">
+                    <label>Số lượng tổng (total_qty) <span style="color:red;">*</span></label>
+                    <input type="number" id="equipmentTotalQty" class="form-control" min="1" value="1" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeEquipmentModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL TẠO CUỘC HỌP -->
+    <div id="createMeetingModal" class="cm-overlay" aria-hidden="true">
+        <section id="cmDialog" class="cm-dialog cm-dialog--mobile-scroll" role="dialog" aria-modal="true"
+            aria-labelledby="cmHeading">
+            <div id="cmFormView" class="cm-form-view">
+                <header class="cm-header">
+                    <div>
+                        <p class="cm-kicker">Cuộc họp</p>
+                        <h1 id="cmHeading">Tạo cuộc họp</h1>
+                    </div>
+                    <button class="cm-icon-btn" type="button" aria-label="Đóng"
+                        onclick="closeCreateMeeting()">×</button>
+                </header>
+
+                <form id="createMeetingForm" class="cm-layout">
+                    <div class="cm-form-pane">
+                        <section class="cm-section">
+                            <div class="cm-section-head">
+                                <p class="cm-section-title">Thông tin cuộc họp</p>
+                                <p class="cm-help">Xác định cuộc họp và nội dung trước khi lựa chọn vị trí hoặc phòng.</p>
+                            </div>
+                            <label class="cm-label" for="cmTitle">Tên cuộc họp</label>
+                            <input id="cmTitle" class="cm-title-input" name="title" maxlength="120"
+                                placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
+                            <p id="cmTitleError" class="cm-field-error">Nhập tên cuộc họp trước khi tạo.</p>
+                        </section>
+
+                        <section class="cm-section">
+                            <label class="cm-label" for="cmDescription">Mô tả ngắn</label>
+                            <textarea id="cmDescription" class="cm-textarea" rows="3"
+                                placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
+                        </section>
+
+                        <section class="cm-section">
+                            <div class="cm-section-head">
+                                <p class="cm-section-title">Thời gian</p>
+                                <p class="cm-help">Chọn ngày và khung giờ diễn ra để xác định thời điểm cuộc họp.</p>
+                            </div>
+                            <div class="cm-time-grid">
+                                <label>
+                                    <span class="cm-mini-label">Ngày</span>
+                                    <input id="cmDate" class="cm-input" type="date" />
+                                </label>
+                                <label>
+                                    <span class="cm-mini-label">Giờ bắt đầu</span>
+                                    <select id="cmStart" class="cm-select"></select>
+                                </label>
+                                <label>
+                                    <span class="cm-mini-label">Giờ kết thúc</span>
+                                    <select id="cmEnd" class="cm-select"></select>
+                                </label>
+                            </div>
+                            <div class="cm-seg" role="group" aria-label="Lặp lại">
+                                <button type="button" id="cmRecNone" aria-pressed="true"
+                                    onclick="setRecurrence('none')">Không lặp</button>
+                                <button type="button" id="cmRecWeekly" aria-pressed="false"
+                                    onclick="setRecurrence('weekly')">Hàng tuần</button>
+                                <button type="button" id="cmRecMonthly" aria-pressed="false"
+                                    onclick="setRecurrence('monthly')">Hàng tháng</button>
+                            </div>
+                            <select id="cmRecurrence" class="cm-select" hidden>
+                                <option value="none">Không lặp</option>
+                                <option value="weekly">Hàng tuần</option>
+                                <option value="monthly">Hàng tháng</option>
+                            </select>
+                            <div id="cmRecurringExtra" class="cm-recurring-extra">
+                                <p id="cmRecurrenceNote" class="cm-help">Lặp vào thứ Hai hàng tuần</p>
+                                <label>
+                                    <span class="cm-mini-label">Kết thúc vào ngày</span>
+                                    <input id="cmRecurrenceUntil" class="cm-input" type="date" />
+                                </label>
+                            </div>
+                        </section>
+
+                        <section class="cm-section cm-attendees-section">
+                            <div class="cm-inline-actions">
+                                <label class="cm-label" for="cmAttendeeSearch">Người tham dự</label>
+                                <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
+                            </div>
+                            <div class="cm-attendee-search">
+                                <input id="cmAttendeeSearch" class="cm-search" type="search"
+                                    placeholder="Tìm người tham dự..." autocomplete="off" />
+                                <ul id="cmAttendeeSuggest" class="cm-suggest"></ul>
+                            </div>
+                            <div id="cmAttendeeChips" class="cm-chips"></div>
+                            <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên
+                                nhóm</button>
+                        </section>
+
+                        <section class="cm-section">
+                            <p class="cm-section-title">Vị trí</p>
+                            <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp"
+                                aria-controls="cmOnlineBox cmResources">
+                                <button type="button" id="cmModeOnline" aria-pressed="false"
+                                    onclick="setCreateMeetingMode('online')">🌐 Online</button>
+                                <button type="button" id="cmModeOffline" aria-pressed="true"
+                                    onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
+                            </div>
+                            <div id="cmOnlineBox" class="cm-online-box" aria-hidden="true">
+                                <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
+                                <input id="cmMeetingLink" class="cm-input" type="url"
+                                    name="meeting_link" placeholder="https://meet.google.com/..." autocomplete="url" />
+                                <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo
+                                    link</button>
+                            </div>
+
+                            <div id="cmResources" class="cm-resources is-open" aria-hidden="false">
+                                <p class="cm-section-title">Yêu cầu phòng</p>
+                                <div class="cm-fixed-requirements">
+                                    <span class="cm-label">Thiết bị cố định bắt buộc</span>
+                                    <p class="cm-help">Chọn các thiết bị/tiện nghi bắt buộc phòng họp phải có.</p>
+                                    <div id="cmFixedAmenityOptions" class="cm-amenity-options">
+                                        <p class="cm-help">Đang tải tiện nghi phòng...</p>
+                                    </div>
+                                </div>
+
+                                <div class="cm-capacity">
+                                    <div>
+                                        <span class="cm-help">Sức chứa cần thiết</span>
+                                        <strong id="cmCapacityValue">1 người</strong>
+                                        <span id="cmCapacityMin" class="cm-help">Phòng tối thiểu: 1 chỗ</span>
+                                    </div>
+                                    <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost"
+                                        onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
+                                </div>
+                                <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                                <div id="cmRoomResults" class="cm-room-list">
+                                    <div class="cm-empty">Chọn điều kiện phòng rồi bấm “Tìm phòng phù hợp”.</div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section id="cmEquipmentSection" class="cm-section" hidden>
+                            <p class="cm-section-title">Thiết bị cần mượn thêm</p>
+                            <p class="cm-help">Thiết bị di động được đặt riêng sau khi chọn phòng.</p>
+                            <div id="cmBorrowEquipment" class="cm-borrow-eq"></div>
+                            <div id="cmEquipConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                        </section>
+
+                        <div id="cmFormError" class="cm-alert cm-alert-error" role="alert"></div>
+                        <div id="cmApiError" class="cm-alert cm-alert-error" role="alert"></div>
+                    </div>
+
+                    <aside class="cm-summary-pane">
+                        <div class="cm-summary-card">
+                            <h2>Kiểm tra cuộc họp</h2>
+                            <ul id="cmSummaryList" class="cm-summary-list"></ul>
+                        </div>
+                        <div id="cmSummaryStatus" class="cm-status is-ok">✓ Không có xung đột</div>
+                        <div class="cm-summary-actions">
+                            <button id="cmSubmit" class="cm-btn cm-btn-primary" type="submit">TẠO CUỘC HỌP</button>
+                            <button class="cm-btn cm-btn-secondary" type="button"
+                                onclick="closeCreateMeeting()">Hủy</button>
+                        </div>
+                    </aside>
+                </form>
+            </div>
+
+            <div id="cmSuccessView" class="cm-success hidden" role="status">
+                <div class="cm-success-icon" aria-hidden="true">✓</div>
+                <h2>Đã tạo cuộc họp</h2>
+                <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
+                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp
+                    khác</button>
+                <button type="button" class="cm-btn cm-btn-secondary" onclick="closeCreateMeeting()">Đóng</button>
+            </div>
+        </section>
+    </div>
+
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="js/app.js?v=20"></script>
+    <script src="js/create-meeting.js?v=4"></script>
+    <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
+</body>
+
+</html>

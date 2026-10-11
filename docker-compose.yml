@@ -1,0 +1,40 @@
+services:
+  roomsync_db:
+    image: mysql:8.0
+    container_name: roomsync_db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-03062006}
+      MYSQL_DATABASE: meeting_db
+      MYSQL_USER: roomsync_user
+      MYSQL_PASSWORD: roomsync_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: roomsync_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-03062006}@roomsync_db:3306/meeting_db
+      DATABASE_HOST: roomsync_db
+      DATABASE_PORT: 3306
+      SECRET_KEY: roomsync_super_secret_jwt_key
+    volumes:
+      - .:/app
+    depends_on:
+      roomsync_db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

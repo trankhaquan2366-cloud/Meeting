@@ -1,0 +1,11 @@
+{
+  "name": "meeting-system",
+  "version": "1.0.0",
+  "description": "Meeting Room Management System",
+  "scripts": {
+    "frontend": "npx serve frontend -l 3000"
+  },
+  "devDependencies": {
+    "serve": "^14.2.6"
+  }
+}
