@@ -400,11 +400,46 @@ class MeetingService:
             )
 
         # Idempotent: repeating the operation is a successful no-op.
-        if (meeting.status or "").upper() not in {"CANCELLED", "CANCELLED_NO_SHOW"}:
+        if str(meeting.status or "").strip().casefold() not in {
+            "cancelled",
+            "canceled",
+            "cancelled_no_show",
+        }:
+            invitee_ids = {
+                participant.user_id
+                for participant in meeting.participants
+                if participant.user_id != meeting.organizer_id
+            }
+            notifications = (
+                db.query(Notification)
+                .filter(
+                    Notification.meeting_id == meeting.id,
+                    Notification.user_id.in_(invitee_ids),
+                    Notification.title.ilike("%mời%"),
+                )
+                .all()
+            ) if invitee_ids else []
+            invitation_by_user = {item.user_id: item for item in notifications}
+
             meeting.status = "CANCELLED"
             meeting.cancellation_reason = (cancellation_reason or "").strip() or None
             meeting.cancelled_at = _utc_now()
             try:
+                for user_id in invitee_ids:
+                    notification = invitation_by_user.get(user_id)
+                    if notification is None:
+                        notification = Notification(
+                            user_id=user_id,
+                            meeting_id=meeting.id,
+                        )
+                        db.add(notification)
+
+                    notification.title = "Cuộc họp đã bị hủy"
+                    notification.content = (
+                        f"Cuộc họp '{meeting.title}' đã bị người tổ chức hủy."
+                    )
+                    notification.is_read = False
+
                 db.commit()
                 db.refresh(meeting)
             except SQLAlchemyError as exc:

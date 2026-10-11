@@ -53,6 +53,8 @@ def test_delete_calendar_event_treats_missing_google_event_as_success(
     monkeypatch, status_code
 ):
     monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "mock-client-secret")
     user = User(id=42, google_refresh_token=encrypt_refresh_token("refresh-token"))
     events = FakeCalendarEvents(_http_error(status_code))
     monkeypatch.setattr(google_calendar_service.Credentials, "refresh", lambda self, request: None)
@@ -68,6 +70,8 @@ def test_delete_calendar_event_treats_missing_google_event_as_success(
 
 def test_delete_calendar_event_returns_false_for_other_google_errors(monkeypatch):
     monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "mock-client-secret")
     user = User(id=43, google_refresh_token=encrypt_refresh_token("refresh-token"))
     events = FakeCalendarEvents(_http_error(500))
     monkeypatch.setattr(google_calendar_service.Credentials, "refresh", lambda self, request: None)

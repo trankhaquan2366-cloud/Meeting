@@ -97,7 +97,8 @@ def test_invitee_can_update_own_response_but_nonparticipant_cannot(
         headers=_auth_header(_make_token(outsider)),
         json={"response_status": "accepted"},
     )
-    assert outsider_response.status_code == 404
+    assert outsider_response.status_code == 403
+    assert outsider_response.json()["detail"] == "You are not invited to this meeting"
 
     invalid_response = client.patch(
         f"/api/meetings/{meeting.id}/response",

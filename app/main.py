@@ -18,6 +18,9 @@ from app.models.room import Room
 from app.models.meeting import Meeting
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
 from app.models.google_calendar_event import GoogleCalendarEvent
+from app.models.notification import Notification
+from app.models.meeting_reminder import MeetingReminder
+from app.models.meeting import MeetingParticipant
 
 # 2. Routers & Security
 from app.routers import admin_analytics, auth, equipment, meetings, notifications, rooms, users
@@ -79,13 +82,45 @@ def _auto_migrate_schema():
                         "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
                     ))
                     print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
+
+            if "notifications" in inspect(conn).get_table_names():
+                notification_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("notifications")
+                }
+                if "meeting_id" not in notification_columns:
+                    conn.execute(text(
+                        "ALTER TABLE notifications "
+                        "ADD COLUMN meeting_id INTEGER NULL"
+                    ))
+                notification_indexes = {
+                    index["name"]
+                    for index in inspect(conn).get_indexes("notifications")
+                }
+                if "ix_notifications_meeting_id" not in notification_indexes:
+                    conn.execute(text(
+                        "CREATE INDEX ix_notifications_meeting_id "
+                        "ON notifications (meeting_id)"
+                    ))
+                notification_foreign_keys = {
+                    foreign_key["name"]
+                    for foreign_key in inspect(conn).get_foreign_keys("notifications")
+                }
+                if "fk_notifications_meeting_id" not in notification_foreign_keys:
+                    conn.execute(text(
+                        "ALTER TABLE notifications "
+                        "ADD CONSTRAINT fk_notifications_meeting_id "
+                        "FOREIGN KEY (meeting_id) REFERENCES meetings (id) "
+                        "ON DELETE SET NULL"
+                    ))
+                    print("Added notifications.meeting_id relationship.")
     except Exception as e:
         print(f"⚠️ Thông báo cập nhật schema: {e}")
 
 _auto_migrate_schema()
 
-
 logger = logging.getLogger(__name__)
+MEETING_SCHEDULER_INTERVAL_SECONDS = 30
 
 
 def _run_meeting_scheduler_cycle() -> None:
@@ -106,7 +141,7 @@ def _run_meeting_scheduler_cycle() -> None:
 
 async def _meeting_scheduler_loop() -> None:
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(MEETING_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_meeting_scheduler_cycle)
 
 
@@ -114,11 +149,15 @@ async def _meeting_scheduler_loop() -> None:
 async def lifespan(app: FastAPI):
     scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
     try:
+        from app.services.reminder_service import start_reminder_scheduler
+        start_reminder_scheduler(interval_seconds=MEETING_SCHEDULER_INTERVAL_SECONDS)
         yield
     finally:
         scheduler_task.cancel()
         with suppress(asyncio.CancelledError):
             await scheduler_task
+        from app.services.reminder_service import shutdown_reminder_scheduler
+        shutdown_reminder_scheduler()
 
 
 # 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)

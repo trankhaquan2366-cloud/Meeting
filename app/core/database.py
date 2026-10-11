@@ -39,13 +39,18 @@ def _resolve_database_url() -> str:
 
 DATABASE_URL = _resolve_database_url()
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,  # Tự kiểm tra kết nối sống[cite: 8]
-    pool_size=10,         # Tối đa 10 kết nối thường trực
-    max_overflow=20,      # Cho phép mở rộng tối đa thêm 20 kết nối khi quá tải
-    pool_recycle=1800     # Tự động làm mới kết nối sau mỗi 30 phút để tránh bị treo
-)
+engine_kwargs = {}
+if DATABASE_URL.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    engine_kwargs.update({
+        "pool_pre_ping": True,
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_recycle": 1800,
+    })
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
