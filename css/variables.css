@@ -1,0 +1,42 @@
+/* variables.css - Design Tokens */
+:root {
+    /* Color Palette - Cyber Cinematic */
+    --color-bg-deep: #0a0c10;
+    --color-bg-panel: rgba(18, 22, 31, 0.65);
+    --color-bg-card: rgba(28, 34, 46, 0.7);
+    --color-primary: #00e5ff;
+    --color-primary-glow: rgba(0, 229, 255, 0.4);
+    --color-secondary: #9d00ff;
+    --color-secondary-glow: rgba(157, 0, 255, 0.4);
+    --color-accent: #ff0055;
+    
+    /* UI Colors */
+    --color-text-main: #f0f2f5;
+    --color-text-muted: #9ba1ad;
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-border-focus: rgba(0, 229, 255, 0.5);
+    
+    /* Semantic Colors */
+    --color-success: #00ff88;
+    --color-warning: #ffb300;
+    --color-danger: #ff3366;
+    
+    /* Glassmorphism */
+    --glass-blur: blur(20px);
+    --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+    --glass-border: 1px solid rgba(255, 255, 255, 0.08);
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    
+    /* Typography */
+    --font-sans: 'Inter', sans-serif;
+    --font-heading: 'Outfit', sans-serif;
+    
+    /* Transitions */
+    --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-smooth: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.theme-dark {
+    background-color: var(--color-bg-deep);
+    color: var(--color-text-main);
+}
