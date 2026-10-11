@@ -42,15 +42,18 @@
 }
 
 .cm-dialog {
-    width: min(1120px, 100%);
-    max-height: min(92vh, 860px);
+    width: 95%;
+    max-width: 880px;
+    max-height: 90vh;
     display: flex;
     flex-direction: column;
     background: var(--cm-white);
     border: 1px solid var(--cm-neutral-200);
     border-radius: var(--cm-radius-lg);
     box-shadow: var(--cm-shadow);
-    overflow: hidden;
+    padding: 1.25rem;
+    box-sizing: border-box;
+    overflow-y: auto;
 }
 
 .cm-header {
@@ -113,6 +116,7 @@
 
 .cm-form-pane {
     min-height: 0;
+    min-width: 0;
     overflow-y: auto;
     padding: 20px 22px 28px;
     display: flex;
@@ -122,6 +126,7 @@
 
 .cm-summary-pane {
     min-height: 0;
+    min-width: 0;
     overflow-y: auto;
     padding: 18px 18px 20px;
     background: var(--cm-neutral-50);
@@ -882,19 +887,159 @@
 }
 
 @media (max-width: 860px) {
-    .cm-layout {
-        grid-template-columns: 1fr;
+    .cm-overlay {
+        align-items: flex-start;
+        overflow-y: auto;
+        padding: 12px;
+        -webkit-overflow-scrolling: touch;
     }
 
-    .cm-summary-pane {
-        border-left: 0;
-        border-top: 1px solid var(--cm-neutral-200);
+    .cm-overlay .cm-dialog--mobile-scroll {
+        max-height: calc(100vh - 24px);
+        max-height: calc(100dvh - 24px);
+        margin: auto 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .cm-overlay button {
+        min-height: 44px;
+    }
+
+    .cm-overlay .cm-icon-btn {
+        width: 44px;
     }
 
     .cm-time-grid,
     .cm-recurring-extra.is-open,
     .cm-mode {
         grid-template-columns: 1fr;
+    }
+}
+
+.cm-overlay .cm-dialog {
+    width: 95%;
+    max-width: 880px;
+    max-height: 90vh;
+    overflow-y: auto;
+    background: #ffffff;
+    border-radius: 1rem;
+    padding: 1.25rem;
+    box-sizing: border-box;
+}
+
+.cm-overlay .cm-layout,
+.cm-overlay .cm-form-pane,
+.cm-overlay .cm-summary-pane,
+.cm-overlay .cm-card--summary {
+    position: static !important;
+    float: none !important;
+    box-sizing: border-box !important;
+}
+
+.cm-overlay .cm-layout {
+    flex: none;
+    min-height: auto;
+}
+
+.cm-overlay .cm-form-pane,
+.cm-overlay .cm-summary-pane {
+    min-height: auto;
+    min-width: 0;
+    overflow: visible;
+}
+
+@media (max-width: 860px) {
+    .cm-overlay .cm-dialog--mobile-scroll {
+        max-height: calc(100vh - 24px);
+        max-height: calc(100dvh - 24px);
+        margin: auto 0;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+    }
+}
+
+@media (min-width: 900px) {
+    .cm-overlay .cm-layout {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 320px !important;
+        gap: 1.5rem !important;
+        align-items: start !important;
+    }
+
+    .cm-overlay .cm-form-pane {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 1.25rem !important;
+        min-width: 0 !important;
+        padding: 1.25rem 0 0;
+    }
+
+    .cm-overlay .cm-summary-pane {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 1rem !important;
+        min-width: 0 !important;
+        margin: 1.25rem 0 0;
+        padding: 1.25rem !important;
+        background: #f8fafc !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 0.75rem !important;
+    }
+}
+
+@media (max-width: 899px) {
+    .cm-overlay .cm-layout {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 1.25rem !important;
+        width: 100% !important;
+    }
+
+    .cm-overlay .cm-form-pane {
+        display: contents !important;
+    }
+
+    .cm-overlay .cm-form-pane > .cm-section,
+    .cm-overlay #cmFormError,
+    .cm-overlay #cmApiError {
+        order: 1;
+    }
+
+    .cm-overlay .cm-form-pane > .cm-section {
+        width: 100% !important;
+        padding-right: 16px;
+        padding-left: 16px;
+    }
+
+    .cm-overlay .cm-attendees-section {
+        order: 2 !important;
+    }
+
+    .cm-overlay .cm-summary-pane {
+        order: 3 !important;
+        width: 100% !important;
+        margin: 0.5rem 0 0;
+        padding: 1rem !important;
+        background: #f8fafc !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 0.75rem !important;
+    }
+}
+
+@media (max-width: 767px) {
+    .cm-overlay #createMeetingForm.cm-layout {
+        gap: 1.25rem !important;
+    }
+
+    .cm-overlay .cm-form-pane > .cm-section {
+        padding-right: 12px;
+        padding-left: 12px;
+    }
+
+    .cm-overlay .cm-summary-pane {
+        padding: 0.875rem !important;
     }
 }
 

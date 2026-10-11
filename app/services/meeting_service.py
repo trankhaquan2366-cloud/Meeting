@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
+import json
 import logging
+import re
+from urllib.parse import parse_qs, urlparse
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -19,6 +22,272 @@ def _utc_now() -> datetime:
 
 
 class MeetingService:
+
+    @staticmethod
+    def _parse_smart_qr_payload(qr_payload: str) -> dict[str, int | str]:
+        raw_payload = qr_payload.strip()
+        if not raw_payload:
+            raise HTTPException(status_code=400, detail="Payload mã QR không hợp lệ.")
+
+        try:
+            parsed_payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            parsed_payload = None
+
+        if isinstance(parsed_payload, dict):
+            result: dict[str, int | str] = {}
+            for key in ("room_id", "meeting_id"):
+                value = parsed_payload.get(key)
+                if value is not None:
+                    try:
+                        result[key] = int(value)
+                    except (TypeError, ValueError) as exc:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{key} trong mã QR không hợp lệ.",
+                        ) from exc
+            token = parsed_payload.get("qr_token")
+            if token:
+                result["qr_token"] = str(token)
+            if result:
+                return result
+
+        parsed_url = urlparse(raw_payload)
+        if parsed_url.scheme in {"http", "https"} or parsed_url.query:
+            query_values = parse_qs(parsed_url.query)
+            result = {}
+            for key in ("room_id", "meeting_id"):
+                value = next(iter(query_values.get(key, [])), None)
+                if value is not None:
+                    try:
+                        result[key] = int(value)
+                    except ValueError as exc:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{key} trong mã QR không hợp lệ.",
+                        ) from exc
+            token = next(
+                iter(query_values.get("qr_token", query_values.get("token", []))),
+                None,
+            )
+            if token:
+                result["qr_token"] = token
+            path_room = re.search(r"/rooms?/(\d+)(?:/|$)", parsed_url.path)
+            path_meeting = re.search(r"/meetings?/(\d+)(?:/|$)", parsed_url.path)
+            if path_room and "room_id" not in result:
+                result["room_id"] = int(path_room.group(1))
+            if path_meeting and "meeting_id" not in result:
+                result["meeting_id"] = int(path_meeting.group(1))
+            if result:
+                return result
+
+        if raw_payload.isdigit():
+            return {"room_id": int(raw_payload)}
+        return {"qr_token": raw_payload}
+
+    @staticmethod
+    def _has_smart_qr_access(meeting: Meeting, user_id: int) -> bool:
+        return meeting.organizer_id == user_id or any(
+            participant.user_id == user_id for participant in meeting.participants
+        )
+
+    @staticmethod
+    def _complete_smart_qr_action(
+        db: Session,
+        meeting: Meeting,
+        current_user: User,
+        current_time: datetime,
+    ) -> dict[str, int | str]:
+        if not MeetingService._has_smart_qr_access(meeting, current_user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="Bạn không nằm trong danh sách tham gia cuộc họp này.",
+            )
+
+        state = (meeting.status or "").casefold()
+        if state in {"in_progress", "checked_in"}:
+            meeting.status = "COMPLETED"
+            meeting.check_out_time = current_time
+            action = "CHECK_OUT"
+            message = (
+                f"Đã Check-out & Giải phóng phòng "
+                f"{meeting.room.name if meeting.room else ''} thành công!"
+            )
+        else:
+            if state not in {"scheduled", "pending", "confirmed"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cuộc họp không ở trạng thái có thể check-in.",
+                )
+            if current_time < meeting.start_time - timedelta(minutes=15):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Chưa đến giờ check-in. Bạn chỉ có thể check-in trước giờ "
+                        "bắt đầu tối đa 15 phút."
+                    ),
+                )
+            if current_time > meeting.start_time + timedelta(minutes=15):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Đã quá thời hạn check-in cuộc họp (quá 15 phút so với giờ bắt đầu).",
+                )
+
+            meeting.status = "IN_PROGRESS"
+            meeting.check_in_time = current_time
+            if meeting.organizer_id is not None:
+                db.add(
+                    Notification(
+                        user_id=meeting.organizer_id,
+                        title="Check-in cuộc họp thành công",
+                        content=f"Cuộc họp '{meeting.title}' đã check-in thành công và bắt đầu.",
+                    )
+                )
+            action = "CHECK_IN"
+            message = f"Check-in thành công cuộc họp: {meeting.title}!"
+
+        try:
+            db.commit()
+            db.refresh(meeting)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception(
+                "Failed to perform smart QR action for meeting_id=%s",
+                meeting.id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Không thể cập nhật trạng thái cuộc họp.",
+            ) from exc
+        return {"action": action, "message": message, "meeting_id": meeting.id}
+
+    @staticmethod
+    def smart_qr_action(
+        db: Session,
+        qr_payload: str,
+        current_user: User,
+        now: datetime | None = None,
+    ) -> dict[str, int | str]:
+        reference = MeetingService._parse_smart_qr_payload(qr_payload)
+        current_time = now or _utc_now()
+        meeting: Meeting | None = None
+        room: Room | None = None
+
+        if "meeting_id" in reference:
+            meeting = db.query(Meeting).filter(
+                Meeting.id == reference["meeting_id"]
+            ).first()
+            if meeting is None:
+                raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+            if not MeetingService._has_smart_qr_access(meeting, current_user.id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Bạn không nằm trong danh sách tham gia cuộc họp này.",
+                )
+            if meeting.room is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cuộc họp này không được gắn với phòng họp.",
+                )
+            if "room_id" in reference and meeting.room_id != reference["room_id"]:
+                raise HTTPException(status_code=400, detail="Mã QR không khớp với cuộc họp.")
+            if "qr_token" in reference and (
+                meeting.room is None
+                or meeting.room.qr_token != reference["qr_token"]
+            ):
+                raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+            return MeetingService._complete_smart_qr_action(
+                db, meeting, current_user, current_time
+            )
+
+        if "room_id" in reference:
+            room = db.query(Room).filter(Room.id == reference["room_id"]).first()
+            if room is None:
+                raise HTTPException(status_code=400, detail="Không tìm thấy phòng từ mã QR.")
+            if "qr_token" in reference and room.qr_token != reference["qr_token"]:
+                raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+        elif "qr_token" in reference:
+            room = db.query(Room).filter(
+                Room.qr_token == reference["qr_token"]
+            ).first()
+            if room is None:
+                raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
+
+        if room is None:
+            raise HTTPException(status_code=400, detail="Payload mã QR không hợp lệ.")
+
+        day_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        next_day = day_start + timedelta(days=1)
+        room_meetings = db.query(Meeting).filter(
+            Meeting.room_id == room.id,
+            Meeting.start_time >= day_start,
+            Meeting.start_time < next_day,
+            Meeting.status.notin_(["CANCELLED", "CANCELLED_NO_SHOW", "canceled"]),
+        ).order_by(Meeting.start_time).all()
+
+        active_meetings = [
+            item
+            for item in room_meetings
+            if (item.status or "").casefold() in {"in_progress", "checked_in"}
+        ]
+        accessible_active = [
+            item
+            for item in active_meetings
+            if MeetingService._has_smart_qr_access(item, current_user.id)
+        ]
+        if accessible_active:
+            return MeetingService._complete_smart_qr_action(
+                db, accessible_active[0], current_user, current_time
+            )
+        if active_meetings:
+            raise HTTPException(
+                status_code=403,
+                detail="Bạn không nằm trong danh sách tham gia cuộc họp này.",
+            )
+
+        scheduled_meetings = [
+            item
+            for item in room_meetings
+            if (item.status or "").casefold() in {"scheduled", "pending", "confirmed"}
+        ]
+        accessible_scheduled = [
+            item
+            for item in scheduled_meetings
+            if MeetingService._has_smart_qr_access(item, current_user.id)
+        ]
+        if not accessible_scheduled and scheduled_meetings:
+            raise HTTPException(
+                status_code=403,
+                detail="Bạn không nằm trong danh sách tham gia cuộc họp này.",
+            )
+
+        eligible_meetings = [
+            item
+            for item in accessible_scheduled
+            if item.start_time - timedelta(minutes=15)
+            <= current_time
+            <= item.start_time + timedelta(minutes=15)
+        ]
+        if eligible_meetings:
+            return MeetingService._complete_smart_qr_action(
+                db, eligible_meetings[0], current_user, current_time
+            )
+        if accessible_scheduled:
+            nearest_meeting = min(
+                accessible_scheduled,
+                key=lambda item: abs((item.start_time - current_time).total_seconds()),
+            )
+            return MeetingService._complete_smart_qr_action(
+                db, nearest_meeting, current_user, current_time
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Bạn không có lịch họp nào tại phòng này trong khung giờ check-in "
+                "hợp lệ (từ -15 đến +15 phút từ giờ bắt đầu)."
+            ),
+        )
 
     @staticmethod
     def check_in_meeting(
