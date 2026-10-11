@@ -302,7 +302,7 @@ async function loadCreateMeetingData() {
         if (typeof _allUsers !== 'undefined' && _allUsers.length) {
             cmState.users = _allUsers;
         } else if (token) {
-            const res = await fetch(`${API_BASE}/users/`, { headers: { Authorization: `Bearer ${token}` } });
+            const res = await fetchAPI(`${API_BASE}/users/`, { headers: { Authorization: `Bearer ${token}` } });
             if (res.ok) cmState.users = await res.json();
         }
     } catch (e) {
@@ -312,7 +312,7 @@ async function loadCreateMeetingData() {
 
     try {
         if (typeof allRooms !== 'undefined' && !allRooms.length) {
-            const res = await fetch(`${API_BASE}/rooms/`);
+            const res = await fetchAPI(`${API_BASE}/rooms/`);
             if (!res.ok) throw new Error(`Không tải được phòng (${res.status}).`);
             allRooms = await res.json();
         }
@@ -331,7 +331,7 @@ async function loadCreateMeetingData() {
             params.set('end_time', `${date}T${end}:00`);
         }
         if (token) {
-            const res = await fetch(`${API_BASE}/equipments/availability?${params}`, {
+            const res = await fetchAPI(`${API_BASE}/equipments/availability?${params}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             if (res.ok) cmState.equipment = (await res.json()).filter(eq => eq.is_active !== false);
@@ -652,7 +652,7 @@ async function searchMatchingRooms() {
             start_time: `${date}T${start}:00`,
             end_time: `${date}T${end}:00`,
         });
-        const res = await fetch(`${API_BASE}/rooms/available?${params}`, {
+        const res = await fetchAPI(`${API_BASE}/rooms/available?${params}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {}
         });
         if (!res.ok) throw new Error(`Room availability returned ${res.status}.`);
@@ -1066,7 +1066,7 @@ async function handleCreateMeetingSubmit(event) {
     cmState.submitting = true;
     updateCreateMeetingSummary();
     try {
-        const res = await fetch(`${API_BASE}/meetings/book`, {
+        const res = await fetchAPI(`${API_BASE}/meetings/book`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
