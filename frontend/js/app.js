@@ -18,6 +18,10 @@ let qrToastTimer = null;
 let activeRoomQrToken = '';
 let activePresenterQrToken = '';
 let pendingCancelMeetingId = null;
+let roomRestrictionUsers = [];
+let selectedRestrictionUser = null;
+let selectedRestrictedRoomIds = new Set();
+let roomRestrictionLoadController = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -117,16 +121,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         const addEqBtn = document.getElementById('addEquipmentBtn');
         const adminEqSection = document.getElementById('adminEquipmentSection');
         const cancellationNav = document.getElementById('navCancellationAnalytics');
+        const roomRestrictionsNav = document.getElementById('navRoomRestrictions');
         if (btn1) btn1.style.display = 'block';
         if (btn2) btn2.style.display = 'block';
         if (addEqBtn) addEqBtn.style.display = 'block';
         if (adminEqSection) adminEqSection.style.display = 'block';
         if (cancellationNav) cancellationNav.style.display = 'flex';
+        if (roomRestrictionsNav) roomRestrictionsNav.style.display = 'flex';
     } else {
         const navReport = document.getElementById('navReport');
         const cancellationNav = document.getElementById('navCancellationAnalytics');
+        const roomRestrictionsNav = document.getElementById('navRoomRestrictions');
         if (navReport) navReport.style.display = 'none';
         if (cancellationNav) cancellationNav.style.display = 'none';
+        if (roomRestrictionsNav) roomRestrictionsNav.style.display = 'none';
     }
 
     // Tải dữ liệu ban đầu
@@ -192,6 +200,13 @@ function switchToOverview() {
 }
 
 function switchMainTab(tabName, el) {
+    if (
+        (tabName === 'cancellations' || tabName === 'restrictions')
+        && String(localStorage.getItem('role') || '').trim().toLowerCase() !== 'admin'
+    ) {
+        return;
+    }
+
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
     if (el) el.classList.add('active');
 
@@ -227,11 +242,15 @@ function switchMainTab(tabName, el) {
         if (searchContainer) searchContainer.style.display = 'none';
         fetchRoomUsageReport();
     } else if (tabName === 'cancellations') {
-        if (String(localStorage.getItem('role') || '').trim().toLowerCase() !== 'admin') return;
         const view = document.getElementById('viewCancellationAnalytics');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         fetchCancellationAnalytics();
+    } else if (tabName === 'restrictions') {
+        const view = document.getElementById('viewRoomRestrictions');
+        if (view) view.style.display = 'block';
+        if (searchContainer) searchContainer.style.display = 'none';
+        loadRoomRestrictionUsers();
     } else if (tabName === 'settings') {
         const view = document.getElementById('viewSettings');
         if (view) view.style.display = 'block';
@@ -239,6 +258,253 @@ function switchMainTab(tabName, el) {
         loadCurrentUserProfile();
         loadGoogleCalendarStatus();
     }
+}
+
+function showRoomRestrictionsMessage(message, isError = false) {
+    const element = document.getElementById('roomRestrictionsMessage');
+    if (!element) return;
+    element.textContent = message;
+    element.className = isError
+        ? 'mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700'
+        : 'mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700';
+}
+
+function hideRoomRestrictionsMessage() {
+    const element = document.getElementById('roomRestrictionsMessage');
+    if (!element) return;
+    element.textContent = '';
+    element.className = 'hidden mb-4 rounded-lg border px-4 py-3 text-sm';
+}
+
+function renderRoomRestrictionUsers(message) {
+    const body = document.getElementById('roomRestrictionUsersBody');
+    if (!body) return;
+
+    if (message) {
+        body.innerHTML = `<tr><td colspan="3" class="px-4 py-8 text-center text-sm text-slate-500">${escapeHtml(message)}</td></tr>`;
+        return;
+    }
+
+    if (!roomRestrictionUsers.length) {
+        body.innerHTML = '<tr><td colspan="3" class="px-4 py-8 text-center text-sm text-slate-500">Không có người dùng để hiển thị.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = roomRestrictionUsers.map(user => `
+        <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3 text-sm font-medium text-slate-800">${escapeHtml(user.full_name || 'Người dùng')}</td>
+            <td class="px-4 py-3 text-sm text-slate-600">${escapeHtml(user.email || '—')}</td>
+            <td class="px-4 py-3 text-right">
+                ${user.role === 'admin'
+                    ? '<span class="text-sm font-medium text-slate-400">Quyền quản trị</span>'
+                    : `<button type="button" class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+                        onclick="openRoomRestrictionModal(${Number(user.id)})">Giới hạn</button>`}
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function loadRoomRestrictionUsers() {
+    if (String(localStorage.getItem('role') || '').trim().toLowerCase() !== 'admin') return;
+
+    const body = document.getElementById('roomRestrictionUsersBody');
+    if (body) {
+        body.innerHTML = '<tr><td colspan="3" class="px-4 py-8 text-center text-sm text-slate-500">Đang tải danh sách người dùng...</td></tr>';
+    }
+    hideRoomRestrictionsMessage();
+
+    try {
+        const response = await fetch(`${API_BASE}/users/`, {
+            headers: { Authorization: 'Bearer ' + getAuthToken() },
+        });
+        if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({}));
+            throw new Error(errorBody.detail || `Không thể tải danh sách người dùng (HTTP ${response.status}).`);
+        }
+        roomRestrictionUsers = await response.json();
+        renderRoomRestrictionUsers();
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không thể tải danh sách người dùng.';
+        renderRoomRestrictionUsers(message);
+        showRoomRestrictionsMessage(message, true);
+    }
+}
+
+function setRoomRestrictionModalError(message) {
+    const element = document.getElementById('roomRestrictionModalError');
+    if (!element) return;
+    element.textContent = message;
+    element.classList.toggle('hidden', !message);
+}
+
+function renderRoomRestrictionRooms(rooms) {
+    const container = document.getElementById('roomRestrictionRooms');
+    if (!container) return;
+    if (!rooms.length) {
+        container.innerHTML = '<p class="col-span-full py-6 text-center text-sm text-slate-500">Không có phòng họp đang hoạt động.</p>';
+        return;
+    }
+
+    container.innerHTML = rooms.map(room => {
+        const roomId = Number(room.id);
+        const checked = selectedRestrictedRoomIds.has(roomId);
+        return `
+            <label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${checked ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'}">
+                <input type="checkbox" value="${roomId}" ${checked ? 'checked' : ''}
+                    onchange="toggleRoomRestriction(${roomId}, this.checked)" class="mt-1 h-4 w-4 accent-red-600">
+                <span class="flex-1">
+                    <span class="block font-semibold">${escapeHtml(room.name)}</span>
+                    <span class="block text-sm text-slate-500">${escapeHtml(room.location || 'Chưa có vị trí')}</span>
+                </span>
+            </label>
+        `;
+    }).join('');
+}
+
+async function openRoomRestrictionModal(userId) {
+    if (String(localStorage.getItem('role') || '').trim().toLowerCase() !== 'admin') return;
+    const user = roomRestrictionUsers.find(item => Number(item.id) === Number(userId));
+    if (!user) {
+        showRoomRestrictionsMessage('Không tìm thấy người dùng. Vui lòng tải lại danh sách.', true);
+        return;
+    }
+
+    if (roomRestrictionLoadController) roomRestrictionLoadController.abort();
+    const controller = new AbortController();
+    roomRestrictionLoadController = controller;
+    selectedRestrictionUser = user;
+    selectedRestrictedRoomIds = new Set();
+
+    const modal = document.getElementById('roomRestrictionModal');
+    const roomsContainer = document.getElementById('roomRestrictionRooms');
+    const fieldset = document.getElementById('roomRestrictionRoomsFieldset');
+    const reasonInput = document.getElementById('roomRestrictionReason');
+    const saveButton = document.getElementById('roomRestrictionSaveButton');
+    const userName = document.getElementById('roomRestrictionUserName');
+    const userEmail = document.getElementById('roomRestrictionUserEmail');
+    if (!modal || !roomsContainer || !fieldset || !reasonInput || !saveButton) return;
+
+    if (userName) userName.textContent = user.full_name || '—';
+    if (userEmail) userEmail.textContent = user.email || '—';
+    roomsContainer.innerHTML = '<p class="col-span-full py-6 text-center text-sm text-slate-500">Đang tải danh sách phòng...</p>';
+    fieldset.disabled = true;
+    reasonInput.disabled = true;
+    saveButton.disabled = true;
+    setRoomRestrictionModalError('');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+
+    try {
+        const headers = { Authorization: 'Bearer ' + getAuthToken() };
+        const [roomsResponse, restrictionResponse] = await Promise.all([
+            fetch(`${API_BASE}/rooms/`, { headers, signal: controller.signal }),
+            fetch(`${API_BASE}/admin/restrictions/users/${user.id}`, { headers, signal: controller.signal }),
+        ]);
+        for (const response of [roomsResponse, restrictionResponse]) {
+            if (!response.ok) {
+                const errorBody = await response.json().catch(() => ({}));
+                throw new Error(errorBody.detail || `Không thể tải cấu hình phòng (HTTP ${response.status}).`);
+            }
+        }
+
+        const [rooms, detail] = await Promise.all([
+            roomsResponse.json(),
+            restrictionResponse.json(),
+        ]);
+        if (controller.signal.aborted) return;
+
+        selectedRestrictedRoomIds = new Set((detail.restrictions || []).map(item => Number(item.room_id)));
+        const reasons = [...new Set(
+            (detail.restrictions || [])
+                .map(item => (item.reason || '').trim())
+                .filter(Boolean),
+        )];
+        reasonInput.value = reasons.join('\n');
+        renderRoomRestrictionRooms(rooms);
+        fieldset.disabled = false;
+        reasonInput.disabled = false;
+        saveButton.disabled = false;
+    } catch (error) {
+        if (controller.signal.aborted || error?.name === 'AbortError') return;
+        roomsContainer.innerHTML = '';
+        setRoomRestrictionModalError(
+            error instanceof Error ? error.message : 'Không thể tải cấu hình giới hạn phòng.',
+        );
+    }
+}
+
+function toggleRoomRestriction(roomId, isRestricted) {
+    if (isRestricted) selectedRestrictedRoomIds.add(Number(roomId));
+    else selectedRestrictedRoomIds.delete(Number(roomId));
+    const label = document.querySelector(
+        `#roomRestrictionRooms input[value="${Number(roomId)}"]`,
+    )?.closest('label');
+    if (!label) return;
+    label.classList.toggle('border-red-200', isRestricted);
+    label.classList.toggle('bg-red-50', isRestricted);
+    label.classList.toggle('text-red-700', isRestricted);
+    label.classList.toggle('border-slate-200', !isRestricted);
+    label.classList.toggle('bg-white', !isRestricted);
+    label.classList.toggle('text-slate-700', !isRestricted);
+}
+
+async function saveRoomRestrictions() {
+    if (!selectedRestrictionUser) return;
+    const saveButton = document.getElementById('roomRestrictionSaveButton');
+    const reasonInput = document.getElementById('roomRestrictionReason');
+    if (!saveButton || !reasonInput) return;
+
+    const userName = selectedRestrictionUser.full_name || 'người dùng';
+    saveButton.disabled = true;
+    saveButton.textContent = 'Đang lưu...';
+    setRoomRestrictionModalError('');
+    try {
+        const response = await fetch(
+            `${API_BASE}/admin/restrictions/users/${selectedRestrictionUser.id}`,
+            {
+                method: 'PUT',
+                headers: {
+                    Authorization: 'Bearer ' + getAuthToken(),
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    restrictedRoomIds: [...selectedRestrictedRoomIds],
+                    reason: reasonInput.value.trim() || null,
+                }),
+            },
+        );
+        if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({}));
+            throw new Error(errorBody.detail || `Không thể lưu cấu hình (HTTP ${response.status}).`);
+        }
+        closeRoomRestrictionModal();
+        showRoomRestrictionsMessage(`Đã cập nhật giới hạn đặt phòng cho ${userName}.`);
+    } catch (error) {
+        setRoomRestrictionModalError(
+            error instanceof Error ? error.message : 'Lưu cấu hình thất bại. Vui lòng thử lại.',
+        );
+    } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = 'Lưu cấu hình';
+    }
+}
+
+function closeRoomRestrictionModal() {
+    if (roomRestrictionLoadController) {
+        roomRestrictionLoadController.abort();
+        roomRestrictionLoadController = null;
+    }
+    const modal = document.getElementById('roomRestrictionModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+    selectedRestrictionUser = null;
+    selectedRestrictedRoomIds = new Set();
+}
+
+function handleRoomRestrictionBackdrop(event) {
+    if (event.target === event.currentTarget) closeRoomRestrictionModal();
 }
 
 async function loadGoogleCalendarStatus() {
@@ -2131,5 +2397,11 @@ window.handleEquipmentFormSubmit = handleEquipmentFormSubmit;
 window.deleteEquipment = deleteEquipment;
 window.fetchRoomUsageReport = fetchRoomUsageReport;
 window.fetchCancellationAnalytics = fetchCancellationAnalytics;
+window.loadRoomRestrictionUsers = loadRoomRestrictionUsers;
+window.openRoomRestrictionModal = openRoomRestrictionModal;
+window.closeRoomRestrictionModal = closeRoomRestrictionModal;
+window.handleRoomRestrictionBackdrop = handleRoomRestrictionBackdrop;
+window.toggleRoomRestriction = toggleRoomRestriction;
+window.saveRoomRestrictions = saveRoomRestrictions;
 window.loadRoomsForReportFilter = loadRoomsForReportFilter;
 window.updateUserSettings = updateUserSettings;

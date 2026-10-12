@@ -18,6 +18,7 @@ from app.models.room import Room
 from app.models.meeting import Meeting
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
 from app.models.google_calendar_event import GoogleCalendarEvent
+from app.models.restriction import UserRoomRestriction
 
 # 2. Routers & Security
 from app.routers import admin_analytics, auth, equipment, meetings, notifications, rooms, users
@@ -26,6 +27,7 @@ from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
 from app.routers import auth, equipment, meetings, notifications, rooms, users
 from app.routers import reports
+from app.api.endpoints import restrictions
 from app.services.scheduler import (
     process_auto_checkouts,
     process_meeting_reminders,
@@ -35,7 +37,7 @@ from app.services.scheduler import (
 try:
     configure_mappers()
 except Exception as e:
-    print(f"❌ Lỗi cấu hình ORM Models: {e}")
+    print(f"Loi cau hinh ORM Models: {e}")
 
 from sqlalchemy import text
 
@@ -50,23 +52,23 @@ def _auto_migrate_schema():
                 cols_meetings = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM meetings")).fetchall()]
                 if "meeting_type" not in cols_meetings:
                     conn.execute(text("ALTER TABLE meetings ADD COLUMN meeting_type VARCHAR(20) NOT NULL DEFAULT 'offline' AFTER description"))
-                    print("✅ Đã tự động thêm cột 'meeting_type' vào bảng meetings.")
+                    print("Da tu dong them cot 'meeting_type' vao bang meetings.")
                 if "online_link" not in cols_meetings:
                     conn.execute(text("ALTER TABLE meetings ADD COLUMN online_link VARCHAR(500) DEFAULT NULL AFTER meeting_type"))
-                    print("✅ Đã tự động thêm cột 'online_link' vào bảng meetings.")
+                    print("Da tu dong them cot 'online_link' vao bang meetings.")
 
                 # Cho phép room_id nhận giá trị NULL (cho cuộc họp trực tuyến)
                 room_id_col = conn.execute(text("SHOW COLUMNS FROM meetings LIKE 'room_id'")).fetchone()
                 if room_id_col and room_id_col[2] == 'NO':
                     col_type = room_id_col[1]
                     conn.execute(text(f"ALTER TABLE meetings MODIFY COLUMN room_id {col_type} NULL"))
-                    print("✅ Đã cập nhật cột 'room_id' cho phép NULL.")
+                    print("Da cap nhat cot 'room_id' cho phep NULL.")
 
                 # 2. Kiểm tra bảng rooms
                 cols_rooms = [row[0] for row in conn.execute(text("SHOW COLUMNS FROM rooms")).fetchall()]
                 if "amenities" not in cols_rooms:
                     conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
-                    print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
+                    print("Da tu dong them cot 'amenities' vao bang rooms.")
 
             if "meeting_participants" in inspect(conn).get_table_names():
                 participant_columns = {
@@ -78,9 +80,9 @@ def _auto_migrate_schema():
                         "ALTER TABLE meeting_participants "
                         "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
                     ))
-                    print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
+                    print("Da tu dong them cot 'response_status' vao bang meeting_participants.")
     except Exception as e:
-        print(f"⚠️ Thông báo cập nhật schema: {e}")
+        print(f"Thong bao cap nhat schema: {e}")
 
 _auto_migrate_schema()
 
@@ -158,6 +160,7 @@ app.include_router(
 app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
 app.include_router(notifications.router, prefix="/api", tags=["notifications"])
 app.include_router(users.router, prefix="/api", tags=["users"])
+app.include_router(restrictions.router, prefix="/api")
 app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
 # 8. Endpoints Đăng nhập & Root
 @app.post("/api/login", tags=["auth"])

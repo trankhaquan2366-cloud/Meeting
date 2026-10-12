@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.meeting import Meeting, MeetingParticipant
+from app.models.restriction import UserRoomRestriction
 from app.models.user import User
 from app.schemas.meeting import (
     MeetingCheckInRequest,
@@ -45,6 +46,11 @@ def list_rooms(db: Session = Depends(get_db)):
 
 
 @router.post(
+    "",
+    response_model=List[MeetingResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+@router.post(
     "/book",
     response_model=List[MeetingResponse],
     status_code=status.HTTP_201_CREATED,
@@ -57,6 +63,25 @@ def create_meeting(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if (
+        current_user.role != "admin"
+        and payload.meeting_type == "offline"
+        and payload.room_id is not None
+    ):
+        restriction = (
+            db.query(UserRoomRestriction)
+            .filter(
+                UserRoomRestriction.user_id == current_user.id,
+                UserRoomRestriction.room_id == payload.room_id,
+            )
+            .first()
+        )
+        if restriction is not None:
+            detail = "Bạn không được phép đặt phòng họp này."
+            if restriction.reason and restriction.reason.strip():
+                detail = f"{detail} Lý do: {restriction.reason.strip()}"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
     # 1. Gọi Service tạo cuộc họp
     created_meetings = MeetingService.create_meeting(
         db=db,

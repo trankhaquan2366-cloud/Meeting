@@ -15,6 +15,7 @@ class UserSimpleResponse(BaseModel):
     id: int
     full_name: Optional[str] = None
     email: str
+    role: str
 
     class Config:
         from_attributes = True
