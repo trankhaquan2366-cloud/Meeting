@@ -1,0 +1,86 @@
+/* base.css - Reset & Typography */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-sans);
+    background-color: var(--color-bg-deep);
+    color: var(--color-text-main);
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+}
+
+button {
+    cursor: pointer;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    transition: var(--transition-fast);
+}
+
+input, select {
+    font-family: inherit;
+    outline: none;
+}
+
+/* Base Utility Classes */
+.hidden { display: none !important; }
+.active { display: block; }
+
+/* Buttons */
+.btn-glow-primary {
+    background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    box-shadow: 0 0 15px var(--color-primary-glow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+}
+.btn-glow-primary:hover {
+    box-shadow: 0 0 25px var(--color-primary-glow), 0 0 15px var(--color-secondary-glow);
+    transform: translateY(-2px);
+}
+
+/* Toast System */
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.toast {
+    background: var(--color-bg-card);
+    backdrop-filter: var(--glass-blur);
+    border: var(--glass-border);
+    border-left: 4px solid var(--color-primary);
+    padding: 16px 20px;
+    border-radius: 8px;
+    box-shadow: var(--glass-shadow);
+    color: var(--color-text-main);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: slideInRight 0.4s ease forwards;
+}
+.toast.success { border-left-color: var(--color-success); }
+.toast.error { border-left-color: var(--color-danger); }
+.toast i { font-size: 1.2rem; }
+.toast.success i { color: var(--color-success); }
+.toast.error i { color: var(--color-danger); }

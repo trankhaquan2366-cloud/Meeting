@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Night Lounge - Management System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { display: flex; height: 100vh; background-color: #0b0c10; color: #c5c6c7; overflow: hidden; }
+        
+        /* Sidebar */
+        .sidebar { width: 260px; background: #1f2833; padding: 25px 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #45a29e; }
+        .sidebar h2 { color: #66fcf1; font-size: 1.4rem; text-align: center; text-shadow: 0 0 10px #66fcf1; margin-bottom: 25px; }
+        .nav-item { padding: 12px 18px; color: #c5c6c7; border-radius: 8px; cursor: pointer; transition: 0.3s; font-weight: 500; display: flex; align-items: center; gap: 10px; }
+        .nav-item:hover, .nav-item.active { background: #66fcf1; color: #0b0c10; font-weight: bold; box-shadow: 0 0 10px rgba(102, 252, 241, 0.4); }
+        
+        /* Main Content */
+        .main-content { flex: 1; padding: 35px; overflow-y: auto; }
+        .page-section { display: none; }
+        .page-section.active { display: block; }
+        
+        .header-title { color: #66fcf1; margin-bottom: 25px; font-size: 1.8rem; }
+        .stats-grid { display: flex; gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: #1f2833; border: 1px solid #45a29e; padding: 20px; border-radius: 12px; flex: 1; }
+        .stat-card h4 { color: #c5c6c7; font-size: 0.9rem; }
+        .stat-card p { color: #66fcf1; font-size: 1.8rem; font-weight: bold; margin-top: 10px; }
+        
+        /* Table Style */
+        table { width: 100%; border-collapse: collapse; background: #1f2833; border-radius: 10px; overflow: hidden; margin-top: 15px; border: 1px solid #45a29e; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #2c3e50; }
+        th { background: #0b0c10; color: #66fcf1; }
+        
+        .btn { background: #66fcf1; color: #0b0c10; border: none; padding: 12px 25px; border-radius: 20px; font-weight: bold; cursor: pointer; transition: 0.3s; margin-bottom: 15px; }
+        .btn:hover { background: #45a29e; color: #fff; }
+    </style>
+</head>
+<body>
+
+    <!-- Thanh Menu Trái -->
+    <div class="sidebar">
+        <h2>NIGHT LOUNGE</h2>
+        <div class="nav-item active" onclick="switchPage('dashboard', this)">📊 Tổng Quan</div>
+        <div class="nav-item" onclick="switchPage('booking', this)">🍾 Quản Lý Đặt Bàn</div>
+        <div class="nav-item" onclick="switchPage('menu', this)">🍸 Danh Mục Cocktail</div>
+        <div class="nav-item" onclick="switchPage('revenue', this)">💵 Báo Cáo Doanh Thu</div>
+    </div>
+
+    <!-- Nội Dung Các Trang Con -->
+    <div class="main-content">
+        
+        <!-- 1. Trang Tổng Quan -->
+        <div id="dashboard" class="page-section active">
+            <h1 class="header-title">Tổng Quan Điều Hành Bar</h1>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h4>Doanh Thu Hôm Nay</h4>
+                    <p>32.500.000 VNĐ</p>
+                </div>
+                <div class="stat-card">
+                    <h4>Bàn Đã Đặt</h4>
+                    <p>12 / 15 Bàn</p>
+                </div>
+                <div class="stat-card">
+                    <h4>Khách VIP Đang Ngồi</h4>
+                    <p>8 Khách</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Trang Đặt Bàn -->
+        <div id="booking" class="page-section">
+            <h1 class="header-title">Quản Lý Đặt Bàn Live</h1>
+            <button class="btn" onclick="alert('Đã tiếp nhận yêu cầu đặt bàn mới!')">+ Đặt Bàn Nhanh</button>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Mã Bàn</th>
+                        <th>Tên Khách Hàng</th>
+                        <th>Số Điện Thoại</th>
+                        <th>Giờ Đặt</th>
+                        <th>Trạng Thái</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>VIP-01</td>
+                        <td>Nguyễn Văn A</td>
+                        <td>0901 234 567</td>
+                        <td>20:00</td>
+                        <td style="color: #66fcf1; font-weight: bold;">Đã Phục Vụ</td>
+                    </tr>
+                    <tr>
+                        <td>TABLE-05</td>
+                        <td>Trần Thị B</td>
+                        <td>0987 654 321</td>
+                        <td>21:30</td>
+                        <td style="color: #ffbd59; font-weight: bold;">Đang Chờ</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 3. Trang Menu -->
+        <div id="menu" class="page-section">
+            <h1 class="header-title">Danh Mục Đồ Uống & Pha Chế</h1>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tên Món</th>
+                        <th>Thành Phần Phụ Tách</th>
+                        <th>Giá Bán</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>🍸 Mojito Classic</td>
+                        <td>Rượu Rum, lá bạc hà, chanh tươi, soda</td>
+                        <td>150.000 VNĐ</td>
+                    </tr>
+                    <tr>
+                        <td>🥃 Old Fashioned</td>
+                        <td>Whiskey thượng hạng, vỏ cam, đắng nhẹ</td>
+                        <td>220.000 VNĐ</td>
+                    </tr>
+                    <tr>
+                        <td>🍷 Red Wine Special</td>
+                        <td>Vang đỏ nhập khẩu Pháp</td>
+                        <td>180.000 VNĐ</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 4. Trang Doanh Thu -->
+        <div id="revenue" class="page-section">
+            <h1 class="header-title">Báo Cáo Tài Chính Tháng</h1>
+            <p style="color: #45a29e;">Dữ liệu hóa đơn được đồng bộ tự động từ máy POS bán hàng.</p>
+        </div>
+
+    </div>
+
+    <script>
+        function switchPage(pageId, element) {
+            // Ẩn tất cả các trang
+            document.querySelectorAll('.page-section').forEach(page => page.classList.remove('active'));
+            // Bỏ chọn menu hiện tại
+            document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+            
+            // Hiển thị trang được chọn
+            document.getElementById(pageId).classList.add('active');
+            element.classList.add('active');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineAI Pro - Hệ Thống Quản Lý Rạp Phim AI</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <!-- Boxicons -->
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/animations.css">
+    <link rel="stylesheet" href="css/auth.css">
+    <link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="theme-dark">
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- MAIN APP CONTAINER -->
+    <div id="app">
+        <!-- 1. LOGIN PORTAL -->
+        <section id="view-login" class="view-section active">
+            <div class="login-background">
+                <img src="assets/bg.jpg" alt="Cinematic AI Background">
+                <div class="bg-overlay"></div>
+                <div class="particles" id="particles-js"></div>
+            </div>
+
+            <div class="login-container">
+                <div class="login-glass-card">
+                    <div class="brand-header">
+                        <div class="logo-glow">
+                            <i class='bx bx-movie-play'></i>
+                        </div>
+                        <h1>CineAI <span>Pro</span></h1>
+                        <p class="subtitle">AI-Powered Cinema Management System</p>
+                    </div>
+
+                    <div class="auth-tabs">
+                        <button class="auth-tab active" data-tab="standard">Tiêu chuẩn</button>
+                        <button class="auth-tab" data-tab="biometric">FaceID AI</button>
+                    </div>
+
+                    <div class="auth-content">
+                        <!-- Standard Login -->
+                        <div id="tab-standard" class="tab-pane active">
+                            <form id="login-form">
+                                <div class="input-group">
+                                    <i class='bx bx-user'></i>
+                                    <input type="text" id="username" placeholder="Tên đăng nhập / Email" required>
+                                </div>
+                                <div class="input-group">
+                                    <i class='bx bx-lock-alt'></i>
+                                    <input type="password" id="password" placeholder="Mật khẩu" required>
+                                    <i class='bx bx-show toggle-pwd'></i>
+                                </div>
+                                <div class="captcha-ai">
+                                    <div class="ai-shield"><i class='bx bx-shield-quarter'></i></div>
+                                    <span>AI Threat Detection: <b>Khớp (99.9%)</b></span>
+                                    <i class='bx bx-check-circle success-icon'></i>
+                                </div>
+                                <button type="submit" class="btn-glow-primary">
+                                    ĐĂNG NHẬP <i class='bx bx-right-arrow-alt'></i>
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Biometric Login -->
+                        <div id="tab-biometric" class="tab-pane">
+                            <div class="face-scanner">
+                                <div class="scan-area">
+                                    <div class="radar-line"></div>
+                                    <div class="face-silhouette">
+                                        <i class='bx bx-face'></i>
+                                    </div>
+                                    <div class="corner top-left"></div>
+                                    <div class="corner top-right"></div>
+                                    <div class="corner bottom-left"></div>
+                                    <div class="corner bottom-right"></div>
+                                </div>
+                                <p class="scan-status">Đang định vị khuôn mặt...</p>
+                                <button class="btn-scan" id="btn-start-scan">Bắt Đầu Quét</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="demo-quick-login">
+                        <p>Đăng nhập Demo (1-Click)</p>
+                        <div class="demo-buttons">
+                            <button class="btn-demo admin" onclick="loginDemo('admin')">
+                                <i class='bx bx-crown'></i> Super Admin
+                            </button>
+                            <button class="btn-demo manager" onclick="loginDemo('manager')">
+                                <i class='bx bx-buildings'></i> Manager
+                            </button>
+                            <button class="btn-demo ai" onclick="loginDemo('ai')">
+                                <i class='bx bx-brain'></i> AI Lead
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. ADMIN DASHBOARD -->
+        <section id="view-admin" class="view-section hidden">
+            <!-- Sidebar -->
+            <aside class="admin-sidebar">
+                <div class="sidebar-brand">
+                    <i class='bx bx-movie-play'></i>
+                    <h2>CineAI</h2>
+                </div>
+                
+                <ul class="nav-menu">
+                    <li class="nav-item active" data-target="dashboard">
+                        <i class='bx bx-grid-alt'></i> <span>Tổng quan AI</span>
+                    </li>
+                    <li class="nav-item" data-target="scheduler">
+                        <i class='bx bx-calendar-star'></i> <span>Xếp lịch AI</span>
+                    </li>
+                    <li class="nav-item" data-target="seatmap">
+                        <i class='bx bx-chair'></i> <span>Sơ đồ & Giá động</span>
+                    </li>
+                    <li class="nav-item" data-target="fb">
+                        <i class='bx bx-coffee-togo'></i> <span>F&B Dự báo</span>
+                    </li>
+                    <li class="nav-item" data-target="equipment">
+                        <i class='bx bx-laptop'></i> <span>Equipment Status</span>
+                    </li>
+                    <li class="nav-item" data-target="settings">
+                        <i class='bx bx-cog'></i> <span>Cài đặt hệ thống</span>
+                    </li>
+                </ul>
+
+                <div class="user-profile-mini">
+                    <img src="https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff" alt="User">
+                    <div class="user-info">
+                        <p class="name" id="current-user-name">Quản trị viên</p>
+                        <p class="role" id="current-user-role">Super Admin</p>
+                    </div>
+                    <button id="btn-logout" title="Đăng xuất"><i class='bx bx-log-out'></i></button>
+                </div>
+            </aside>
+
+            <!-- Main Content Area -->
+            <main class="admin-main">
+                <!-- Topbar -->
+                <header class="admin-topbar">
+                    <div class="search-bar">
+                        <i class='bx bx-search'></i>
+                        <input type="text" placeholder="Ctrl + K để tìm kiếm nhanh bằng AI...">
+                    </div>
+                    <div class="topbar-actions">
+                        <div class="ai-status-badge">
+                            <span class="pulse-dot"></span> CineBrain v4.8: ONLINE
+                        </div>
+                        <div class="action-btn notifications">
+                            <i class='bx bx-bell'></i>
+                            <span class="badge">3</span>
+                        </div>
+                        <select class="cinema-selector">
+                            <option>Hà Nội Landmark IMAX</option>
+                            <option>TP.HCM CineCenter</option>
+                            <option>Đà Nẵng Premium</option>
+                        </select>
+                    </div>
+                </header>
+
+                <!-- Dashboard View -->
+                <div id="content-dashboard" class="content-view active">
+                    <h2 class="page-title">Tổng quan Điều hành</h2>
+                    
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <div class="kpi-icon"><i class='bx bx-wallet'></i></div>
+                            <div class="kpi-info">
+                                <p class="label">Doanh thu hôm nay</p>
+                                <h3>$124,500</h3>
+                                <span class="trend up"><i class='bx bx-trending-up'></i> +14.5% vs Tuần trước</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-icon"><i class='bx bx-chair'></i></div>
+                            <div class="kpi-info">
+                                <p class="label">Lấp đầy phòng (AI Dự báo)</p>
+                                <h3>86%</h3>
+                                <span class="trend up"><i class='bx bx-trending-up'></i> +5% nhờ tối ưu AI</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-icon"><i class='bx bx-movie'></i></div>
+                            <div class="kpi-info">
+                                <p class="label">Suất chiếu đang chạy</p>
+                                <h3>24</h3>
+                                <span class="trend neutral">Bình thường</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-icon"><i class='bx bx-receipt'></i></div>
+                            <div class="kpi-info">
+                                <p class="label">Vé bán ra</p>
+                                <h3>8,432</h3>
+                                <span class="trend up"><i class='bx bx-trending-up'></i> +22%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="charts-section">
+                        <div class="chart-card">
+                            <h3><i class='bx bx-line-chart'></i> Biểu đồ Phân tích Doanh thu (Actual vs AI Forecast)</h3>
+                            <div class="chart-container" id="revenue-chart">
+                                <!-- Thêm SVG chart bằng JS -->
+                            </div>
+                        </div>
+                        <div class="chart-card narrow">
+                            <h3><i class='bx bx-radar'></i> Trạng thái Phòng Chiếu Live</h3>
+                            <div class="live-auditoriums">
+                                <div class="audit-item">
+                                    <div class="audit-header">
+                                        <span class="audit-name">Hall 1 (IMAX)</span>
+                                        <span class="audit-status active">Đang chiếu (65%)</span>
+                                    </div>
+                                    <div class="progress-bar"><div class="fill" style="width: 65%;"></div></div>
+                                </div>
+                                <div class="audit-item">
+                                    <div class="audit-header">
+                                        <span class="audit-name">Hall 2 (4DX)</span>
+                                        <span class="audit-status idle">Chuẩn bị (0%)</span>
+                                    </div>
+                                    <div class="progress-bar"><div class="fill" style="width: 0%;"></div></div>
+                                </div>
+                                <div class="audit-item">
+                                    <div class="audit-header">
+                                        <span class="audit-name">Hall 3 (Atmos)</span>
+                                        <span class="audit-status alert">Cảnh báo nhiệt độ</span>
+                                    </div>
+                                    <div class="progress-bar warning"><div class="fill" style="width: 100%;"></div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Scheduler View -->
+                <div id="content-scheduler" class="content-view">
+                    <h2 class="page-title">Xếp Lịch Chiếu Thông Minh (AI Auto-Scheduler)</h2>
+                    <div class="scheduler-actions">
+                        <button class="btn-glow-primary" id="btn-auto-schedule">
+                            <i class='bx bx-brain'></i> Tối Ưu Hóa Lịch Chiếu Bằng AI
+                        </button>
+                    </div>
+                    <div class="schedule-grid" id="schedule-grid">
+                        <!-- Rendered by JS -->
+                        <div class="schedule-placeholder">
+                            <i class='bx bx-time'></i>
+                            <p>Nhấn "Tối ưu hóa" để AI tự động sắp xếp các suất chiếu hiệu quả nhất.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Seatmap View -->
+                <div id="content-seatmap" class="content-view">
+                    <h2 class="page-title">Sơ Đồ Ghế & Giá Vé Động</h2>
+                    <div class="seatmap-container">
+                        <div class="seatmap-controls">
+                            <select><option>Hall 1 (IMAX)</option></select>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggle-heatmap">
+                                <span class="slider"></span>
+                            </label>
+                            <span>Bật AI Heatmap</span>
+                        </div>
+                        <div class="screen-curve">MÀN HÌNH CHÍNH</div>
+                        <div class="seats-grid" id="seats-grid">
+                            <!-- Rendered by JS -->
+                        </div>
+                        <div class="seat-legend">
+                            <span class="legend-item"><div class="seat empty"></div> Trống</span>
+                            <span class="legend-item"><div class="seat occupied"></div> Đã bán</span>
+                            <span class="legend-item"><div class="seat vip"></div> VIP</span>
+                            <span class="legend-item"><div class="seat prime"></div> Prime (Giá cao)</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Equipment Availability View -->
+                <div id="content-equipment" class="content-view">
+                    <h2 class="page-title">Equipment Availability & Status</h2>
+                    <div class="filter-bar">
+                        <input type="datetime-local" id="eq-start-time">
+                        <input type="datetime-local" id="eq-end-time">
+                        <select id="eq-category">
+                            <option value="">Tất cả danh mục</option>
+                            <option value="AV">AV</option>
+                            <option value="Office">Office</option>
+                        </select>
+                        <input type="text" id="eq-search" placeholder="Tìm kiếm thiết bị...">
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table" id="equipment-table">
+                            <thead>
+                                <tr>
+                                    <th>Code</th>
+                                    <th>Name</th>
+                                    <th>Category</th>
+                                    <th>Total</th>
+                                    <th>Booked</th>
+                                    <th>Available</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="equipment-list">
+                                <!-- Rendered by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </main>
+
+            <!-- AI Copilot Floating FAB -->
+            <div class="ai-copilot-fab" id="btn-ai-chat">
+                <i class='bx bx-bot'></i>
+                <div class="ping-circle"></div>
+            </div>
+
+            <!-- AI Chat Drawer -->
+            <div class="ai-chat-drawer" id="ai-chat-drawer">
+                <div class="chat-header">
+                    <h3><i class='bx bx-brain'></i> CineBrain AI Assistant</h3>
+                    <button class="btn-close-chat" id="btn-close-chat"><i class='bx bx-x'></i></button>
+                </div>
+                <div class="chat-body" id="chat-body">
+                    <div class="message ai">
+                        <p>Xin chào! Tôi là CineBrain AI. Hệ thống hiện hoạt động ổn định. Tỷ lệ lấp đầy hôm nay dự kiến cao hơn 15% so với tuần trước. Tôi có thể giúp gì cho bạn?</p>
+                    </div>
+                </div>
+                <div class="chat-suggestions">
+                    <span class="chip" onclick="sendPrompt('Dự báo bắp nước cuối tuần?')">Dự báo F&B</span>
+                    <span class="chip" onclick="sendPrompt('Tối ưu giá vé suất 20:00')">Tối ưu giá</span>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" placeholder="Hỏi AI...">
+                    <button id="btn-send-chat"><i class='bx bx-send'></i></button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/data.js"></script>
+    <script src="js/charts.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

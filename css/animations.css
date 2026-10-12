@@ -1,0 +1,53 @@
+/* animations.css */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeInScale {
+    from { opacity: 0; transform: scale(0.95) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes spinRotate {
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes pulseGlow {
+    from { text-shadow: 0 0 10px var(--color-primary), 0 0 20px var(--color-primary); }
+    to { text-shadow: 0 0 20px var(--color-primary), 0 0 40px var(--color-primary); }
+}
+
+@keyframes scanLine {
+    0% { top: 0; }
+    50% { top: 100%; }
+    100% { top: 0; }
+}
+
+@keyframes pulseShield {
+    0% { transform: scale(1); filter: drop-shadow(0 0 5px var(--color-primary)); }
+    50% { transform: scale(1.1); filter: drop-shadow(0 0 15px var(--color-primary)); }
+    100% { transform: scale(1); filter: drop-shadow(0 0 5px var(--color-primary)); }
+}
+
+@keyframes slideInRight {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes pulseDot {
+    0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 255, 136, 0); }
+    100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+}
+
+@keyframes pulseText {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+@keyframes ping {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1.5); opacity: 0; }
+}
