@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error("Không thể tải thông tin profile từ server", e);
     }
 
-    const isAdmin = role === 'admin';
+    const isAdmin = String(role).trim().toLowerCase() === 'admin';
 
     // Cập nhật thông tin người dùng trên giao diện
     const nameDisplay = document.getElementById('userNameDisplay');
@@ -140,16 +140,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         const addEqBtn = document.getElementById('addEquipmentBtn');
         const adminEqSection = document.getElementById('adminEquipmentSection');
         const cancellationNav = document.getElementById('navCancellationAnalytics');
+        const userManagementNav = document.getElementById('navUserManagement');
         if (btn1) btn1.style.display = 'block';
         if (btn2) btn2.style.display = 'block';
         if (addEqBtn) addEqBtn.style.display = 'block';
         if (adminEqSection) adminEqSection.style.display = 'block';
         if (cancellationNav) cancellationNav.style.display = 'flex';
+        if (userManagementNav) userManagementNav.style.display = 'flex';
     } else {
         const navReport = document.getElementById('navReport');
         const cancellationNav = document.getElementById('navCancellationAnalytics');
+        const userManagementNav = document.getElementById('navUserManagement');
         if (navReport) navReport.style.display = 'none';
         if (cancellationNav) cancellationNav.style.display = 'none';
+        if (userManagementNav) userManagementNav.style.display = 'none';
     }
 
     // Tải dữ liệu ban đầu
@@ -249,6 +253,11 @@ function switchToOverview() {
 }
 
 function switchMainTab(tabName, el) {
+    if ((tabName === 'cancellations' || tabName === 'users') && !isCurrentUserAdmin()) {
+        showAppToast('Bạn không có quyền truy cập mục quản trị này.', 'error');
+        return;
+    }
+
     closeMobileMenu();
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
     if (el) el.classList.add('active');
@@ -301,7 +310,15 @@ function switchMainTab(tabName, el) {
         if (searchContainer) searchContainer.style.display = 'none';
         loadCurrentUserProfile();
         loadGoogleCalendarStatus();
+    } else if (tabName === 'users') {
+        const view = document.getElementById('viewUserManagement');
+        if (view) view.style.display = 'block';
+        if (searchContainer) searchContainer.style.display = 'none';
     }
+}
+
+function isCurrentUserAdmin() {
+    return String(localStorage.getItem('role') || '').trim().toLowerCase() === 'admin';
 }
 
 document.addEventListener('keydown', event => {
@@ -1245,6 +1262,73 @@ function initializeRsvpActions() {
         if (!button || button.disabled) return;
         respondToMeeting(Number(button.dataset.rsvpMeeting), button.dataset.rsvpStatus);
     });
+}
+
+async function handleAdminCreateUser(event) {
+    event.preventDefault();
+    if (!isCurrentUserAdmin()) {
+        showAppToast('Chỉ quản trị viên mới được tạo tài khoản.', 'error');
+        return;
+    }
+
+    const form = event.currentTarget;
+    if (!(form instanceof HTMLFormElement) || !form.reportValidity()) return;
+
+    const formData = new FormData(form);
+    const payload = {
+        full_name: String(formData.get('full_name') || '').trim(),
+        email: String(formData.get('email') || '').trim(),
+        password: String(formData.get('password') || ''),
+        role: String(formData.get('role') || 'employee'),
+    };
+    const username = String(formData.get('username') || '').trim();
+    if (username) payload.username = username;
+
+    const submitButton = document.getElementById('adminCreateUserSubmit');
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Đang tạo tài khoản...';
+    }
+
+    try {
+        const response = await fetchAPI(`${API_BASE}/users/`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        let result = {};
+        try {
+            result = await response.json();
+        } catch {
+            result = {};
+        }
+
+        if (!response.ok) {
+            const detail = result.detail;
+            const message = Array.isArray(detail)
+                ? detail.map(error => error.msg || 'Dữ liệu không hợp lệ').join(' ')
+                : (detail || result.message || `Không thể tạo tài khoản (HTTP ${response.status}).`);
+            showAppToast(String(message), 'error');
+            return;
+        }
+
+        form.reset();
+        showAppToast(
+            `Đã tạo tài khoản ${result.full_name || payload.full_name} (${result.username || payload.email}) thành công. Hãy bàn giao mật khẩu ban đầu trực tiếp.`,
+        );
+    } catch (error) {
+        console.error('Không thể tạo tài khoản người dùng', error);
+        showAppToast('Không thể kết nối máy chủ để tạo tài khoản. Vui lòng thử lại.', 'error');
+    } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = 'Tạo tài khoản';
+        }
+    }
 }
 
 function showAppToast(message, type = 'success') {
@@ -2488,6 +2572,7 @@ window.closeMobileMenu = closeMobileMenu;
 window.switchToOverview = switchToOverview;
 window.switchMainTab = switchMainTab;
 window.navigateToSettings = navigateToSettings;
+window.handleAdminCreateUser = handleAdminCreateUser;
 window.scrollToRooms = scrollToRooms;
 window.toggleNotificationPopup = toggleNotificationPopup;
 window.openScheduleModal = openScheduleModal;
