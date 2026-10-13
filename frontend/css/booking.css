@@ -1,22 +1,21 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 :root {
   font-family: "Inter", sans-serif;
-  color: #111827;
-  background: #f5f7fb;
+  color: #0f172a;
+  background: #f8fafc;
   font-synthesis: none;
   --blue: #2563eb;
   --blue-dark: #1d4ed8;
   --blue-soft: #eff6ff;
-  --gray-950: #111827;
+  --gray-950: #0f172a;
   --gray-700: #374151;
   --gray-600: #4b5563;
   --gray-500: #6b7280;
   --gray-400: #9ca3af;
   --gray-300: #d1d5db;
   --gray-200: #e5e7eb;
-  --gray-100: #f3f4f6;
+  --gray-100: #f1f5f9;
   --white: #ffffff;
   --green: #059669;
   --amber: #b45309;
@@ -99,7 +98,7 @@ button {
   z-index: 1;
   background: var(--white);
   border: 1px solid var(--gray-200);
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.06);
   padding: 0;
   overflow: hidden;
@@ -146,7 +145,7 @@ button {
   color: var(--gray-500);
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   transition: color 160ms ease, background 160ms ease;
 }
 
@@ -228,7 +227,7 @@ button {
   color: var(--gray-950);
   background: var(--white);
   border: 1px solid var(--gray-300);
-  border-radius: 7px;
+  border-radius: 10px;
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }

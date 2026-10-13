@@ -11,6 +11,8 @@ let selectedRoomId = null;
 let equipmentAvailabilityTimer = null;
 let googleCalendarOAuthError = null;
 let userNotifications = [];
+let notificationFetchVersion = 0;
+let notificationMarkAllInProgress = false;
 const notificationRsvpOverrides = new Map();
 let activeQrScanner = null;
 let quickQrScanner = null;
@@ -375,7 +377,22 @@ function isCurrentUserAdmin() {
 }
 
 document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') closeMobileMenu();
+    if (event.key === 'Escape') {
+        const openMenus = document.querySelectorAll('.room-actions-menu[open]');
+        openMenus.forEach(menu => {
+            const restoreFocus = menu.contains(event.target);
+            menu.open = false;
+            if (restoreFocus) menu.querySelector('summary')?.focus();
+        });
+        closeMobileMenu();
+    }
+});
+
+document.addEventListener('click', event => {
+    if (!(event.target instanceof Element)) return;
+    document.querySelectorAll('.room-actions-menu[open]').forEach(menu => {
+        if (!menu.contains(event.target)) menu.open = false;
+    });
 });
 
 window.addEventListener('resize', () => {
@@ -571,6 +588,11 @@ function initializeNotifications() {
     const popup = document.getElementById('notificationPopup');
     if (popup) {
         popup.addEventListener('click', event => {
+            const markAllButton = event.target.closest('button[data-mark-all-notifications]');
+            if (markAllButton) {
+                markAllNotificationsAsRead();
+                return;
+            }
             const action = event.target.closest('button[data-notification-rsvp]');
             if (action) {
                 event.preventDefault();
@@ -592,10 +614,11 @@ function initializeNotifications() {
 }
 
 async function fetchNotifications() {
+    const requestVersion = ++notificationFetchVersion;
     const token = getAuthToken();
     if (!token) {
         redirectToLogin();
-        return;
+        return false;
     }
 
     try {
@@ -603,17 +626,24 @@ async function fetchNotifications() {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        if (handleUnauthorizedResponse(res)) return;
+        if (handleUnauthorizedResponse(res)) return false;
         if (res.ok) {
-            userNotifications = await res.json();
+            const notifications = await res.json();
+            if (requestVersion !== notificationFetchVersion) return false;
+            userNotifications = notifications;
             renderNotifications(userNotifications);
+            return true;
         } else {
-            renderNotificationError(await apiErrorMessage(res, 'Không thể tải thông báo.'));
+            const message = await apiErrorMessage(res, 'Không thể tải thông báo.');
+            if (requestVersion === notificationFetchVersion) renderNotificationError(message);
         }
     } catch (err) {
         console.error("Lỗi lấy danh sách thông báo:", err);
-        renderNotificationError('Không thể kết nối máy chủ để tải thông báo.');
+        if (requestVersion === notificationFetchVersion) {
+            renderNotificationError('Không thể kết nối máy chủ để tải thông báo.');
+        }
     }
+    return false;
 }
 
 async function markNotificationAsRead(notificationId) {
@@ -670,8 +700,13 @@ function renderNotifications(notifications) {
     if (!popup) return;
 
     if (!notifications || notifications.length === 0) {
-        popup.innerHTML = '<div class="notification-empty">Không có thông báo nào.</div>';
         updateNotificationDot(0);
+        popup.innerHTML = `
+            ${notificationHeaderHTML(0)}
+            <div class="notification-list">
+                <div class="notification-empty">Không có thông báo nào.</div>
+            </div>
+        `;
         return;
     }
 
@@ -679,10 +714,7 @@ function renderNotifications(notifications) {
     updateNotificationDot(unreadCount);
 
     popup.innerHTML = `
-        <div style="padding: 12px 16px; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
-            <span>Thông báo</span>
-            ${unreadCount > 0 ? `<span style="font-size: 0.75rem; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 9999px;">${unreadCount} chưa đọc</span>` : ''}
-        </div>
+        ${notificationHeaderHTML(unreadCount)}
         <div class="notification-list">
             ${notifications.map(n => {
                 const cancelled = ['cancelled', 'canceled'].includes(
@@ -714,6 +746,73 @@ function renderNotifications(notifications) {
             }).join('')}
         </div>
     `;
+}
+
+function notificationHeaderHTML(unreadCount) {
+    return `
+        <header class="notification-popup-header">
+            <div class="notification-popup-heading">
+                <h2>Thông báo</h2>
+                <span id="notificationUnreadCount" class="notification-unread-count"
+                    aria-live="polite">${unreadCount} chưa đọc</span>
+            </div>
+            <button class="notification-mark-all" type="button" data-mark-all-notifications
+                ${unreadCount === 0 ? 'disabled' : ''}>
+                Đánh dấu tất cả là đã đọc
+            </button>
+        </header>
+    `;
+}
+
+async function markAllNotificationsAsRead() {
+    if (notificationMarkAllInProgress) return;
+
+    const unreadNotifications = userNotifications.filter(notification => !notification.is_read);
+    if (unreadNotifications.length === 0) {
+        updateNotificationDot(0);
+        return;
+    }
+
+    const previousReadStates = unreadNotifications.map(notification => ({
+        notification,
+        isRead: notification.is_read,
+    }));
+    notificationMarkAllInProgress = true;
+    unreadNotifications.forEach(notification => { notification.is_read = true; });
+    renderNotifications(userNotifications);
+
+    try {
+        const token = getAuthToken();
+        if (!token) {
+            previousReadStates.forEach(({ notification, isRead }) => { notification.is_read = isRead; });
+            renderNotifications(userNotifications);
+            redirectToLogin();
+            return;
+        }
+
+        const res = await fetch(`${API_BASE}/notifications/read-all`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (handleUnauthorizedResponse(res)) {
+            previousReadStates.forEach(({ notification, isRead }) => { notification.is_read = isRead; });
+            renderNotifications(userNotifications);
+            return;
+        }
+        if (!res.ok) {
+            throw new Error(await apiErrorMessage(res, 'Không thể đánh dấu tất cả thông báo đã đọc.'));
+        }
+
+        await fetchNotifications();
+    } catch (error) {
+        previousReadStates.forEach(({ notification, isRead }) => { notification.is_read = isRead; });
+        renderNotifications(userNotifications);
+        renderNotificationError(error.message || 'Không thể đánh dấu tất cả thông báo đã đọc.');
+        console.error('Lỗi đánh dấu tất cả thông báo đã đọc:', error);
+        showAppToast(error.message || 'Không thể đánh dấu tất cả thông báo đã đọc.', 'error');
+    } finally {
+        notificationMarkAllInProgress = false;
+    }
 }
 
 function resolveNotificationMeeting(notification) {
@@ -787,12 +886,14 @@ function toggleNotificationPopup() {
     if (!popup) return;
 
     const isHidden = popup.style.display === 'none' || !popup.style.display;
-    popup.style.display = isHidden ? 'block' : 'none';
+    popup.style.display = isHidden ? 'flex' : 'none';
     const bell = document.getElementById('notificationBellBtn');
     if (bell) bell.setAttribute('aria-expanded', String(isHidden));
 
     if (isHidden) {
-        fetchNotifications();
+        fetchNotifications().then(loaded => {
+            if (loaded) markAllNotificationsAsRead();
+        });
     }
 }
 
@@ -1018,7 +1119,7 @@ function buildRoomCards(rooms, isAdmin) {
     const htmlContent = rooms.map(room => {
         const isAvailable = room.is_available !== false && room.is_active !== false;
         const statusClass = isAvailable ? 'status-green' : 'status-red';
-        const statusText = isAvailable ? '• Còn trống' : '• Đã đặt';
+        const statusText = isAvailable ? 'Còn trống' : 'Đã đặt';
 
         let amenitiesHTML = '';
         if (room.amenities) {
@@ -1032,35 +1133,39 @@ function buildRoomCards(rooms, isAdmin) {
             }
         }
 
-        let adminButtons = '';
-        if (isAdmin) {
-            adminButtons = `
-                <button class="btn-admin-action btn-admin-edit" onclick="openEditModal(${room.id})">Sửa</button>
-                <button class="btn-admin-action btn-admin-delete" onclick="deleteRoom(${room.id})">Xóa</button>
-            `;
-        }
+        const menuActions = `
+            <button class="room-action-item" type="button" onclick="openScheduleModal(${room.id})">Xem lịch</button>
+            ${isAdmin ? `
+                <button class="room-action-item" type="button" onclick="openRoomQrModal(${room.id})">Xem mã QR</button>
+                <button class="room-action-item" type="button" onclick="openEditModal(${room.id})">Sửa thông tin</button>
+                <button class="room-action-item room-action-item--danger" type="button" onclick="deleteRoom(${room.id})">Xóa phòng</button>
+            ` : ''}
+        `;
 
         return `
             <div class="room-card">
                 <div class="card-image">
                     <img src="${room.image_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c'}" alt="${escapeHtml(room.name)}">
-                    <span class="status-badge ${statusClass} ${isAdmin ? 'has-qr-action' : ''}">${statusText}</span>
-                    ${isAdmin ? `<button class="room-qr-icon" type="button" onclick="openRoomQrModal(${room.id})" title="Xem mã QR phòng" aria-label="Xem mã QR phòng ${escapeHtml(room.name)}">
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                            <path d="M3 3h8v8H3zM5.5 5.5v3h3v-3zM13 3h8v8h-8zM15.5 5.5v3h3v-3zM3 13h8v8H3zM5.5 15.5v3h3v-3zM13 13h3v3h-3zM18 13h3v3h-3zM13 18h3v3h-3zM18 18h3v3h-3z" />
-                        </svg>
-                    </button>` : ''}
+                    <span class="status-badge ${statusClass}">${statusText}</span>
                 </div>
                 <div class="card-body">
                     <h3>${escapeHtml(room.name)}</h3>
                     <p class="location">📍 ${escapeHtml(room.location || 'Tầng 1')} | 👥 ${room.capacity || '10'} người</p>
                     <div class="amenities-tags">${amenitiesHTML}</div>
-                    <div class="card-actions">
-                        <button class="btn-schedule" onclick="openScheduleModal(${room.id})">Xem lịch</button>
-                        <button class="btn-book ${isAvailable ? '' : 'disabled'}" ${isAvailable ? `onclick="openCreateMeeting({ roomId: ${room.id} })"` : 'disabled'}>
-                            ${isAvailable ? 'Tạo cuộc họp' : 'Hết chỗ'}
+                    <div class="card-actions room-card-actions">
+                        <button class="btn-book room-primary-action" type="button" ${isAvailable ? `onclick="openCreateMeeting({ roomId: ${room.id} })"` : 'disabled'}>
+                            ${isAvailable ? 'Tạo cuộc họp' : 'Hiện đã đặt'}
                         </button>
-                        ${adminButtons}
+                        <details class="room-actions-menu">
+                            <summary aria-label="Thao tác với phòng ${escapeHtml(room.name)}">
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <circle cx="5" cy="12" r="1.5" />
+                                    <circle cx="12" cy="12" r="1.5" />
+                                    <circle cx="19" cy="12" r="1.5" />
+                                </svg>
+                            </summary>
+                            <div class="room-actions-popover">${menuActions}</div>
+                        </details>
                     </div>
                 </div>
             </div>

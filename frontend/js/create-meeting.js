@@ -252,6 +252,7 @@ function resetCreateMeeting() {
     cmState.suggestedRooms = [];
     if (cmState.roomSearchTimer) clearTimeout(cmState.roomSearchTimer);
     cmState.roomSearchTimer = null;
+    clearValidationFeedback();
 
     const formIds = ['cmTitle', 'cmDescription', 'cmMeetingLink', 'cmAttendeeSearch'];
     formIds.forEach(id => {
@@ -365,6 +366,7 @@ function invalidateRoomResults() {
     cmState.roomsResult = [];
     cmState.hasRoomSearch = false;
     cmState.suggestedRooms = [];
+    clearValidationError('cmRoomError');
     renderRoomResults();
     updateEquipmentSectionVisibility();
     updateCreateMeetingSummary();
@@ -399,7 +401,7 @@ function setCreateMeetingMode(mode) {
     } else if (onlineLink) {
         onlineLink.value = '';
         onlineLink.required = false;
-        onlineLink.classList.remove('is-invalid');
+        clearValidationError('cmMeetingLinkError');
     }
 
     renderRoomResults();
@@ -760,6 +762,7 @@ function selectCreateMeetingRoom(room, { silent } = {}) {
     if (!match) return;
     cmState.selectedRoom = match.room;
     cmState.roomSelectionExpanded = false;
+    clearValidationError('cmRoomError');
     renderRoomResults();
     updateEquipmentSectionVisibility();
     if (!silent) updateCreateMeetingSummary();
@@ -891,6 +894,7 @@ function updateEquipmentConflict() {
     if (!issues.length) {
         alert.classList.remove('is-open');
         alert.innerHTML = '';
+        clearValidationError('cmEquipmentError');
         return;
     }
     const eq = issues[0];
@@ -903,6 +907,7 @@ function generateMeetingLink() {
     if (!input) return;
     const slug = Math.random().toString(36).slice(2, 8);
     input.value = `https://meet.roomsync.vn/${slug}`;
+    clearValidationError('cmMeetingLinkError');
     updateCreateMeetingSummary();
 }
 
@@ -993,6 +998,78 @@ function showFormError(message) {
     box.textContent = message;
 }
 
+function clearValidationError(errorId) {
+    const error = cmEl(errorId);
+    error?.classList.remove('is-visible');
+
+    const fieldIds = {
+        cmTitleError: 'cmTitle',
+        cmDateError: 'cmDate',
+        cmStartError: 'cmStart',
+        cmEndError: 'cmEnd',
+        cmMeetingLinkError: 'cmMeetingLink',
+    };
+    const field = fieldIds[errorId] ? cmEl(fieldIds[errorId]) : null;
+    field?.classList.remove('is-invalid');
+    field?.removeAttribute('aria-invalid');
+
+    if (errorId === 'cmRoomError') {
+        cmEl('cmRoomResults')?.classList.remove('is-invalid');
+        cmEl('cmSearchRoomsBtn')?.classList.remove('is-invalid');
+        cmEl('cmSearchRoomsBtn')?.removeAttribute('aria-invalid');
+    } else if (errorId === 'cmEquipmentError') {
+        cmEl('cmBorrowEquipment')?.classList.remove('is-invalid');
+    }
+}
+
+function clearValidationFeedback() {
+    [
+        'cmTitleError',
+        'cmDateError',
+        'cmStartError',
+        'cmEndError',
+        'cmMeetingLinkError',
+        'cmRoomError',
+        'cmEquipmentError',
+    ].forEach(clearValidationError);
+}
+
+function setValidationError(field, errorId, message) {
+    if (field) {
+        field.classList.add('is-invalid');
+        field.setAttribute('aria-invalid', 'true');
+    }
+    const error = cmEl(errorId);
+    if (error) {
+        error.textContent = message;
+        error.classList.add('is-visible');
+    }
+}
+
+function focusFirstInvalidField(field) {
+    if (!field) return;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    field.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        block: 'center',
+    });
+    window.setTimeout(() => {
+        if (field.isConnected) field.focus({ preventScroll: true });
+    }, reduceMotion ? 0 : 350);
+}
+
+function clearValidationErrorForField(field) {
+    const errorByFieldId = {
+        cmTitle: 'cmTitleError',
+        cmDate: 'cmDateError',
+        cmStart: 'cmStartError',
+        cmEnd: 'cmEndError',
+        cmMeetingLink: 'cmMeetingLinkError',
+    };
+    const errorId = errorByFieldId[field.id];
+    if (errorId) clearValidationError(errorId);
+}
+
 function cmTimeIsInPast(date, start) {
     if (!date || !start) return false;
     const startDate = new Date(`${date}T${start}:00`);
@@ -1002,46 +1079,54 @@ function cmTimeIsInPast(date, start) {
 
 function validateCreateMeeting() {
     hideCmAlerts();
+    clearValidationFeedback();
     const title = cmEl('cmTitle');
     const dateInput = cmEl('cmDate');
     const startInput = cmEl('cmStart');
     const endInput = cmEl('cmEnd');
     const onlineLink = cmEl('cmMeetingLink');
     const { date, start, end } = cmGetTimes();
+    const invalidFields = [];
     let ok = true;
 
     [title, dateInput, startInput, endInput, onlineLink].forEach(el => el?.classList.remove('is-invalid'));
 
     if (!title?.value.trim()) {
-        title.classList.add('is-invalid');
-        cmEl('cmTitleError')?.classList.add('is-visible');
+        setValidationError(title, 'cmTitleError', 'Nhập tên cuộc họp trước khi tạo.');
+        invalidFields.push(title);
         ok = false;
-    } else {
-        cmEl('cmTitleError')?.classList.remove('is-visible');
     }
 
-    if (
-        !/^\d{4}-\d{2}-\d{2}$/.test(date || '') ||
-        !/^\d{2}:\d{2}$/.test(start || '') ||
-        !/^\d{2}:\d{2}$/.test(end || '')
-    ) {
-        [dateInput, startInput, endInput].forEach(el => {
-            if (el) el.classList.add('is-invalid');
-        });
+    const hasValidDate = /^\d{4}-\d{2}-\d{2}$/.test(date || '');
+    const hasValidStart = /^\d{2}:\d{2}$/.test(start || '');
+    const hasValidEnd = /^\d{2}:\d{2}$/.test(end || '');
+    if (!hasValidDate || !hasValidStart || !hasValidEnd) {
+        if (!hasValidDate) {
+            setValidationError(dateInput, 'cmDateError', 'Chọn ngày hợp lệ.');
+            invalidFields.push(dateInput);
+        }
+        if (!hasValidStart) {
+            setValidationError(startInput, 'cmStartError', 'Chọn giờ bắt đầu hợp lệ.');
+            invalidFields.push(startInput);
+        }
+        if (!hasValidEnd) {
+            setValidationError(endInput, 'cmEndError', 'Chọn giờ kết thúc hợp lệ.');
+            invalidFields.push(endInput);
+        }
         showFormError('Chọn ngày, giờ bắt đầu và giờ kết thúc hợp lệ.');
         ok = false;
     }
 
     if (date && start && cmTimeIsInPast(date, start)) {
-        startInput?.classList.add('is-invalid');
+        setValidationError(startInput, 'cmStartError', 'Thời gian bắt đầu không được ở quá khứ.');
+        invalidFields.push(startInput);
         showFormError('Thời gian bắt đầu không được ở quá khứ.');
         ok = false;
     }
 
     if (date && start && end && end <= start) {
-        [startInput, endInput].forEach(el => {
-            if (el) el.classList.add('is-invalid');
-        });
+        setValidationError(endInput, 'cmEndError', 'Giờ kết thúc phải sau giờ bắt đầu.');
+        invalidFields.push(endInput);
         showFormError('Giờ kết thúc phải sau giờ bắt đầu.');
         ok = false;
     }
@@ -1049,11 +1134,13 @@ function validateCreateMeeting() {
     if (cmState.mode === 'online') {
         const linkValue = onlineLink?.value.trim() || '';
         if (!linkValue) {
-            onlineLink?.classList.add('is-invalid');
+            setValidationError(onlineLink, 'cmMeetingLinkError', 'Cuộc họp online cần link. Bấm Tạo link nếu chưa có.');
+            invalidFields.push(onlineLink);
             showFormError('Cuộc họp online cần link. Bấm Tạo link nếu chưa có.');
             ok = false;
         } else if (!/^https?:\/\//i.test(linkValue)) {
-            onlineLink?.classList.add('is-invalid');
+            setValidationError(onlineLink, 'cmMeetingLinkError', 'Nhập URL đầy đủ bắt đầu bằng http:// hoặc https://.');
+            invalidFields.push(onlineLink);
             showFormError('Link cuộc họp online không hợp lệ. Vui lòng nhập URL đầy đủ bắt đầu bằng http:// hoặc https://');
             ok = false;
         }
@@ -1062,6 +1149,17 @@ function validateCreateMeeting() {
     if (cmState.mode === 'offline') {
         const roomId = Number.parseInt(String(cmState.selectedRoom?.id ?? ''), 10);
         if (!Number.isSafeInteger(roomId) || roomId <= 0) {
+            const results = cmEl('cmRoomResults');
+            const searchButton = cmEl('cmSearchRoomsBtn');
+            results?.classList.add('is-invalid');
+            searchButton?.classList.add('is-invalid');
+            searchButton?.setAttribute('aria-invalid', 'true');
+            const roomError = cmEl('cmRoomError');
+            if (roomError) {
+                roomError.textContent = 'Tìm phòng phù hợp rồi chọn một phòng trước khi tạo cuộc họp.';
+                roomError.classList.add('is-visible');
+            }
+            invalidFields.push(searchButton || results);
             showFormError('Vui lòng chọn phòng họp hợp lệ.');
             ok = false;
         }
@@ -1078,13 +1176,39 @@ function validateCreateMeeting() {
         const message = available <= 0
             ? `Thiết bị "${eq.name}" đã hết hàng, không thể tạo cuộc họp với số lượng mượn này.`
             : `Thiết bị "${eq.name}" chỉ còn ${available} chiếc khả dụng, vui lòng giảm số lượng.`;
+        const equipment = cmEl('cmBorrowEquipment');
+        equipment?.classList.add('is-invalid');
+        const equipmentError = cmEl('cmEquipmentError');
+        if (equipmentError) {
+            equipmentError.textContent = message;
+            equipmentError.classList.add('is-visible');
+        }
+        invalidFields.push(equipment?.querySelector('button[aria-label^="Giảm"], button[aria-label^="Tăng"]') || equipment);
         showFormError(message);
         ok = false;
     }
 
-    if (collectConflicts().length && !(cmState.mode === 'offline' && !cmState.selectedRoom)) {
+    const roomHasConflict = collectConflicts().some(conflict => conflict.startsWith('Phòng'));
+    if (roomHasConflict) {
+        if (cmState.mode === 'offline' && cmState.selectedRoom) {
+            const roomResults = cmEl('cmRoomResults');
+            const searchButton = cmEl('cmSearchRoomsBtn');
+            roomResults?.classList.add('is-invalid');
+            searchButton?.classList.add('is-invalid');
+            searchButton?.setAttribute('aria-invalid', 'true');
+            const roomError = cmEl('cmRoomError');
+            if (roomError) {
+                roomError.textContent = 'Phòng đã chọn có xung đột. Hãy tìm và chọn phòng khác.';
+                roomError.classList.add('is-visible');
+            }
+            invalidFields.push(searchButton || roomResults);
+        }
         showFormError('Hãy xử lý xung đột trước khi tạo cuộc họp.');
         ok = false;
+    }
+    if (!ok) {
+        const firstInvalidField = invalidFields.find(field => field?.isConnected && !field.disabled);
+        focusFirstInvalidField(firstInvalidField);
     }
     return ok;
 }
@@ -1210,12 +1334,14 @@ function bindCreateMeetingEvents() {
 
     ['cmTitle', 'cmDescription', 'cmDate', 'cmStart', 'cmEnd', 'cmMeetingLink', 'cmRecurrenceUntil'].forEach(id => {
         cmEl(id)?.addEventListener('input', () => {
+            clearValidationErrorForField(cmEl(id));
             updateCreateMeetingSummary();
             if (['cmDate', 'cmStart', 'cmEnd', 'cmRecurrenceUntil'].includes(id)) {
                 scheduleRoomSearchRefresh();
             }
         });
         cmEl(id)?.addEventListener('change', () => {
+            clearValidationErrorForField(cmEl(id));
             updateRecurrenceNote();
             updateCreateMeetingSummary();
             if (['cmDate', 'cmStart', 'cmEnd', 'cmRecurrenceUntil'].includes(id)) {

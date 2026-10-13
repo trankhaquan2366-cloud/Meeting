@@ -1,15 +1,13 @@
+description: "Design system and UI standards for RoomSync vanilla HTML/CSS/Tailwind frontend."
+applyTo: "frontend/**/*.html, frontend/**/*.css"
 ---
-description: "Best practices for building Next.js (App Router) apps with modern caching, tooling, and server/client boundaries (aligned with Next.js 16.1.1)."
-applyTo: "**/*.tsx, **/*.ts, **/*.jsx, **/*.js, **/*.css"
----
-
-# Next.js Best Practices for LLMs (2026)
-
-_Last updated: January 2026 (aligned to Next.js 16.1.1)_
-
-This document summarizes the latest, authoritative best practices for building, structuring, and maintaining Next.js applications. It is intended for use by LLMs and developers to ensure code quality, maintainability, and scalability.
-
----
+# RoomSync UI/UX Standards (SaaS Style)
+- **Design Philosophy:** Clean, modern SaaS UI (similar to Vercel/Linear).
+- **Color Palette:** Primary Blue (#2563EB), Background Light Gray (#F8FAFC), Card White (#FFFFFF), Text Slate (#0F172A).
+- **Components:** 
+  - Cards: rounded-xl, border border-slate-200/80, shadow-sm.
+  - Buttons: rounded-lg, smooth transitions, clear primary/secondary variants.
+  - Inputs: rounded-lg, focus ring blue-500/20.
 
 ## 1. Project Structure & Organization
 
