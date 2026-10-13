@@ -169,9 +169,9 @@ def test_check_out_completes_meeting_with_room_qr(db_session: Session):
         start_time=now + timedelta(minutes=21),
         end_time=now + timedelta(minutes=30),
     )
-    equipment_status = next(item for item in equipment_availability if item.id == equipment.id)
-    assert equipment_status.booked_qty == 0
-    assert equipment_status.available_qty == equipment.total_qty
+    equipment_status = next(item for item in equipment_availability if item["id"] == equipment.id)
+    assert equipment_status["booked_qty"] == 0
+    assert equipment_status["available_qty"] == equipment.total_qty
 
 
 def test_versioned_check_in_endpoint(client: TestClient, db_session: Session):
@@ -280,9 +280,9 @@ def test_no_show_meeting_releases_equipment_inventory(db_session: Session):
         now - timedelta(minutes=1),
         now + timedelta(minutes=1),
     )
-    equipment_status = next(item for item in availability if item.id == equipment.id)
-    assert equipment_status.booked_qty == 0
-    assert equipment_status.available_qty == 1
+    equipment_status = next(item for item in availability if item["id"] == equipment.id)
+    assert equipment_status["booked_qty"] == 0
+    assert equipment_status["available_qty"] == 1
 
 
 def test_no_show_scheduler_does_not_cancel_before_grace_period(db_session: Session):

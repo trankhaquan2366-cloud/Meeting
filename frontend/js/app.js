@@ -24,6 +24,7 @@ let qrToastTimer = null;
 let activeRoomQrToken = '';
 let activePresenterQrToken = '';
 let pendingCancelMeetingId = null;
+let userListMountPromise = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -314,6 +315,58 @@ function switchMainTab(tabName, el) {
         const view = document.getElementById('viewUserManagement');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
+        showUserManagementSection('list');
+    }
+}
+
+function showUserManagementSection(section) {
+    if (!isCurrentUserAdmin()) {
+        showAppToast('Bạn không có quyền truy cập mục quản trị này.', 'error');
+        return;
+    }
+
+    const showList = section !== 'create';
+    const listPanel = document.getElementById('userListModePanel');
+    const createPanel = document.getElementById('userCreateModePanel');
+    const listTab = document.getElementById('userListModeTab');
+    const createTab = document.getElementById('userCreateModeTab');
+
+    if (listPanel) listPanel.hidden = !showList;
+    if (createPanel) createPanel.hidden = showList;
+    if (listTab) {
+        listTab.setAttribute('aria-selected', String(showList));
+        listTab.classList.toggle('border-blue-600', showList);
+        listTab.classList.toggle('text-blue-700', showList);
+        listTab.classList.toggle('border-transparent', !showList);
+        listTab.classList.toggle('text-slate-500', !showList);
+    }
+    if (createTab) {
+        createTab.setAttribute('aria-selected', String(!showList));
+        createTab.classList.toggle('border-blue-600', !showList);
+        createTab.classList.toggle('text-blue-700', !showList);
+        createTab.classList.toggle('border-transparent', showList);
+        createTab.classList.toggle('text-slate-500', showList);
+    }
+
+    if (showList) {
+        const userList = window.RoomSyncUserList;
+        if (!userList || typeof userList.mountUserListTable !== 'function') {
+            showAppToast('Không tải được giao diện danh sách người dùng. Vui lòng tải lại trang.', 'error');
+            return;
+        }
+
+        if (!userListMountPromise) {
+            userListMountPromise = userList.mountUserListTable(
+                'userListTableContainer',
+                () => showUserManagementSection('create'),
+            ).catch(error => {
+                userListMountPromise = null;
+                console.error('Không thể khởi tạo danh sách người dùng:', error);
+                showAppToast('Không thể khởi tạo danh sách người dùng. Vui lòng thử lại.', 'error');
+            });
+        }
+    } else {
+        document.getElementById('adminUserFullName')?.focus();
     }
 }
 
@@ -2571,6 +2624,7 @@ window.toggleMobileMenu = toggleMobileMenu;
 window.closeMobileMenu = closeMobileMenu;
 window.switchToOverview = switchToOverview;
 window.switchMainTab = switchMainTab;
+window.showUserManagementSection = showUserManagementSection;
 window.navigateToSettings = navigateToSettings;
 window.handleAdminCreateUser = handleAdminCreateUser;
 window.scrollToRooms = scrollToRooms;
@@ -2617,3 +2671,363 @@ window.fetchRoomUsageReport = fetchRoomUsageReport;
 window.fetchCancellationAnalytics = fetchCancellationAnalytics;
 window.loadRoomsForReportFilter = loadRoomsForReportFilter;
 window.updateUserSettings = updateUserSettings;
+
+/* ==========================================================================
+   AI CHAT DRAWER
+   ========================================================================== */
+const CHATBOT_API_BASE = `${API_BASE}/v1/chatbot`;
+let activeChatSessionId = null;
+let chatSessions = [];
+let chatHistoryRequestId = 0;
+let chatMessageRequestPending = false;
+
+document.addEventListener('DOMContentLoaded', initializeAiChat);
+
+function initializeAiChat() {
+    const launcher = document.getElementById('ai-chat-launcher');
+    const drawer = document.getElementById('ai-chat-drawer');
+    const form = document.getElementById('ai-chat-form');
+    if (!launcher || !drawer || !form) return;
+
+    launcher.addEventListener('click', openAiChatDrawer);
+    document.getElementById('ai-chat-close')?.addEventListener('click', closeAiChatDrawer);
+    document.getElementById('ai-chat-new-session')?.addEventListener('click', createAiChatSession);
+    document.getElementById('ai-chat-history-refresh')?.addEventListener('click', loadAiChatSessions);
+    form.addEventListener('submit', sendAiChatMessage);
+}
+
+async function openAiChatDrawer() {
+    const drawer = document.getElementById('ai-chat-drawer');
+    const launcher = document.getElementById('ai-chat-launcher');
+    if (!drawer || !launcher) return;
+
+    drawer.hidden = false;
+    drawer.setAttribute('aria-hidden', 'false');
+    launcher.setAttribute('aria-expanded', 'true');
+    document.getElementById('ai-chat-input')?.focus();
+    await loadAiChatSessions();
+}
+
+function closeAiChatDrawer() {
+    const drawer = document.getElementById('ai-chat-drawer');
+    const launcher = document.getElementById('ai-chat-launcher');
+    if (!drawer || !launcher) return;
+
+    drawer.hidden = true;
+    drawer.setAttribute('aria-hidden', 'true');
+    launcher.setAttribute('aria-expanded', 'false');
+    launcher.focus();
+}
+
+function chatAuthHeaders(json = false) {
+    const headers = { Authorization: `Bearer ${getAuthToken()}` };
+    if (json) headers['Content-Type'] = 'application/json';
+    return headers;
+}
+
+async function chatApiRequest(path, options = {}) {
+    const response = await fetchAPI(`${CHATBOT_API_BASE}${path}`, {
+        ...options,
+        headers: { ...chatAuthHeaders(Boolean(options.body)), ...(options.headers || {}) },
+    });
+    if (!response.ok) {
+        let detail = `Yêu cầu thất bại (${response.status}).`;
+        try {
+            const payload = await response.json();
+            const responseDetail = payload?.detail;
+            detail = typeof responseDetail === 'string'
+                ? responseDetail
+                : responseDetail?.message || payload?.message || detail;
+        } catch {
+            // Keep the HTTP status message when the server response is not JSON.
+        }
+        throw new Error(detail);
+    }
+    return response.status === 204 ? null : response.json();
+}
+
+async function loadAiChatSessions() {
+    const list = document.getElementById('ai-chat-history-list');
+    if (!list) return;
+    list.innerHTML = '<p class="ai-chat-muted">Đang tải lịch sử...</p>';
+
+    try {
+        const result = await chatApiRequest('/sessions?limit=100');
+        chatSessions = Array.isArray(result) ? result : [];
+        renderAiChatSessionList();
+
+        if (activeChatSessionId && chatSessions.some(session => session.id === activeChatSessionId)) {
+            return;
+        }
+        if (chatSessions.length) {
+            await selectAiChatSession(chatSessions[0].id);
+        } else {
+            await createAiChatSession();
+        }
+    } catch (error) {
+        list.innerHTML = `<p class="ai-chat-muted">${escapeHtml(error.message || 'Không thể tải lịch sử chat.')}</p>`;
+        setAiChatStatus(error.message || 'Không thể tải lịch sử chat.');
+    }
+}
+
+function renderAiChatSessionList() {
+    const list = document.getElementById('ai-chat-history-list');
+    if (!list) return;
+    if (!chatSessions.length) {
+        list.innerHTML = '<p class="ai-chat-muted">Chưa có cuộc trò chuyện nào.</p>';
+        return;
+    }
+
+    list.replaceChildren(...chatSessions.map(session => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `ai-chat-history-item${session.id === activeChatSessionId ? ' is-active' : ''}`;
+        button.setAttribute('aria-current', session.id === activeChatSessionId ? 'true' : 'false');
+        const title = document.createElement('strong');
+        title.textContent = session.title || 'Cuộc trò chuyện';
+        const updated = document.createElement('span');
+        updated.textContent = formatChatTimestamp(session.updated_at || session.created_at);
+        button.append(title, updated);
+        button.addEventListener('click', () => selectAiChatSession(session.id));
+        return button;
+    }));
+}
+
+async function createAiChatSession() {
+    setAiChatStatus('');
+    const button = document.getElementById('ai-chat-new-session');
+    if (button) button.disabled = true;
+    try {
+        const session = await chatApiRequest('/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ title: 'Cuộc trò chuyện mới' }),
+        });
+        chatSessions = [session, ...chatSessions.filter(item => item.id !== session.id)];
+        activeChatSessionId = session.id;
+        renderAiChatSessionList();
+        renderAiChatMessages([]);
+        document.getElementById('ai-chat-input')?.focus();
+    } catch (error) {
+        setAiChatStatus(error.message || 'Không thể tạo cuộc trò chuyện mới.');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function selectAiChatSession(sessionId) {
+    const requestId = ++chatHistoryRequestId;
+    activeChatSessionId = sessionId;
+    renderAiChatSessionList();
+    setAiChatStatus('');
+    const messages = document.getElementById('ai-chat-messages');
+    if (messages) messages.innerHTML = '<p class="ai-chat-muted">Đang tải tin nhắn...</p>';
+
+    try {
+        const history = await chatApiRequest(`/sessions/${encodeURIComponent(sessionId)}/messages?limit=500`);
+        if (requestId !== chatHistoryRequestId || sessionId !== activeChatSessionId) return;
+        renderAiChatMessages(Array.isArray(history) ? history : []);
+    } catch (error) {
+        if (requestId !== chatHistoryRequestId) return;
+        renderAiChatMessages([]);
+        setAiChatStatus(error.message || 'Không thể tải tin nhắn.');
+    }
+}
+
+async function sendAiChatMessage(event) {
+    event.preventDefault();
+    const input = document.getElementById('ai-chat-input');
+    const sendButton = document.getElementById('ai-chat-send');
+    const content = input?.value.trim();
+    if (!input || !content || chatMessageRequestPending) return;
+
+    try {
+        if (!activeChatSessionId) {
+            await createAiChatSession();
+        }
+        if (!activeChatSessionId) return;
+
+        const sessionId = activeChatSessionId;
+        chatMessageRequestPending = true;
+        if (sendButton) sendButton.disabled = true;
+        input.disabled = true;
+        input.value = '';
+        setAiChatStatus('');
+        appendAiChatMessage({ sender: 'user', content });
+        const response = await chatApiRequest(
+            `/sessions/${encodeURIComponent(sessionId)}/message`,
+            { method: 'POST', body: JSON.stringify({ content }) },
+        );
+
+        if (sessionId !== activeChatSessionId) return;
+        appendAiChatMessage({
+            sender: 'bot',
+            content: response.message || response.bot_message,
+            intent: response.intent,
+            slots: response.preview_card || response.slots,
+            is_ready_for_preview: response.is_ready_for_preview,
+        });
+        await refreshAiChatSessionsAfterMessage(sessionId);
+    } catch (error) {
+        setAiChatStatus(error.message || 'Không thể gửi tin nhắn. Vui lòng thử lại.');
+    } finally {
+        chatMessageRequestPending = false;
+        if (sendButton) sendButton.disabled = false;
+        input.disabled = false;
+        input.focus();
+    }
+}
+
+async function refreshAiChatSessionsAfterMessage(sessionId) {
+    try {
+        const result = await chatApiRequest('/sessions?limit=100');
+        chatSessions = Array.isArray(result) ? result : [];
+        if (!chatSessions.some(session => session.id === sessionId)) {
+            chatSessions.unshift({ id: sessionId, title: 'Cuộc trò chuyện', updated_at: new Date().toISOString() });
+        }
+        renderAiChatSessionList();
+    } catch (error) {
+        setAiChatStatus(error.message || 'Tin nhắn đã gửi nhưng không thể cập nhật lịch sử.');
+    }
+}
+
+function renderAiChatMessages(messages) {
+    const container = document.getElementById('ai-chat-messages');
+    if (!container) return;
+    container.replaceChildren();
+    if (!messages.length) {
+        const welcome = document.createElement('div');
+        welcome.className = 'ai-chat-welcome';
+        welcome.innerHTML = '<span aria-hidden="true">✦</span><strong>Xin chào! Tôi có thể giúp bạn đặt phòng họp.</strong><p>Hãy cho tôi biết ngày, giờ, thời lượng và số người tham dự.</p>';
+        container.appendChild(welcome);
+        return;
+    }
+    messages.forEach(message => appendAiChatMessage(message));
+    scrollAiChatToLatest();
+}
+
+function appendAiChatMessage(message) {
+    const container = document.getElementById('ai-chat-messages');
+    if (!container) return;
+    container.querySelector('.ai-chat-welcome')?.remove();
+
+    const isUser = message.sender === 'user';
+    const row = document.createElement('div');
+    row.className = `ai-chat-message-row ${isUser ? 'is-user' : 'is-bot'}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'ai-chat-bubble';
+    const text = document.createElement('div');
+    text.textContent = message.content || '';
+    bubble.appendChild(text);
+
+    const completeBooking = message.intent === 'BOOK_ROOM'
+        && hasCompleteChatBookingSlots(message.slots);
+    if (!isUser && (message.is_ready_for_preview === true || completeBooking)) {
+        bubble.appendChild(createAiChatPreview(message.slots));
+    }
+
+    const timestamp = document.createElement('div');
+    timestamp.className = 'ai-chat-message-time';
+    timestamp.textContent = formatChatTimestamp(message.created_at || new Date().toISOString(), true);
+    bubble.appendChild(timestamp);
+    row.appendChild(bubble);
+    container.appendChild(row);
+    scrollAiChatToLatest();
+}
+
+function hasCompleteChatBookingSlots(slots) {
+    return Boolean(
+        slots
+        && slots.title
+        && slots.booking_date
+        && slots.start_time
+        && Number(slots.duration_minutes) > 0
+        && Number(slots.capacity) > 0
+        && slots.room_id,
+    );
+}
+
+function createAiChatPreview(slots) {
+    const card = document.createElement('section');
+    card.className = 'ai-chat-preview';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Xem trước cuộc họp';
+    const details = document.createElement('dl');
+    const entries = [
+        ['Tiêu đề', slots.title],
+        ['Ngày', formatChatDate(slots.booking_date)],
+        ['Giờ bắt đầu', slots.start_time],
+        ['Thời lượng', `${slots.duration_minutes} phút`],
+        ['Số người', `${slots.capacity} người`],
+        ['Phòng gợi ý', slots.room_name || 'Phòng đã chọn'],
+    ];
+    entries.forEach(([label, value]) => {
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const description = document.createElement('dd');
+        description.textContent = String(value ?? '—');
+        details.append(term, description);
+    });
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = 'ai-chat-confirm-button';
+    confirmButton.textContent = 'Xác nhận đặt phòng';
+    confirmButton.addEventListener('click', () => confirmAiChatBooking(slots, confirmButton));
+    card.append(heading, details, confirmButton);
+    return card;
+}
+
+async function confirmAiChatBooking(slots, button) {
+    const card = button.closest('.ai-chat-preview');
+    if (!card || button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Đang xác nhận...';
+    const status = document.createElement('p');
+    status.className = 'ai-chat-confirm-result';
+    status.setAttribute('role', 'status');
+    card.appendChild(status);
+
+    try {
+        const meetings = await chatApiRequest('/confirm-booking', {
+            method: 'POST',
+            body: JSON.stringify({ slots, participant_ids: [] }),
+        });
+        const meetingCount = Array.isArray(meetings) ? meetings.length : 0;
+        status.textContent = meetingCount
+            ? `Đã xác nhận và tạo ${meetingCount} cuộc họp.`
+            : 'Đã xác nhận đặt phòng.';
+        button.textContent = 'Đã xác nhận';
+    } catch (error) {
+        status.classList.add('is-error');
+        status.textContent = error.message || 'Không thể xác nhận đặt phòng.';
+        button.textContent = 'Thử xác nhận lại';
+        button.disabled = false;
+    }
+}
+
+function formatChatDate(value) {
+    if (!value) return '—';
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime())
+        ? value
+        : date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function formatChatTimestamp(value, includeTime = false) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('vi-VN', includeTime
+        ? { hour: '2-digit', minute: '2-digit' }
+        : { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function scrollAiChatToLatest() {
+    const container = document.getElementById('ai-chat-messages');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+function setAiChatStatus(message) {
+    const status = document.getElementById('ai-chat-status');
+    if (status) status.textContent = message || '';
+}

@@ -2,12 +2,13 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from fastapi import FastAPI, Depends
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Depends, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, configure_mappers
 from sqlalchemy import inspect
+from uuid import uuid4
 
 # 1. DB & Models
 from app.db.session import Base
@@ -21,14 +22,15 @@ from app.models.google_calendar_event import GoogleCalendarEvent
 from app.models.notification import Notification
 from app.models.meeting_reminder import MeetingReminder
 from app.models.meeting import MeetingParticipant
+from app.models.chat import ChatSession, ChatMessage
 
 # 2. Routers & Security
-from app.routers import admin_analytics, auth, equipment, meetings, notifications, rooms, users
+from app.routers import admin_analytics, admin_sync, auth, chatbot, equipment, meetings, notifications, rooms, users
 from app.core.security import authenticate_user
 from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
-from app.routers import auth, equipment, meetings, notifications, rooms, users
 from app.routers import reports
+from app.schemas.equipment import EquipmentResponse
 from app.services.scheduler import (
     process_auto_checkouts,
     process_meeting_reminders,
@@ -163,6 +165,31 @@ async def lifespan(app: FastAPI):
 # 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
 app = FastAPI(title="Meeting Management System API", version="1.0.0", lifespan=lifespan)
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    """Log unexpected failures and return a safe JSON 500 response."""
+    error_id = uuid4().hex
+    logger.exception(
+        "Unhandled request error id=%s method=%s path=%s",
+        error_id,
+        request.method,
+        request.url.path,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Lỗi máy chủ nội bộ. Vui lòng thử lại sau.",
+            "error_id": error_id,
+        },
+        headers={"X-Error-ID": error_id},
+    )
+
+
 # 5. Cấu hình CORS Middleware (Cho phép Frontend port 3000 gọi sang Backend port 8000)
 app.add_middleware(
     CORSMiddleware,
@@ -184,6 +211,7 @@ if FRONTEND_DIR.exists():
 
 # 7. Đăng ký API Routers với Prefix chuẩn
 app.include_router(auth.router, prefix="/api", tags=["auth"])
+app.include_router(auth.router, prefix="/api/v1", tags=["auth-v1"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["rooms"])
 app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
 # Versioned aliases for the QR check-in API.
@@ -194,10 +222,41 @@ app.include_router(
     prefix="/api/v1/admin/analytics",
     tags=["admin-analytics"],
 )
+app.include_router(
+    admin_sync.router,
+    prefix="/api/v1/admin",
+    tags=["admin-sync"],
+)
 app.include_router(equipment.router, prefix="/api/equipments", tags=["equipments"])
+app.include_router(
+    equipment.router,
+    prefix="/api/v1/equipments",
+    tags=["equipments-v1"],
+)
+app.add_api_route(
+    "/api/equipments",
+    equipment.get_equipments,
+    methods=["GET"],
+    response_model=list[EquipmentResponse],
+    include_in_schema=False,
+)
+app.add_api_route(
+    "/api/v1/equipments",
+    equipment.get_equipments,
+    methods=["GET"],
+    response_model=list[EquipmentResponse],
+    include_in_schema=False,
+)
 app.include_router(notifications.router, prefix="/api", tags=["notifications"])
+app.include_router(
+    notifications.router,
+    prefix="/api/v1",
+    tags=["notifications-v1"],
+)
 app.include_router(users.router, prefix="/api", tags=["users"])
+app.include_router(users.router, prefix="/api/v1", tags=["users-v1"])
 app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
+app.include_router(chatbot.router, prefix="/api/v1/chatbot", tags=["chatbot"])
 # 8. Endpoints Đăng nhập & Root
 @app.post("/api/login", tags=["auth"])
 def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):

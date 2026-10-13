@@ -19,9 +19,32 @@ class SMTPSettings:
     starttls: bool
 
 
+@dataclass(frozen=True)
+class GeminiSettings:
+    api_key: str | None
+    model: str
+
+
 def load_environment() -> None:
     """Load project environment variables without overriding process settings."""
     load_dotenv(dotenv_path=ENV_FILE, override=False)
+
+
+def get_gemini_settings() -> GeminiSettings:
+    load_environment()
+    api_key = next(
+        (
+            value.strip()
+            for value in (os.getenv("GEMINI_API_KEY"), os.getenv("GOOGLE_API_KEY"))
+            if value and value.strip()
+        ),
+        None,
+    )
+    return GeminiSettings(
+        api_key=api_key,
+        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+        or "gemini-3.8-flash",
+    )
 
 
 def get_smtp_settings() -> SMTPSettings | None:

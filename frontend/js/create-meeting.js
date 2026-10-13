@@ -771,6 +771,29 @@ function changeCreateMeetingRoom() {
     renderRoomResults();
 }
 
+function getEquipmentAvailableQty(eq) {
+    const value = Number(eq?.available_qty ?? eq?.total_qty ?? 0);
+    return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function getBorrowQtyValue(id) {
+    const key = String(id);
+    const value = Number(cmState.borrowQty[key] ?? cmState.borrowQty[id] ?? 0);
+    return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+function setBorrowQtyValue(id, nextQty) {
+    const key = String(id);
+    const value = Number(nextQty);
+    const safe = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+    if (safe <= 0) {
+        delete cmState.borrowQty[key];
+        return 0;
+    }
+    cmState.borrowQty[key] = safe;
+    return safe;
+}
+
 function renderEquipment() {
     const box = cmEl('cmBorrowEquipment');
     if (!box) return;
@@ -779,8 +802,8 @@ function renderEquipment() {
         return;
     }
     box.innerHTML = cmState.equipment.map(eq => {
-        const qty = cmState.borrowQty[eq.id] || 0;
-        const available = eq.available_qty ?? eq.total_qty ?? 0;
+        const qty = getBorrowQtyValue(eq.id);
+        const available = getEquipmentAvailableQty(eq);
         const empty = available <= 0;
         return `
             <div class="cm-eq-row ${empty ? 'is-empty' : ''}">
@@ -801,26 +824,58 @@ function renderEquipment() {
     updateEquipmentConflict();
 }
 
+function showEquipmentAvailabilityError(eq, requestedQty) {
+    const alert = cmEl('cmEquipConflict');
+    if (!alert || !eq) return;
+    const available = getEquipmentAvailableQty(eq);
+    const message = available <= 0
+        ? `Thiết bị "${eq.name}" đã hết hàng, không thể tăng số lượng mượn.`
+        : `Thiết bị "${eq.name}" chỉ còn ${available} chiếc khả dụng. Bạn đang yêu cầu ${requestedQty}.`;
+    alert.classList.add('is-open');
+    alert.innerHTML = `
+        <strong>⚠ ${escapeHtml(eq.name)}</strong>
+        <span>${escapeHtml(message)}</span>
+        <span>
+            <button type="button" class="cm-link-btn" onclick="reduceEquipmentToAvailable(${eq.id})">Giảm xuống còn ${available}</button>
+            ·
+            <button type="button" class="cm-link-btn" onclick="clearBorrowQty(${eq.id})">Xóa lựa chọn</button>
+        </span>
+    `;
+}
+
 function changeBorrowQty(id, delta) {
-    const eq = cmState.equipment.find(item => item.id === id);
+    const eq = cmState.equipment.find(item => Number(item.id) === Number(id));
     if (!eq) return;
-    const available = eq.available_qty ?? eq.total_qty ?? 0;
-    const next = Math.max(0, (cmState.borrowQty[id] || 0) + delta);
-    cmState.borrowQty[id] = Math.min(next, available);
+
+    const available = getEquipmentAvailableQty(eq);
+    const current = getBorrowQtyValue(id);
+    const next = Math.max(0, current + delta);
+
+    if (delta > 0 && available <= 0) {
+        showEquipmentAvailabilityError(eq, next);
+        return;
+    }
+
+    if (next > available) {
+        showEquipmentAvailabilityError(eq, next);
+        return;
+    }
+
+    setBorrowQtyValue(id, next);
     renderEquipment();
     updateCreateMeetingSummary();
 }
 
 function reduceEquipmentToAvailable(id) {
-    const eq = cmState.equipment.find(item => item.id === id);
+    const eq = cmState.equipment.find(item => Number(item.id) === Number(id));
     if (!eq) return;
-    cmState.borrowQty[id] = eq.available_qty ?? 0;
+    setBorrowQtyValue(id, getEquipmentAvailableQty(eq));
     renderEquipment();
     updateCreateMeetingSummary();
 }
 
 function clearBorrowQty(id) {
-    cmState.borrowQty[id] = 0;
+    setBorrowQtyValue(id, 0);
     renderEquipment();
     updateCreateMeetingSummary();
 }
@@ -828,23 +883,19 @@ function clearBorrowQty(id) {
 function updateEquipmentConflict() {
     const alert = cmEl('cmEquipConflict');
     if (!alert) return;
-    const issues = cmState.equipment.filter(eq => (cmState.borrowQty[eq.id] || 0) > (eq.available_qty ?? eq.total_qty ?? 0));
+    const issues = cmState.equipment.filter(eq => {
+        const qty = getBorrowQtyValue(eq.id);
+        const available = getEquipmentAvailableQty(eq);
+        return qty > available || (available <= 0 && qty > 0);
+    });
     if (!issues.length) {
         alert.classList.remove('is-open');
         alert.innerHTML = '';
         return;
     }
     const eq = issues[0];
-    alert.classList.add('is-open');
-    alert.innerHTML = `
-        <strong>⚠ ${escapeHtml(eq.name)} không đủ số lượng</strong>
-        <span>Available: ${eq.available_qty} · Yêu cầu: ${cmState.borrowQty[eq.id]}</span>
-        <span>
-            <button type="button" class="cm-link-btn" onclick="reduceEquipmentToAvailable(${eq.id})">Giảm số lượng</button>
-            ·
-            <button type="button" class="cm-link-btn" onclick="clearBorrowQty(${eq.id})">Chọn thiết bị khác</button>
-        </span>
-    `;
+    const requested = getBorrowQtyValue(eq.id);
+    showEquipmentAvailabilityError(eq, requested);
 }
 
 function generateMeetingLink() {
@@ -865,9 +916,13 @@ function collectConflicts() {
         }
     }
     cmState.equipment.forEach(eq => {
-        const qty = cmState.borrowQty[eq.id] || 0;
-        const available = eq.available_qty ?? 0;
-        if (qty > available) conflicts.push(`${eq.name} không đủ số lượng.`);
+        const qty = getBorrowQtyValue(eq.id);
+        const available = getEquipmentAvailableQty(eq);
+        if (qty > available) {
+            conflicts.push(`${eq.name} chỉ còn ${available} chiếc khả dụng.`);
+        } else if (qty > 0 && available <= 0) {
+            conflicts.push(`${eq.name} đã hết hàng.`);
+        }
     });
     return conflicts;
 }
@@ -875,7 +930,7 @@ function collectConflicts() {
 function updateCreateMeetingSummary() {
     const title = cmEl('cmTitle')?.value.trim() || 'Chưa đặt tên cuộc họp';
     const { date, start, end } = cmGetTimes();
-    const borrowed = cmState.equipment.filter(eq => (cmState.borrowQty[eq.id] || 0) > 0);
+    const borrowed = cmState.equipment.filter(eq => getBorrowQtyValue(eq.id) > 0);
     const conflicts = collectConflicts();
     const roomConflict = cmEl('cmRoomConflict');
     if (roomConflict) {
@@ -901,7 +956,7 @@ function updateCreateMeetingSummary() {
             `👥 ${cmAttendeeCount()} người`,
             cmState.mode === 'online' ? '🌐 Online' : `🏢 ${cmState.selectedRoom ? cmState.selectedRoom.name : 'Chưa chọn phòng'}`,
             cmState.mode === 'online' ? `🔗 ${cmEl('cmMeetingLink')?.value || 'Chưa có link'}` : null,
-            ...borrowed.map(eq => `🎤 ${eq.name} x${cmState.borrowQty[eq.id]}`),
+            ...borrowed.map(eq => `🎤 ${eq.name} x${getBorrowQtyValue(eq.id)}`),
             `🔁 ${cmRecurrenceLabel()}`,
         ].filter(Boolean);
         list.innerHTML = items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
@@ -909,13 +964,24 @@ function updateCreateMeetingSummary() {
 
     const status = cmEl('cmSummaryStatus');
     if (status) {
-        status.className = `cm-status ${conflicts.length ? 'is-warn' : 'is-ok'}`;
-        status.textContent = conflicts.length ? '⚠ Có vấn đề cần xử lý' : '✓ Không có xung đột';
+        const invalidEquipment = cmState.equipment.some(eq => {
+            const qty = getBorrowQtyValue(eq.id);
+            return qty > getEquipmentAvailableQty(eq)
+                || (qty > 0 && getEquipmentAvailableQty(eq) <= 0);
+        });
+        const hasConflict = conflicts.length || invalidEquipment;
+        status.className = `cm-status ${hasConflict ? 'is-warn' : 'is-ok'}`;
+        status.textContent = hasConflict ? '⚠ Có vấn đề cần xử lý' : '✓ Không có xung đột';
     }
 
     const submit = cmEl('cmSubmit');
     if (submit) {
-        submit.disabled = cmState.submitting || Boolean(conflicts.length);
+        const invalidEquipment = cmState.equipment.some(eq => {
+            const qty = getBorrowQtyValue(eq.id);
+            return qty > getEquipmentAvailableQty(eq)
+                || (qty > 0 && getEquipmentAvailableQty(eq) <= 0);
+        });
+        submit.disabled = cmState.submitting || Boolean(conflicts.length) || invalidEquipment;
         submit.textContent = cmState.submitting ? 'Đang tạo...' : 'TẠO CUỘC HỌP';
     }
 }
@@ -1001,6 +1067,21 @@ function validateCreateMeeting() {
         }
     }
 
+    const equipmentIssues = cmState.equipment.filter(eq => {
+        const qty = getBorrowQtyValue(eq.id);
+        const available = getEquipmentAvailableQty(eq);
+        return qty > available || (available <= 0 && qty > 0);
+    });
+    if (equipmentIssues.length) {
+        const eq = equipmentIssues[0];
+        const available = getEquipmentAvailableQty(eq);
+        const message = available <= 0
+            ? `Thiết bị "${eq.name}" đã hết hàng, không thể tạo cuộc họp với số lượng mượn này.`
+            : `Thiết bị "${eq.name}" chỉ còn ${available} chiếc khả dụng, vui lòng giảm số lượng.`;
+        showFormError(message);
+        ok = false;
+    }
+
     if (collectConflicts().length && !(cmState.mode === 'offline' && !cmState.selectedRoom)) {
         showFormError('Hãy xử lý xung đột trước khi tạo cuộc họp.');
         ok = false;
@@ -1055,12 +1136,12 @@ async function handleCreateMeetingSubmit(event) {
         recurrence_type: recurrenceType,
         recurrence_end_date: recurrenceEndDate,
         equipments: cmState.mode === 'offline'
-            ? Object.entries(cmState.borrowQty)
-                .filter(([, qty]) => qty > 0)
-                .map(([eid, qty]) => ({
-                    equipment_id: parseInt(eid, 10),
-                    quantity: qty
+            ? cmState.equipment
+                .map(eq => ({
+                    equipment_id: Number(eq.id),
+                    quantity: getBorrowQtyValue(eq.id),
                 }))
+                .filter(item => item.quantity > 0)
             : [],
         participant_ids: realParticipantIds,
     };

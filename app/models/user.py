@@ -22,6 +22,7 @@ class User(Base):
     role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
     is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
+    external_id = Column(String(50), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
     updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
 

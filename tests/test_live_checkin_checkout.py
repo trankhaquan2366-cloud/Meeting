@@ -163,7 +163,7 @@ def test_live_checkin_notification_and_checkout(
 
     equipment_availability_response = client.get(
         "/api/equipments/availability",
-        params={**params, "search": equipment.code},
+        params={**params, "search": equipment.name},
     )
     if equipment_availability_response.status_code == 200:
         equipment_status = next(

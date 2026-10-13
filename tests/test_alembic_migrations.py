@@ -69,6 +69,43 @@ def test_upgrade_head_creates_current_schema_for_empty_database(tmp_path, monkey
         engine.dispose()
 
 
+def test_upgrade_head_creates_roomsync_chat_tables(tmp_path, monkeypatch):
+    database_path = tmp_path / "roomsync-chat.db"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    project_root = Path(__file__).resolve().parents[1]
+    config = Config(str(project_root / "alembic.ini"))
+    command.upgrade(config, "head")
+
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        assert {
+            "chat_sessions",
+            "chat_messages",
+        } <= set(inspector.get_table_names())
+        for table_name in ("chat_sessions", "chat_messages"):
+            assert {
+                column["name"] for column in inspector.get_columns(table_name)
+            } == set(Base.metadata.tables[table_name].columns.keys())
+
+        session_foreign_keys = inspector.get_foreign_keys("chat_sessions")
+        assert any(
+            foreign_key["referred_table"] == "users"
+            and foreign_key["constrained_columns"] == ["user_id"]
+            for foreign_key in session_foreign_keys
+        )
+        message_foreign_keys = inspector.get_foreign_keys("chat_messages")
+        assert any(
+            foreign_key["referred_table"] == "chat_sessions"
+            and foreign_key["constrained_columns"] == ["session_id"]
+            for foreign_key in message_foreign_keys
+        )
+    finally:
+        engine.dispose()
+
+
 def test_legacy_online_link_remains_available_through_compatibility_property():
     meeting = Meeting(legacy_online_link="https://meet.example.test/legacy")
 

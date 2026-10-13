@@ -38,14 +38,14 @@ def upgrade() -> None:
             sa.Column("department_id", sa.Integer(), nullable=True),
         )
         op.create_index("ix_users_department_id", "users", ["department_id"])
-        op.create_foreign_key(
-            "fk_users_department_id_departments",
-            "users",
-            "departments",
-            ["department_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
+        with op.batch_alter_table("users") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_users_department_id_departments",
+                "departments",
+                ["department_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
 
 
 def downgrade() -> None:
@@ -57,7 +57,11 @@ def downgrade() -> None:
             foreign_keys = inspector.get_foreign_keys("users")
             for foreign_key in foreign_keys:
                 if foreign_key.get("constrained_columns") == ["department_id"]:
-                    op.drop_constraint(foreign_key["name"], "users", type_="foreignkey")
+                    with op.batch_alter_table("users") as batch_op:
+                        batch_op.drop_constraint(
+                            foreign_key["name"],
+                            type_="foreignkey",
+                        )
             indexes = {index["name"] for index in inspector.get_indexes("users")}
             if "ix_users_department_id" in indexes:
                 op.drop_index("ix_users_department_id", table_name="users")

@@ -11,6 +11,8 @@ class Department(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(120), nullable=False, unique=True, index=True)
+    code = Column(String(50), nullable=True, unique=True, index=True)
+    external_id = Column(String(50), nullable=True, index=True)
 
     users = relationship("User", back_populates="department")
 

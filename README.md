@@ -33,6 +33,10 @@ Compose configures the backend to connect to the `roomsync_db` service and the `
 
 Apply the Alembic migration with `alembic upgrade head` to add room QR tokens and meeting check-in fields. Admins and managers can retrieve the room QR payload from `GET /api/v1/rooms/{room_id}/qr-code`; display its `qr_token` value as the room's QR code. Organizers and accepted invitees can scan that code during the 15-minute check-in window using the dashboard's booking list. Check-in and check-out are available at `/api/v1/meetings/{meeting_id}/check-in` and `/api/v1/meetings/{meeting_id}/check-out`. The API process runs reminder, no-show cancellation, and automatic check-out jobs every minute. Configure the existing SMTP environment variables to send no-show emails.
 
+## RoomSync AI room booking
+
+Set `GEMINI_API_KEY` in `.env` and apply the database migrations with `alembic upgrade head`; the migration creates the `chat_sessions` and `chat_messages` tables. The chatbot uses `GEMINI_MODEL` when configured and defaults to `gemini-3.8-flash`. It collects missing booking details and creates a meeting only after the user confirms the preview.
+
 ## 🔐 Google OAuth 2.0
 
 The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).

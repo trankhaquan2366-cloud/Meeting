@@ -37,7 +37,12 @@ def _resolve_database_url() -> str:
     return url.render_as_string(hide_password=False)
 
 
-DATABASE_URL = _resolve_database_url()
+def resolve_database_url() -> str:
+    """Return the configured database URL after applying local host mapping."""
+    return _resolve_database_url()
+
+
+DATABASE_URL = resolve_database_url()
 
 engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):

@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.models.equipment import Equipment
+from app.models.meeting import Meeting
 from app.routers import meetings as meetings_router
 from tests.helpers import _auth_header, _create_room, _create_user, _make_token
 
@@ -98,6 +101,118 @@ def test_create_online_meeting_without_link_returns_400(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Online meetings require a meeting_link"
+
+
+def test_create_meeting_with_available_equipment_and_availability_id(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-equipment-organizer")
+    room = _create_room(db_session, "Create Equipment Room")
+    equipment = Equipment(
+        name="Create Equipment Projector",
+        code="CREATE-EQ-01",
+        total_qty=2,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.commit()
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Meeting with equipment",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "equipments": [{"equipment_id": equipment.id, "quantity": 2}],
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201
+    availability = client.get(
+        "/api/equipments/availability",
+        params={
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "search": equipment.name,
+        },
+    )
+    assert availability.status_code == 200
+    assert availability.json()[0]["id"] == equipment.id
+    assert availability.json()[0]["available_qty"] == 0
+
+
+@pytest.mark.parametrize(
+    ("stock", "requested"),
+    [(1, 2), (0, 1)],
+)
+def test_create_meeting_rejects_equipment_quantity_over_available_stock(
+    client: TestClient, db_session: Session, stock: int, requested: int
+):
+    organizer = _create_user(db_session, "create-overstock-organizer")
+    room = _create_room(db_session, "Create Overstock Room")
+    equipment = Equipment(
+        name="Create Equipment One",
+        code="CREATE-EQ-02",
+        total_qty=stock,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.commit()
+    start, end = _future_window()
+
+    response = client.post(
+        "/api/meetings/book",
+        json={
+            "title": "Meeting exceeding equipment stock",
+            "meeting_type": "offline",
+            "room_id": room.id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "equipments": [{"equipment_id": equipment.id, "quantity": requested}],
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 400
+    assert f"chỉ còn {stock} chiếc khả dụng" in response.json()["detail"]
+    assert db_session.query(Meeting).count() == 0
+
+
+def test_create_meeting_rejects_negative_or_fractional_equipment_quantity(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-invalid-qty-organizer")
+    room = _create_room(db_session, "Create Invalid Qty Room")
+    equipment = Equipment(
+        name="Create Equipment Quantity",
+        code="CREATE-EQ-03",
+        total_qty=3,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.commit()
+    start, end = _future_window()
+
+    for quantity in (-1, 1.5):
+        response = client.post(
+            "/api/meetings/book",
+            json={
+                "title": "Meeting with invalid equipment quantity",
+                "meeting_type": "offline",
+                "room_id": room.id,
+                "start_time": start.isoformat(),
+                "end_time": end.isoformat(),
+                "equipments": [{"equipment_id": equipment.id, "quantity": quantity}],
+            },
+            headers=_auth_header(_make_token(organizer)),
+        )
+
+        assert response.status_code == 422
+    assert db_session.query(Meeting).count() == 0
 
 
 def test_create_meeting_schedules_google_sync_for_connected_organizer(

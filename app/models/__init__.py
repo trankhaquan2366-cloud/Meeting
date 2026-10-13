@@ -8,6 +8,7 @@ from app.models.meeting import Meeting, MeetingParticipant
 from app.models.meeting_reminder import MeetingReminder
 from app.models.notification import Notification
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
+from app.models.chat import ChatSession, ChatMessage
 
 __all__ = [
     "Base",
@@ -21,4 +22,6 @@ __all__ = [
     "Equipment",
     "MeetingEquipment",
     "RoomEquipment",
+    "ChatSession",
+    "ChatMessage",
 ]

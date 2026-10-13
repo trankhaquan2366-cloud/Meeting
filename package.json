@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "description": "Meeting Room Management System",
   "scripts": {
-    "frontend": "npx serve frontend -l 3000"
+    "build:user-list": "esbuild src/features/us2_user_list/dashboard.ts --bundle --format=iife --global-name=RoomSyncUserList --target=es2020 --outfile=frontend/js/user-list.bundle.js",
+    "frontend": "npm run build:user-list && npx serve frontend -l 3000"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "serve": "^14.2.6"
   }
 }
