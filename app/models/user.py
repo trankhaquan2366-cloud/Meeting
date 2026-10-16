@@ -1,5 +1,5 @@
 # app/models/user.py
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -21,12 +21,23 @@ class User(Base):
     google_calendar_connected_at = Column(DateTime, nullable=True)
     role = Column(String(20), nullable=False, default="employee", comment="Vai trò: admin/employee")
     is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái tài khoản (active/inactive)")
+    status = Column(String(20), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    can_book = Column(Boolean, nullable=False, default=True, server_default="1")
+    can_attend = Column(Boolean, nullable=False, default=True, server_default="1")
+    daily_booking_hours_limit = Column(Float, nullable=True)
+    can_bypass_room_approval = Column(Boolean, nullable=False, default=False, server_default="0")
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
     external_id = Column(String(50), nullable=True, index=True)
+    position = Column(String(100), nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="Thời gian tạo")
     updated_at = Column(DateTime, nullable=True, onupdate=func.now(), comment="Thời gian cập nhật gần nhất")
 
     department = relationship("Department", back_populates="users", lazy="joined")
+    project_groups = relationship(
+        "ProjectGroup",
+        secondary="user_project_groups",
+        back_populates="users",
+    )
 
     def __repr__(self) -> str:
         return f"<User id={self.id} username={self.username!r} role={self.role!r}>"

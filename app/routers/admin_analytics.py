@@ -95,6 +95,14 @@ def get_cancellation_analytics(
         query = query.filter(Meeting.room_id == room_id)
     meetings = query.all()
 
+    scheduled_query = db.query(Meeting).filter(
+        Meeting.start_time >= range_start,
+        Meeting.start_time < range_end,
+    )
+    if room_id is not None:
+        scheduled_query = scheduled_query.filter(Meeting.room_id == room_id)
+    total_meetings = max(scheduled_query.count(), len(meetings))
+
     cancelled_by_user = 0
     cancelled_no_show = 0
     total_wasted_hours = 0.0
@@ -133,7 +141,36 @@ def get_cancellation_analytics(
             )
             offenders[(meeting.organizer_id, user_name)] += 1
 
+    cancellation_records = [
+        {
+            "meeting_id": meeting.id,
+            "title": meeting.title,
+            "status": (meeting.status or "").upper(),
+            "room_name": meeting.room.name if meeting.room else "Phòng đã xóa",
+            "organizer_name": (
+                (meeting.organizer.full_name or meeting.organizer.username)
+                if meeting.organizer
+                else "Người dùng đã xóa"
+            ),
+            "start_time": meeting.start_time,
+            "cancellation_reason": (
+                (meeting.cancellation_reason or "").strip()
+                or (
+                    "Tự động hủy (No-Show)"
+                    if (meeting.status or "").upper() == "CANCELLED_NO_SHOW"
+                    else "Không có lý do (Hủy cũ)"
+                )
+            ),
+        }
+        for meeting in sorted(meetings, key=lambda item: item.start_time, reverse=True)
+    ]
+
     return {
+        "total_meetings": total_meetings,
+        "cancellation_rate": round(len(meetings) / total_meetings * 100, 2)
+        if total_meetings
+        else 0.0,
+        "cancellation_records": cancellation_records,
         "summary": {
             "total_cancelled": len(meetings),
             "cancelled_by_user": cancelled_by_user,

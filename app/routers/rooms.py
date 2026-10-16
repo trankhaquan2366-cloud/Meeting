@@ -54,8 +54,19 @@ def get_room_qr_code(
 # GET /api/rooms/: Lấy danh sách tất cả phòng
 @router.get("/", response_model=List[RoomResponse], summary="Lấy danh sách tất cả phòng")
 def get_all_rooms(db: Session = Depends(get_db)):
-    # THÊM FILTER is_active == True
     return db.query(Room).filter(Room.is_active == True).all()
+
+
+@router.get(
+    "/all-status/",
+    response_model=List[RoomResponse],
+    summary="Lấy tất cả phòng, bao gồm phòng bảo trì (Admin)",
+)
+def get_all_rooms_with_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    return db.query(Room).order_by(Room.name).all()
 
 
 # GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian

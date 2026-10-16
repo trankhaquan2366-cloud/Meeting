@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app
+from app.models.department import Department
+from app.models.project_group import ProjectGroup
 from tests.helpers import _auth_header, _create_user, _make_token
 
 
@@ -41,6 +43,27 @@ def test_frontend_api_paths_work_with_authenticated_user(
     }
     assert responses["versioned auth profile"].json()["id"] == user.id
     assert responses["versioned user profile"].json()["id"] == user.id
+
+
+def test_current_user_profile_includes_department_and_project_groups(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    user = _create_user(db_session, "quick-invite-profile-user")
+    department = Department(name="Quick Invite Department", code="QID")
+    project_group = ProjectGroup(name="Quick Invite Project", code="QIP")
+    user.department = department
+    user.project_groups.append(project_group)
+    db_session.commit()
+
+    response = client.get(
+        "/api/v1/users/me",
+        headers=_auth_header(_make_token(user)),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["department"]["code"] == "QID"
+    assert response.json()["project_groups"][0]["code"] == "QIP"
 
 
 def test_unhandled_exception_returns_json_500_and_error_id() -> None:

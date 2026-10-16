@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
 @dataclass(frozen=True)
@@ -42,8 +43,7 @@ def get_gemini_settings() -> GeminiSettings:
     )
     return GeminiSettings(
         api_key=api_key,
-        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
-        or "gemini-3.8-flash",
+        model=os.getenv("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL,
     )
 
 

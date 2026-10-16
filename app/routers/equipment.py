@@ -26,23 +26,16 @@ def get_equipments(
 
 @router.get("/availability", response_model=List[EquipmentStatusResponse])
 def get_equipment_availability_list(
-    start_time: datetime | None = Query(None, description="Thời gian bắt đầu"),
-    end_time: datetime | None = Query(None, description="Thời gian kết thúc"),
+    start_time: datetime = Query(..., description="Thời gian bắt đầu"),
+    end_time: datetime = Query(..., description="Thời gian kết thúc"),
     category: str | None = Query(None),
     search: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    if start_time is None and end_time is None:
-        start_time = end_time = datetime.now()
-    elif start_time is None:
-        start_time = end_time
-    elif end_time is None:
-        end_time = start_time
-
-    if start_time > end_time:
+    if end_time <= start_time:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Thời gian bắt đầu phải nhỏ hơn hoặc bằng thời gian kết thúc.",
+            detail="Thời gian kết thúc phải sau thời gian bắt đầu.",
         )
 
     return get_equipment_availability(
@@ -51,6 +44,7 @@ def get_equipment_availability_list(
         end_time=end_time,
         category=category,
         search=search,
+        active_only=True,
     )
 
 

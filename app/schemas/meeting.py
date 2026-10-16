@@ -80,6 +80,10 @@ class MeetingCancelRequest(BaseModel):
     cancellation_reason: Optional[str] = None
 
 
+class MeetingExtendRequest(BaseModel):
+    extend_minutes: Literal[15, 30]
+
+
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
 class MeetingCreateRequest(BaseModel):
     title: str
@@ -102,6 +106,9 @@ class MeetingCreateRequest(BaseModel):
     # Thiết bị mượn kèm & Người tham dự
     equipments: Optional[List[MeetingEquipmentItemInput]] = Field(default_factory=list)
     participant_ids: Optional[List[int]] = Field(default_factory=list)
+    organizer_participates: bool = True
+    external_guest_count: int = Field(default=0, ge=0)
+    force_book: bool = False
 
     @field_validator('meeting_type')
     @classmethod

@@ -1,15 +1,16 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 import re
 from urllib.parse import parse_qs, urlparse
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from fastapi import HTTPException, status
 
 from app.models.room import Room
 from app.models.meeting import Meeting, MeetingParticipant
+from app.models.equipment import Equipment
 from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
@@ -22,6 +23,391 @@ def _utc_now() -> datetime:
 
 
 class MeetingService:
+
+    @staticmethod
+    def extend_meeting(
+        db: Session,
+        meeting_id: int,
+        organizer_id: int,
+        extend_minutes: int,
+    ) -> Meeting | dict:
+        meeting = (
+            db.query(Meeting)
+            .filter(Meeting.id == meeting_id)
+            .with_for_update()
+            .first()
+        )
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+        if meeting.organizer_id != organizer_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Chỉ người tổ chức mới có thể gia hạn cuộc họp.",
+            )
+        if str(meeting.status or "").strip().casefold() != "in_progress":
+            raise HTTPException(
+                status_code=409,
+                detail="Chỉ có thể gia hạn cuộc họp đang diễn ra.",
+            )
+
+        extended_end = meeting.end_time + timedelta(minutes=extend_minutes)
+        if meeting.room_id is not None:
+            active_statuses = ["CANCELLED", "CANCELED", "CANCELLED_NO_SHOW", "COMPLETED"]
+            room_conflict = (
+                db.query(Meeting.id)
+                .filter(
+                    Meeting.id != meeting.id,
+                    Meeting.room_id == meeting.room_id,
+                    func.upper(Meeting.status).notin_(active_statuses),
+                    Meeting.start_time < extended_end,
+                    Meeting.end_time > meeting.end_time,
+                )
+                .first()
+            )
+            if room_conflict is not None:
+                conflicting_room_ids = select(Meeting.room_id).where(
+                    Meeting.room_id.isnot(None),
+                    func.upper(Meeting.status).notin_(active_statuses),
+                    Meeting.start_time < extended_end,
+                    Meeting.end_time > meeting.start_time,
+                )
+                available_rooms_query = db.query(Room).filter(
+                    Room.is_active.is_(True),
+                    Room.id != meeting.room_id,
+                    ~Room.id.in_(conflicting_room_ids),
+                )
+                if meeting.room is not None and meeting.room.capacity is not None:
+                    available_rooms_query = available_rooms_query.filter(
+                        Room.capacity >= meeting.room.capacity
+                    )
+                available_rooms = (
+                    available_rooms_query
+                    .order_by(Room.capacity.desc(), Room.id)
+                    .limit(2)
+                    .all()
+                )
+                return {
+                    "message": "Phòng hiện tại đã có lịch trong thời gian gia hạn.",
+                    "available_rooms": [
+                        {
+                            "id": room.id,
+                            "name": room.name,
+                            "capacity": room.capacity,
+                            "location": room.location,
+                        }
+                        for room in available_rooms
+                    ],
+                }
+
+        meeting.end_time = extended_end
+        try:
+            db.commit()
+            db.refresh(meeting)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception("Failed to extend meeting_id=%s", meeting_id)
+            raise HTTPException(
+                status_code=503,
+                detail="Không thể gia hạn cuộc họp do lỗi cơ sở dữ liệu.",
+            ) from exc
+        return meeting
+
+    @staticmethod
+    def validate_meeting_booking(
+        db: Session,
+        payload: MeetingCreateRequest,
+        organizer_id: int | None = None,
+    ) -> dict:
+        meeting_type = payload.meeting_type or "offline"
+        room = None
+        blocking_errors = []
+        warnings = []
+        now = datetime.now(payload.start_time.tzinfo)
+        if payload.start_time < now:
+            blocking_errors.append({
+                "type": "PastStartTimeError",
+                "message": "Không thể đặt lịch họp với thời gian bắt đầu nằm trong quá khứ.",
+            })
+        if payload.end_time <= payload.start_time:
+            blocking_errors.append({
+                "type": "InvalidTimeRangeError",
+                "message": "Thời gian kết thúc phải sau thời gian bắt đầu.",
+            })
+        if blocking_errors:
+            return {
+                "is_valid": False,
+                "warnings": warnings,
+                "blocking_errors": blocking_errors,
+            }
+
+        if meeting_type == "online" and not (
+            payload.meeting_link or payload.online_link
+        ):
+            blocking_errors.append({
+                "type": "MeetingLinkRequiredError",
+                "message": "Online meetings require a meeting_link.",
+            })
+            return {
+                "is_valid": False,
+                "warnings": warnings,
+                "blocking_errors": blocking_errors,
+            }
+
+        if meeting_type == "offline":
+            room = (
+                db.query(Room)
+                .filter(Room.id == payload.room_id, Room.is_active.is_(True))
+                .first()
+            )
+            if room is None:
+                blocking_errors.append({
+                    "type": "RoomUnavailableError",
+                    "message": "Phòng họp không tồn tại hoặc đã ngưng hoạt động.",
+                })
+
+        recurrence_type = payload.recurrence_type or "none"
+        recurrence_end_date = payload.recurrence_end_date
+        if recurrence_type == "until_changed" and recurrence_end_date is None:
+            recurrence_end_date = payload.start_time + timedelta(days=365)
+
+        meeting_dates = []
+        if recurrence_type == "none" or recurrence_end_date is None:
+            meeting_dates.append((payload.start_time, payload.end_time))
+        else:
+            current_start = payload.start_time
+            current_end = payload.end_time
+            while current_start <= recurrence_end_date:
+                meeting_dates.append((current_start, current_end))
+                if recurrence_type == "weekly":
+                    current_start += timedelta(weeks=1)
+                    current_end += timedelta(weeks=1)
+                elif recurrence_type in {"monthly", "until_changed"}:
+                    current_start += timedelta(days=30)
+                    current_end += timedelta(days=30)
+                else:
+                    break
+
+        attendee_count = len(set(payload.participant_ids or []))
+        total_attendees = (
+            attendee_count
+            + payload.external_guest_count
+            + int(payload.organizer_participates)
+        )
+
+        if meeting_type == "offline" and organizer_id is not None:
+            organizer = db.query(User).filter(User.id == organizer_id).first()
+            daily_limit = organizer.daily_booking_hours_limit if organizer else None
+            if daily_limit is not None:
+                active_statuses = [
+                    "CANCELLED",
+                    "CANCELED",
+                    "CANCELLED_NO_SHOW",
+                    "COMPLETED",
+                ]
+                first_day = min(start.date() for start, _ in meeting_dates)
+                last_day = max(end.date() for _, end in meeting_dates)
+                range_start = datetime.combine(
+                    first_day,
+                    datetime.min.time(),
+                    tzinfo=payload.start_time.tzinfo,
+                )
+                range_end = datetime.combine(
+                    last_day + timedelta(days=1),
+                    datetime.min.time(),
+                    tzinfo=payload.start_time.tzinfo,
+                )
+                existing_meetings = (
+                    db.query(Meeting.start_time, Meeting.end_time)
+                    .filter(
+                        Meeting.organizer_id == organizer_id,
+                        func.upper(Meeting.status).notin_(active_statuses),
+                        Meeting.start_time < range_end,
+                        Meeting.end_time > range_start,
+                    )
+                    .all()
+                )
+
+                def add_duration_by_day(
+                    totals: dict[date, float],
+                    start: datetime,
+                    end: datetime,
+                ) -> None:
+                    current = start
+                    while current < end:
+                        midnight = datetime.combine(
+                            current.date() + timedelta(days=1),
+                            datetime.min.time(),
+                            tzinfo=current.tzinfo,
+                        )
+                        segment_end = min(midnight, end)
+                        totals[current.date()] = totals.get(current.date(), 0.0) + (
+                            segment_end - current
+                        ).total_seconds() / 3600
+                        current = segment_end
+
+                booked_hours_by_day: dict[date, float] = {}
+                for existing_start, existing_end in existing_meetings:
+                    add_duration_by_day(
+                        booked_hours_by_day,
+                        existing_start,
+                        existing_end,
+                    )
+                for start_time, end_time in meeting_dates:
+                    add_duration_by_day(
+                        booked_hours_by_day,
+                        start_time,
+                        end_time,
+                    )
+
+                exceeded_day = next(
+                    (
+                        day
+                        for day, booked_hours in sorted(booked_hours_by_day.items())
+                        if booked_hours > daily_limit + 1e-9
+                    ),
+                    None,
+                )
+                if exceeded_day is not None:
+                    return {
+                        "is_valid": False,
+                        "warnings": warnings,
+                        "blocking_errors": [{
+                            "type": "DailyBookingHoursLimitError",
+                            "message": (
+                                f"Tổng thời lượng đặt phòng ngày "
+                                f"{exceeded_day:%d/%m/%Y} vượt giới hạn "
+                                f"{daily_limit:g} giờ/ngày."
+                            ),
+                            "date": exceeded_day.isoformat(),
+                            "daily_limit_hours": daily_limit,
+                        }],
+                    }
+
+        warned_equipment: set[tuple[int, int]] = set()
+        warned_participants: set[tuple[int, int]] = set()
+
+        from app.services.equipment_service import check_equipment_availability
+
+        for start_time, end_time in meeting_dates:
+            if room is not None:
+                if total_attendees > int(room.capacity or 0):
+                    warning = {
+                        "type": "OverCapacityWarning",
+                        "message": (
+                            f"Số người tham dự ({total_attendees}) vượt sức chứa "
+                            f"phòng '{room.name}' ({room.capacity})."
+                        ),
+                        "attendee_count": total_attendees,
+                        "capacity": int(room.capacity or 0),
+                        "room_name": room.name,
+                    }
+                    if warning not in warnings:
+                        warnings.append(warning)
+
+                room_conflict = (
+                    db.query(Meeting)
+                    .filter(
+                        Meeting.room_id == room.id,
+                        func.upper(Meeting.status).notin_(
+                            ["CANCELLED", "CANCELED", "CANCELLED_NO_SHOW", "COMPLETED"]
+                        ),
+                        Meeting.start_time < end_time,
+                        Meeting.end_time > start_time,
+                    )
+                    .first()
+                )
+                if room_conflict is not None:
+                    blocking_errors.append({
+                        "type": "RoomConflictError",
+                        "message": (
+                            f"Phòng họp '{room.name}' đã có cuộc họp trong "
+                            f"khung giờ này ({start_time:%d/%m/%Y %H:%M})."
+                        ),
+                        "meeting_id": room_conflict.id,
+                    })
+                    break
+
+            for item in payload.equipments or []:
+                available_qty = check_equipment_availability(
+                    db,
+                    item.equipment_id,
+                    start_time,
+                    end_time,
+                    item.quantity,
+                )
+                warning_key = (item.equipment_id, available_qty)
+                if item.quantity > available_qty and warning_key not in warned_equipment:
+                    equipment = (
+                        db.query(Equipment)
+                        .filter(Equipment.id == item.equipment_id)
+                        .first()
+                    )
+                    warnings.append({
+                        "type": "EquipmentShortageWarning",
+                        "message": (
+                            f"Thiết bị '{equipment.name}' chỉ còn {available_qty} "
+                            f"chiếc trong khung giờ này; yêu cầu {item.quantity}."
+                        ),
+                        "equipment_id": item.equipment_id,
+                        "equipment_name": equipment.name,
+                        "requested_qty": item.quantity,
+                        "available_qty": available_qty,
+                    })
+                    warned_equipment.add(warning_key)
+
+            conflicting_user_ids = set(payload.participant_ids or [])
+            if organizer_id is not None:
+                if payload.organizer_participates:
+                    conflicting_user_ids.add(organizer_id)
+                else:
+                    conflicting_user_ids.discard(organizer_id)
+            if conflicting_user_ids:
+                conflicts = (
+                    db.query(Meeting)
+                    .outerjoin(
+                        MeetingParticipant,
+                        MeetingParticipant.meeting_id == Meeting.id,
+                    )
+                    .filter(
+                        or_(
+                            Meeting.organizer_id.in_(conflicting_user_ids),
+                            MeetingParticipant.user_id.in_(conflicting_user_ids),
+                        ),
+                        func.upper(Meeting.status).notin_(
+                            ["CANCELLED", "CANCELED", "CANCELLED_NO_SHOW", "COMPLETED"]
+                        ),
+                        Meeting.start_time < end_time,
+                        Meeting.end_time > start_time,
+                    )
+                    .all()
+                )
+                for conflicting_meeting in conflicts:
+                    meeting_user_ids = {
+                        participant.user_id
+                        for participant in conflicting_meeting.participants
+                    }
+                    if conflicting_meeting.organizer_id is not None:
+                        meeting_user_ids.add(conflicting_meeting.organizer_id)
+                    for user_id in conflicting_user_ids.intersection(meeting_user_ids):
+                        key = (conflicting_meeting.id, user_id)
+                        if key in warned_participants:
+                            continue
+                        warnings.append({
+                            "type": "ParticipantConflictWarning",
+                            "message": (
+                                f"Người tham dự ID {user_id} đã có cuộc họp "
+                                f"trùng thời gian."
+                            ),
+                            "user_id": user_id,
+                            "meeting_id": conflicting_meeting.id,
+                        })
+                        warned_participants.add(key)
+
+        return {
+            "is_valid": not blocking_errors,
+            "warnings": warnings,
+            "blocking_errors": blocking_errors,
+        }
 
     @staticmethod
     def _parse_smart_qr_payload(qr_payload: str) -> dict[str, int | str]:
@@ -551,23 +937,34 @@ class MeetingService:
                 else:
                     break
 
+        validation = MeetingService.validate_meeting_booking(
+            db, payload, organizer_id
+        )
+        if validation["blocking_errors"]:
+            first_error = validation["blocking_errors"][0]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=first_error["message"],
+            )
+        if validation["warnings"] and not payload.force_book:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=validation,
+            )
+
         # 3. Vòng lặp kiểm tra trùng phòng & quản lý Transaction (Rollback nếu dính bất kỳ ngày nào)
         try:
             created_meetings = []
             requested_equipments = getattr(payload, "equipments", []) or []
-
-            # Kiểm tra tồn kho thiết bị cho từng khung giờ
-            if requested_equipments:
-                from app.services.equipment_service import check_equipment_availability
-                for s_time, e_time in meeting_dates:
-                    check_equipment_availability(db, s_time, e_time, requested_equipments)
             
             for s_time, e_time in meeting_dates:
                 # Kiểm tra conflict phòng — chỉ áp dụng cho OFFLINE meeting
                 if meeting_type == 'offline':
                     overlapping_meeting = db.query(Meeting).filter(
                         Meeting.room_id == room_id,
-                        Meeting.status.notin_(["CANCELLED", "canceled", "CANCELLED_NO_SHOW"]),
+                        func.upper(Meeting.status).notin_(
+                            ["CANCELLED", "CANCELED", "CANCELLED_NO_SHOW", "COMPLETED"]
+                        ),
                         and_(
                             Meeting.start_time < e_time,
                             Meeting.end_time > s_time

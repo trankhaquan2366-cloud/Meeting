@@ -12,6 +12,8 @@ def _resolve_database_url() -> str:
     configured_port = os.getenv("DATABASE_PORT")
 
     if database_url:
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
         url = make_url(database_url)
         if url.get_backend_name() == "mysql":
             if configured_host:

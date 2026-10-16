@@ -483,6 +483,9 @@ body {
 
 .booking-qr-button { min-height: 34px; padding: 7px 11px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 7px; font-size: 12px; font-weight: 600; }
 .booking-qr-button:hover { background: #dbeafe; }
+.booking-extend-button { min-height: 34px; padding: 7px 11px; color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 7px; font-size: 12px; font-weight: 600; }
+.booking-extend-button:hover { background: #dcfce7; }
+.booking-extend-button:disabled { cursor: wait; opacity: 0.65; }
 .qr-check-modal .modal-content { width: min(440px, calc(100vw - 32px)); }
 .qr-reader { width: 100%; min-height: 220px; margin: 16px 0; overflow: hidden; border-radius: 8px; }
 .quick-qr-feedback { min-height: 22px; margin: 8px 0; color: #b91c1c; font-size: 13px; font-weight: 600; }
@@ -693,21 +696,20 @@ body {
         font-weight: 600;
         line-height: 1.1;
     }
-    .mobile-nav-item > span:first-child { font-size: 18px; line-height: 20px; }
+    .mobile-nav-item > svg { width: 20px; height: 20px; flex: none; }
     .mobile-nav-item.active { color: #1d4ed8; }
     .mobile-nav-scan { color: #fff; }
-    .mobile-nav-scan > span:first-child {
+    .mobile-nav-scan > .mobile-nav-scan-icon {
         display: grid;
-        width: 44px;
-        height: 44px;
+        width: 48px;
+        height: 48px;
         place-items: center;
         margin-top: -22px;
         color: #fff;
-        background: #2563eb;
+        background: linear-gradient(35deg, #4f46e5, #7c3aed);
         border: 4px solid #fff;
         border-radius: 50%;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.32);
-        font-size: 19px;
+        box-shadow: 0 8px 18px rgba(79, 70, 229, 0.3);
     }
     .mobile-nav-scan > span:last-child { color: #1d4ed8; }
     .modal { align-items: center; overflow-y: auto; }

@@ -18,9 +18,10 @@ from app.core.security import (
     get_current_user,
     hash_password,
     require_role,
+    verify_password,
 )
 from app.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse, UserResponse
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, TokenResponse, UserResponse
 from app.services.google_calendar_service import (
     GOOGLE_CALENDAR_EVENTS_SCOPE,
     encrypt_refresh_token,
@@ -136,12 +137,37 @@ def issue_token(user: User) -> TokenResponse:
         role=user.role,
         username=user.username,
         full_name=user.full_name or user.username,
+        user_id=user.id,
     )
 
 
 @router.post("/login", response_model=TokenResponse, summary="Đăng nhập")
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     return issue_token(authenticate_user(db, payload.username, payload.password))
+
+
+@router.post("/change-password", summary="Đổi mật khẩu và kích hoạt tài khoản")
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+):
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == payload.email)
+        .first()
+    )
+    if user is None or not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email hoặc mật khẩu hiện tại không chính xác.",
+        )
+
+    user.hashed_password = hash_password(payload.new_password)
+    if (user.status or "").upper() == "PENDING":
+        user.status = "ACTIVE"
+        user.is_active = True
+    db.commit()
+    return {"message": "Đổi mật khẩu thành công. Bạn có thể đăng nhập ngay bây giờ."}
 
 
 @router.get("/google/login", summary="Đăng nhập bằng Google")

@@ -18,3 +18,10 @@ export function mountUserListTable(
   });
   return userListTable.mount(container);
 }
+
+export function refreshUserListTable(): Promise<void> {
+  if (!userListTable) {
+    throw new Error('The user list has not been mounted yet.');
+  }
+  return userListTable.refreshAfterCreate();
+}

@@ -1,5 +1,5 @@
-export type UserListRole = 'ADMIN' | 'BOOKER' | 'ATTENDEE';
-export type UserListStatus = 'ACTIVE' | 'INACTIVE';
+export type UserListRole = 'ADMIN' | 'EMPLOYEE' | 'BOOKER' | 'ATTENDEE' | 'MANAGER' | (string & {});
+export type UserListStatus = 'ACTIVE' | 'PENDING' | 'INACTIVE' | 'LOCKED';
 
 export interface UserListItem {
   id: string;

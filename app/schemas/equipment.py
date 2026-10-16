@@ -41,6 +41,9 @@ class EquipmentStatusResponse(BaseModel):
     total_qty: int
     booked_qty: int
     available_qty: int
+    total_quantity: int
+    allocated_quantity: int
+    available_quantity: int
     is_active: bool
     status_label: str
 

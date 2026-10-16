@@ -105,13 +105,17 @@ def _booked_equipment_quantity(db, equipment_id: int, start_time: datetime, end_
     return int(overlap or 0)
 
 
-def get_equipment_availability(db, start_time, end_time, category=None, search=None):
+def get_equipment_availability(
+    db, start_time, end_time, category=None, search=None, active_only=False
+):
     if db is None:
         equipments = _mock_equipment_catalog()
     else:
         start_time = _coerce_datetime(start_time)
         end_time = _coerce_datetime(end_time)
         query = db.query(Equipment)
+        if active_only:
+            query = query.filter(Equipment.is_active.is_(True))
         if category:
             query = query.filter(Equipment.category.ilike(f"%{category}%"))
         if search:
@@ -161,13 +165,62 @@ def get_equipment_availability(db, start_time, end_time, category=None, search=N
             "total_qty": total_qty,
             "booked_qty": booked_qty,
             "available_qty": available_qty,
+            "total_quantity": total_qty,
+            "allocated_quantity": booked_qty,
+            "available_quantity": available_qty,
             "is_active": is_active,
             "status_label": status_label,
         })
     return result
 
 
-def check_equipment_availability(db, start_time, end_time, requested_equipments):
+def check_equipment_availability(
+    db,
+    equipment_id: int,
+    start_time: datetime,
+    end_time: datetime,
+    requested_qty: int,
+) -> int:
+    start_time = _coerce_datetime(start_time)
+    end_time = _coerce_datetime(end_time)
+    if end_time <= start_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Thời gian kết thúc phải sau thời gian bắt đầu.",
+        )
+    try:
+        equipment_id = int(equipment_id)
+        requested_qty = int(requested_qty)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Số lượng và mã thiết bị phải là số nguyên hợp lệ.",
+        ) from exc
+    if equipment_id <= 0 or requested_qty < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mã thiết bị hoặc số lượng thiết bị không hợp lệ.",
+        )
+
+    equipment = db.query(Equipment).filter(Equipment.id == equipment_id).first()
+    if equipment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thiết bị ID {equipment_id} không tồn tại.",
+        )
+    if not equipment.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Thiết bị '{equipment.name}' hiện đã ngừng hoạt động và không thể mượn.",
+        )
+
+    allocated_qty = _booked_equipment_quantity(
+        db, equipment_id, start_time, end_time
+    )
+    return max(int(equipment.total_qty or 0) - allocated_qty, 0)
+
+
+def validate_requested_equipments(db, start_time, end_time, requested_equipments):
     if not requested_equipments:
         return []
 
@@ -198,8 +251,9 @@ def check_equipment_availability(db, start_time, end_time, requested_equipments)
                 detail=f"Thiết bị '{equipment.name}' hiện đã ngừng hoạt động và không thể mượn.",
             )
 
-        booked_qty = _booked_equipment_quantity(db, equipment_id, start_time, end_time)
-        available_qty = max((equipment.total_qty or 0) - booked_qty, 0)
+        available_qty = check_equipment_availability(
+            db, equipment_id, start_time, end_time, requested_qty
+        )
         if requested_qty > available_qty:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

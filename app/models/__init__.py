@@ -9,6 +9,7 @@ from app.models.meeting_reminder import MeetingReminder
 from app.models.notification import Notification
 from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
 from app.models.chat import ChatSession, ChatMessage
+from app.models.project_group import ProjectGroup, user_project_groups
 
 __all__ = [
     "Base",
@@ -24,4 +25,6 @@ __all__ = [
     "RoomEquipment",
     "ChatSession",
     "ChatMessage",
+    "ProjectGroup",
+    "user_project_groups",
 ]

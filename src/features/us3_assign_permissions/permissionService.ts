@@ -10,7 +10,7 @@ export interface PermissionServiceOptions {
   fetcher?: typeof fetch;
 }
 
-const DEFAULT_API_BASE_URL = 'http://localhost:8000/api';
+const DEFAULT_API_BASE_URL = '/api/v1';
 const MOCK_PERMISSIONS = new Map<string, UserPermissions>();
 
 function requireUserId(userId: string): string {
@@ -46,7 +46,7 @@ export class PermissionService {
 
   constructor(options: PermissionServiceOptions = {}) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, '');
-    this.useMock = options.useMock ?? true;
+    this.useMock = options.useMock ?? false;
     this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -68,8 +68,8 @@ export class PermissionService {
     }
 
     const response = await this.fetcher(
-      `${this.baseUrl}/users/${encodeURIComponent(normalizedUserId)}/permissions`,
-      { headers: { Accept: 'application/json' } },
+      this.apiUrl(`/users/${encodeURIComponent(normalizedUserId)}/permissions`),
+      { headers: this.headers() },
     );
     if (!response.ok) {
       throw new Error(`Unable to load user permissions (HTTP ${response.status}).`);
@@ -96,10 +96,10 @@ export class PermissionService {
     }
 
     const response = await this.fetcher(
-      `${this.baseUrl}/users/${encodeURIComponent(normalizedUserId)}/permissions`,
+      this.apiUrl(`/users/${encodeURIComponent(normalizedUserId)}/permissions`),
       {
         method: 'PUT',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
         body: JSON.stringify(dto),
       },
     );
@@ -107,6 +107,21 @@ export class PermissionService {
       throw new Error(`Unable to update user permissions (HTTP ${response.status}).`);
     }
     return normalizePermissions(await response.json(), normalizedUserId);
+  }
+
+  private apiUrl(path: string): string {
+    return new URL(
+      `${this.baseUrl}${path}`,
+      typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+    ).toString();
+  }
+
+  private headers(): HeadersInit {
+    const token = typeof localStorage === 'undefined' ? '' : localStorage.getItem('token') ?? '';
+    return {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
   }
 }
 

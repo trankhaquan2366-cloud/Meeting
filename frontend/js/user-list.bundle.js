@@ -22,11 +22,12 @@ var RoomSyncUserList = (() => {
   // src/features/us2_user_list/dashboard.ts
   var dashboard_exports = {};
   __export(dashboard_exports, {
-    mountUserListTable: () => mountUserListTable
+    mountUserListTable: () => mountUserListTable,
+    refreshUserListTable: () => refreshUserListTable
   });
 
   // src/features/us2_user_list/userListService.ts
-  var DEFAULT_API_URL = "http://localhost:8000/api/users/";
+  var DEFAULT_API_URL = "/api/v1/users/";
   var MOCK_USERS = [
     { id: "USR-001", fullName: "Nguy\u1EC5n Minh Tu\u1EA5n", email: "tuan.nguyen@example.com", role: "ADMIN", status: "ACTIVE", createdAt: "2025-01-08T09:15:00.000Z" },
     { id: "USR-002", fullName: "Tr\u1EA7n Thu H\xE0", email: "ha.tran@example.com", role: "BOOKER", status: "ACTIVE", createdAt: "2025-01-12T03:30:00.000Z" },
@@ -65,16 +66,18 @@ var RoomSyncUserList = (() => {
     if (typeof value !== "string") {
       throw new Error("User list API returned a user without a valid role.");
     }
-    const role = value.toUpperCase();
-    if (role === "ADMIN" || role === "BOOKER" || role === "ATTENDEE") return role;
-    throw new Error(`User list API returned an unsupported role: ${value}.`);
+    const role = value.trim();
+    if (!role) throw new Error("User list API returned a user without a valid role.");
+    return role.toUpperCase();
   }
   function normalizeStatus(value) {
     if (typeof value !== "string") {
       throw new Error("User list API returned a user without a valid status.");
     }
     const status = value.toUpperCase();
-    if (status === "ACTIVE" || status === "INACTIVE") return status;
+    if (status === "ACTIVE" || status === "INACTIVE" || status === "PENDING" || status === "LOCKED") {
+      return status;
+    }
     throw new Error(`User list API returned an unsupported status: ${value}.`);
   }
   function normalizeUser(value) {
@@ -83,22 +86,22 @@ var RoomSyncUserList = (() => {
     }
     const record = value;
     const id = record.id;
-    const fullName = record.fullName ?? record.full_name;
+    const fullName = record.fullName ?? record.full_name ?? record.username;
     const email = record.email;
     const createdAt = record.createdAt ?? record.created_at;
-    if (typeof id !== "string" && typeof id !== "number" || typeof fullName !== "string" || typeof email !== "string" || typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) {
+    if (typeof id !== "string" && typeof id !== "number" || typeof fullName !== "string" || email !== null && email !== void 0 && typeof email !== "string" || typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) {
       throw new Error("User list API returned a user with missing or invalid fields.");
     }
     return {
       id: String(id),
       fullName,
-      email,
+      email: typeof email === "string" ? email : "",
       role: normalizeRole(record.role),
       status: normalizeStatus(record.status),
       createdAt
     };
   }
-  function normalizeResult(payload, page, limit) {
+  function normalizeResult(payload, page, limit, roleForApi) {
     const record = Array.isArray(payload) ? { items: payload } : payload;
     if (!record || typeof record !== "object") {
       throw new Error("User list API returned an invalid response.");
@@ -109,6 +112,18 @@ var RoomSyncUserList = (() => {
       throw new Error("User list API response must contain an items array.");
     }
     const items = rawItems.map(normalizeUser);
+    if (Array.isArray(payload)) {
+      const filtered = items.filter(
+        (user) => !roleForApi || user.role === roleForApi.toUpperCase()
+      );
+      const start = (page - 1) * limit;
+      return {
+        items: filtered.slice(start, start + limit),
+        total: filtered.length,
+        page,
+        limit
+      };
+    }
     const total = response.total ?? items.length;
     if (typeof total !== "number" || !Number.isSafeInteger(total) || total < 0) {
       throw new Error("User list API returned an invalid total count.");
@@ -126,13 +141,13 @@ var RoomSyncUserList = (() => {
       __publicField(this, "useMock");
       __publicField(this, "fetcher");
       this.baseUrl = options.baseUrl ?? DEFAULT_API_URL;
-      this.useMock = options.useMock ?? true;
+      this.useMock = options.useMock ?? false;
       this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     }
     async getUsers(query = {}) {
       const page = positiveInteger(query.page, 1, "page");
       const limit = positiveInteger(query.limit, 10, "limit");
-      if (query.role && !["ADMIN", "BOOKER", "ATTENDEE"].includes(query.role)) {
+      if (query.role && !["ADMIN", "EMPLOYEE", "BOOKER", "ATTENDEE", "MANAGER"].includes(query.role)) {
         throw new RangeError(`Unsupported role filter: ${query.role}.`);
       }
       const normalizedQuery = {
@@ -142,18 +157,26 @@ var RoomSyncUserList = (() => {
         search: query.search?.trim() || void 0
       };
       if (this.useMock) return this.getMockUsers({ ...normalizedQuery, page, limit });
-      const url = new URL(this.baseUrl);
+      const url = new URL(
+        this.baseUrl,
+        typeof window === "undefined" ? "http://localhost" : window.location.origin
+      );
       url.searchParams.set("page", String(page));
       url.searchParams.set("limit", String(limit));
       if (normalizedQuery.search) url.searchParams.set("search", normalizedQuery.search);
-      if (normalizedQuery.role) url.searchParams.set("role", normalizedQuery.role);
+      const roleForApi = normalizedQuery.role === "BOOKER" || normalizedQuery.role === "ATTENDEE" ? "employee" : normalizedQuery.role?.toLowerCase();
+      if (roleForApi) url.searchParams.set("role", roleForApi);
+      const token = typeof localStorage === "undefined" ? "" : localStorage.getItem("token") ?? "";
       const response = await this.fetcher(url.toString(), {
-        headers: { Accept: "application/json" }
+        headers: {
+          Accept: "application/json",
+          ...token ? { Authorization: `Bearer ${token}` } : {}
+        }
       });
       if (!response.ok) {
         throw new Error(`Unable to load users (HTTP ${response.status}).`);
       }
-      return normalizeResult(await response.json(), page, limit);
+      return normalizeResult(await response.json(), page, limit, roleForApi);
     }
     updateMockUserRole(userId, role) {
       if (this.useMock) MOCK_USER_ROLE_OVERRIDES.set(userId, role);
@@ -180,7 +203,7 @@ var RoomSyncUserList = (() => {
   var defaultService = new UserListService();
 
   // src/features/us3_assign_permissions/permissionService.ts
-  var DEFAULT_API_BASE_URL = "http://localhost:8000/api";
+  var DEFAULT_API_BASE_URL = "/api/v1";
   var MOCK_PERMISSIONS = /* @__PURE__ */ new Map();
   function requireUserId(userId) {
     const normalized = userId.trim();
@@ -210,7 +233,7 @@ var RoomSyncUserList = (() => {
       __publicField(this, "useMock");
       __publicField(this, "fetcher");
       this.baseUrl = (options.baseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
-      this.useMock = options.useMock ?? true;
+      this.useMock = options.useMock ?? false;
       this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     }
     async getUserPermissions(userId, fallbackRole = "NHAN_VIEN") {
@@ -225,8 +248,8 @@ var RoomSyncUserList = (() => {
         };
       }
       const response = await this.fetcher(
-        `${this.baseUrl}/users/${encodeURIComponent(normalizedUserId)}/permissions`,
-        { headers: { Accept: "application/json" } }
+        this.apiUrl(`/users/${encodeURIComponent(normalizedUserId)}/permissions`),
+        { headers: this.headers() }
       );
       if (!response.ok) {
         throw new Error(`Unable to load user permissions (HTTP ${response.status}).`);
@@ -247,10 +270,10 @@ var RoomSyncUserList = (() => {
         return { ...updated };
       }
       const response = await this.fetcher(
-        `${this.baseUrl}/users/${encodeURIComponent(normalizedUserId)}/permissions`,
+        this.apiUrl(`/users/${encodeURIComponent(normalizedUserId)}/permissions`),
         {
           method: "PUT",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          headers: { ...this.headers(), "Content-Type": "application/json" },
           body: JSON.stringify(dto)
         }
       );
@@ -258,6 +281,19 @@ var RoomSyncUserList = (() => {
         throw new Error(`Unable to update user permissions (HTTP ${response.status}).`);
       }
       return normalizePermissions(await response.json(), normalizedUserId);
+    }
+    apiUrl(path) {
+      return new URL(
+        `${this.baseUrl}${path}`,
+        typeof window === "undefined" ? "http://localhost" : window.location.origin
+      ).toString();
+    }
+    headers() {
+      const token = typeof localStorage === "undefined" ? "" : localStorage.getItem("token") ?? "";
+      return {
+        Accept: "application/json",
+        ...token ? { Authorization: `Bearer ${token}` } : {}
+      };
     }
   };
   var defaultPermissionService = new PermissionService();
@@ -1104,20 +1140,57 @@ ${failures.join("\n")}`;
   .us2-user-list__table-wrap { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; }
   .us2-user-list__table { width: 100%; border-collapse: collapse; text-align: left; }
   .us2-user-list__table th, .us2-user-list__table td {
-    padding: 12px 14px; border-bottom: 1px solid #e2e8f0; white-space: nowrap;
+    padding: 14px 16px; border-bottom: 1px solid #e2e8f0; white-space: nowrap;
   }
   .us2-user-list__table th { background: #f8fafc; color: #475569; font-weight: 600; }
+  .us2-user-list__table tbody tr { transition: background-color 160ms ease; }
+  .us2-user-list__table tbody tr:hover { background: rgb(238 242 255 / 30%); }
   .us2-user-list__table tr:last-child td { border-bottom: 0; }
+  .us2-user-list__name { color: #0f172a; font-size: 14px; font-weight: 500; }
+  .us2-user-list__email { color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .us2-user-list__restriction-count { color: #475569; font-size: 14px; font-weight: 500; text-align: center; }
   .us2-user-list__badge {
-    display: inline-block; padding: 3px 9px; border-radius: 999px;
-    font-size: 12px; font-weight: 650;
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px;
+    border: 1px solid transparent; border-radius: 999px; font-size: 12px; font-weight: 650;
   }
-  .us2-user-list__role--admin { background: #ede9fe; color: #6d28d9; }
-  .us2-user-list__role--booker { background: #dbeafe; color: #1d4ed8; }
-  .us2-user-list__role--attendee { background: #cffafe; color: #0e7490; }
-  .us2-user-list__status--active { background: #dcfce7; color: #15803d; }
-  .us2-user-list__status--inactive { background: #f1f5f9; color: #475569; }
+  .us2-user-list__role-badge { border-radius: 6px; padding: 2px 10px; font-weight: 500; }
+  .us2-user-list__role--admin { background: #f5f3ff; border-color: #ddd6fe; color: #6d28d9; font-weight: 650; }
+  .us2-user-list__role--manager { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+  .us2-user-list__role--employee, .us2-user-list__role--booker, .us2-user-list__role--attendee { background: #f1f5f9; border-color: #e2e8f0; color: #334155; }
+  .us2-user-list__status--active { background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
+  .us2-user-list__status--inactive, .us2-user-list__status--locked { background: #fff1f2; border-color: #fecdd3; color: #be123c; }
+  .us2-user-list__status--pending { background: #fffbeb; border-color: #fde68a; color: #b45309; }
+  .us2-user-list__status-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: currentColor; }
   .us2-user-list__actions { display: flex; gap: 8px; }
+  .us2-user-list__menu { position: fixed; z-index: 1300; min-width: 250px; padding: 6px; border: 1px solid rgb(226 232 240 / 80%); border-radius: 12px; background: #fff; box-shadow: 0 20px 25px -5px rgb(148 163 184 / 35%), 0 8px 10px -6px rgb(148 163 184 / 25%); }
+  .us2-user-list__menu[hidden] { display: none; }
+  .us2-user-list__menu-item { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: #334155; text-align: left; font: inherit; font-size: 14px; cursor: pointer; transition: color 160ms ease, background-color 160ms ease; }
+  .us2-user-list__menu-item:hover:not(:disabled) { background: #f8fafc; color: #4f46e5; }
+  .us2-user-list__menu-item--danger { color: #be123c; }
+  .us2-user-list__menu-item:disabled { opacity: .5; cursor: not-allowed; }
+  .us2-user-list__menu-toggle { min-width: 38px; min-height: 38px; padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; color: #334155; font-size: 20px; line-height: 1; cursor: pointer; }
+  .us2-user-profile-backdrop { position: fixed; inset: 0; z-index: 1400; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 55%); }
+  .us2-user-profile-backdrop[hidden] { display: none; }
+  .us2-user-profile { width: min(100%, 760px); max-height: min(92vh, 900px); overflow: auto; border-radius: 16px; background: #fff; color: #172033; box-shadow: 0 24px 70px rgb(15 23 42 / 28%); }
+  .us2-user-profile__header, .us2-user-profile__body, .us2-user-profile__footer { padding: 18px 22px; }
+  .us2-user-profile__header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e8f0; }
+  .us2-user-profile__header h2 { margin: 0; font-size: 20px; }
+  .us2-user-profile__body { display: grid; gap: 18px; }
+  .us2-user-profile__section { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .us2-user-profile__section h3 { grid-column: 1 / -1; margin: 0; padding-bottom: 7px; border-bottom: 1px solid #e2e8f0; font-size: 15px; }
+  .us2-user-profile__field { display: grid; gap: 5px; min-width: 0; color: #475569; font-weight: 600; }
+  .us2-user-profile__field input, .us2-user-profile__field select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #172033; font: inherit; font-weight: 400; }
+  .us2-user-profile__field input:disabled, .us2-user-profile__field select:disabled { background: #f8fafc; color: #64748b; }
+  .us2-user-profile__groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; max-height: 150px; overflow: auto; }
+  .us2-user-profile__group { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+  .us2-user-profile__toggle { display: flex; align-items: center; gap: 9px; align-self: end; min-height: 40px; color: #334155; }
+  .us2-user-profile__error { color: #b91c1c; }
+  .us2-user-profile__footer { display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid #e2e8f0; }
+  .us2-user-profile__button { min-height: 40px; padding: 8px 14px; border: 0; border-radius: 8px; background: #f1f5f9; color: #334155; font: inherit; font-weight: 600; cursor: pointer; }
+  .us2-user-profile__button--save { background: #2563eb; color: #fff; }
+  .us2-user-profile__button:disabled { opacity: .55; cursor: wait; }
+  .us2-user-profile__status { color: #64748b; font-weight: 400; }
+  .us2-user-profile :focus-visible, .us2-user-list__menu :focus-visible, .us2-user-list__menu-toggle:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
   .us2-user-list__action, .us2-user-list__button, .us2-user-list__bulk-button {
     border: 0; border-radius: 7px; padding: 8px 11px; font: inherit;
   }
@@ -1134,6 +1207,9 @@ ${failures.join("\n")}`;
   .us2-user-list__empty { padding: 28px !important; color: #64748b; text-align: center; }
   @media (max-width: 640px) {
     .us2-user-list__header, .us2-user-list__pagination { align-items: flex-start; flex-direction: column; }
+    .us2-user-profile__section, .us2-user-profile__groups { grid-template-columns: 1fr; }
+    .us2-user-profile-backdrop { padding: 10px; }
+    .us2-user-profile__header, .us2-user-profile__body, .us2-user-profile__footer { padding: 15px; }
   }
 `;
   function escapeHtml4(value) {
@@ -1146,10 +1222,16 @@ ${failures.join("\n")}`;
     })[character] ?? character);
   }
   function roleLabel(role) {
-    return { ADMIN: "Admin", BOOKER: "Booker", ATTENDEE: "Attendee" }[role];
+    return {
+      ADMIN: "Admin",
+      EMPLOYEE: "Nh\xE2n vi\xEAn",
+      BOOKER: "Booker",
+      ATTENDEE: "Attendee",
+      MANAGER: "Qu\u1EA3n l\xFD"
+    }[role] ?? escapeHtml4(role);
   }
   function roleClass(role) {
-    return `us2-user-list__role--${role.toLowerCase()}`;
+    return `us2-user-list__role--${role.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}`;
   }
   function statusClass(status) {
     return `us2-user-list__status--${status.toLowerCase()}`;
@@ -1179,6 +1261,15 @@ ${failures.join("\n")}`;
       __publicField(this, "assignPermissionModal", null);
       __publicField(this, "roomRestrictionModal", null);
       __publicField(this, "bulkEditModal", null);
+      __publicField(this, "profileHost", null);
+      __publicField(this, "profileUser", null);
+      __publicField(this, "profileCanEdit", false);
+      __publicField(this, "profileLoading", false);
+      __publicField(this, "profileSaving", false);
+      __publicField(this, "profileError", "");
+      __publicField(this, "profileTrigger", null);
+      __publicField(this, "profileRequestId", 0);
+      __publicField(this, "currentUserId", typeof localStorage === "undefined" ? "" : localStorage.getItem("user_id") ?? "");
       this.options = options;
       this.service = options.service ?? new UserListService();
       this.permissionService = options.permissionService ?? new PermissionService();
@@ -1220,7 +1311,7 @@ ${failures.join("\n")}`;
             <span class="sr-only">L\u1ECDc theo vai tr\xF2</span>
             <select class="us2-user-list__filter" data-role-filter aria-label="L\u1ECDc theo vai tr\xF2">
               <option value="">T\u1EA5t c\u1EA3 vai tr\xF2</option>
-              ${["ADMIN", "BOOKER", "ATTENDEE"].map((role) => `
+              ${["ADMIN", "EMPLOYEE", "MANAGER"].map((role) => `
                 <option value="${role}" ${this.query.role === role ? "selected" : ""}>${roleLabel(role)}</option>
               `).join("")}
             </select>
@@ -1235,7 +1326,7 @@ ${failures.join("\n")}`;
                 aria-label="Ch\u1ECDn t\u1EA5t c\u1EA3 ng\u01B0\u1EDDi d\xF9ng tr\xEAn trang n\xE0y"
                 ${currentPageSelected ? "checked" : ""} ${this.loading ? "disabled" : ""}></th>
               <th scope="col">H\u1ECD v\xE0 t\xEAn</th><th scope="col">Email</th><th scope="col">Vai tr\xF2</th>
-              <th scope="col">Tr\u1EA1ng th\xE1i</th><th scope="col">Ng\xE0y t\u1EA1o</th><th scope="col">H\xE0nh \u0111\u1ED9ng</th>
+              <th scope="col">Tr\u1EA1ng th\xE1i</th><th scope="col">Ng\xE0y t\u1EA1o</th><th scope="col">T\xF9y ch\u1ECDn</th>
               <th scope="col">Gi\u1EDBi h\u1EA1n \u0111\u1EB7t ph\xF2ng</th>
             </tr></thead>
             <tbody>${rows}</tbody>
@@ -1261,6 +1352,11 @@ ${failures.join("\n")}`;
       this.bindEvents(container);
       this.render();
       await this.loadUsers();
+    }
+    async refreshAfterCreate() {
+      this.selectedUserIds.clear();
+      this.selectedUsers.clear();
+      await this.loadUsers({ page: 1, limit: this.query.limit ?? 10 });
     }
     async loadUsers(query = this.query) {
       this.query = { ...query, page: query.page ?? 1, limit: query.limit ?? 10 };
@@ -1304,6 +1400,7 @@ ${failures.join("\n")}`;
           void this.loadUsers({ ...this.query, role: role || void 0, page: 1 });
         } else if (target instanceof HTMLInputElement && target.matches("[data-select-page]")) {
           this.result.items.forEach((user) => {
+            if (!this.canModifyUser(user)) return;
             if (target.checked) {
               this.selectedUserIds.add(user.id);
               this.selectedUsers.set(user.id, { ...user });
@@ -1340,23 +1437,48 @@ ${failures.join("\n")}`;
           if (users.length) void this.getBulkEditModal().open(users);
           return;
         }
+        const menuToggle = target.closest("[data-user-menu-toggle]");
+        if (menuToggle) {
+          const menu = menuToggle.parentElement?.querySelector("[data-user-menu]");
+          const shouldOpen = Boolean(menu?.hidden);
+          root.querySelectorAll("[data-user-menu]").forEach((openMenu) => {
+            openMenu.hidden = true;
+            openMenu.parentElement?.querySelector("[data-user-menu-toggle]")?.setAttribute("aria-expanded", "false");
+          });
+          if (menu && shouldOpen) {
+            const rect = menuToggle.getBoundingClientRect();
+            menu.hidden = false;
+            menu.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
+            menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`;
+            menuToggle.setAttribute("aria-expanded", "true");
+          }
+          return;
+        }
         const actionButton = target.closest("[data-user-action]");
         if (actionButton) {
           const user = this.result.items.find((item) => item.id === actionButton.dataset.userId);
           if (user?.id) {
-            if (actionButton.dataset.userAction === "permissions") {
+            this.closeUserMenus();
+            if (actionButton.dataset.userAction === "details" && !actionButton.disabled) {
+              this.profileTrigger = actionButton;
+              void this.openUserDetailModal(user.id);
+            } else if (actionButton.dataset.userAction === "permissions" && !actionButton.disabled) {
               void this.getAssignPermissionModal().open({
                 id: user.id,
                 fullName: user.fullName,
                 email: user.email,
                 role: user.role
               });
-            } else if (actionButton.dataset.userAction === "restrictions") {
+            } else if (actionButton.dataset.userAction === "restrictions" && !actionButton.disabled) {
               void this.getRoomRestrictionModal().open({
                 id: user.id,
                 fullName: user.fullName,
                 email: user.email
               });
+            } else if (actionButton.dataset.userAction === "status" && !actionButton.disabled) {
+              void this.updateUserStatus(user);
+            } else if (actionButton.dataset.userAction === "resend-invite" && !actionButton.disabled) {
+              void this.resendInvitation(user);
             }
           }
           return;
@@ -1365,6 +1487,12 @@ ${failures.join("\n")}`;
         if (!pageButton || pageButton.disabled) return;
         const page = this.query.page ?? 1;
         void this.loadUsers({ ...this.query, page: pageButton.dataset.page === "next" ? page + 1 : page - 1 });
+      });
+      root.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") this.closeUserMenus();
+      });
+      document.addEventListener("click", (event) => {
+        if (event.target instanceof Node && !root.contains(event.target)) this.closeUserMenus();
       });
     }
     render() {
@@ -1392,24 +1520,370 @@ ${failures.join("\n")}`;
       }
     }
     renderRow(user) {
-      const restrictionCount = this.restrictionCounts.get(user.id);
+      const protectedAdmin = user.role === "ADMIN" && (!this.currentUserId || user.id !== this.currentUserId);
+      const adminActionsDisabled = this.loading || protectedAdmin;
       return `<tr>
       <td><input class="us2-user-list__selection" data-select-user type="checkbox"
         value="${escapeHtml4(user.id)}" aria-label="Ch\u1ECDn ${escapeHtml4(user.fullName)}"
-        ${this.selectedUserIds.has(user.id) ? "checked" : ""} ${this.loading ? "disabled" : ""}></td>
-      <td>${escapeHtml4(user.fullName)}</td>
-      <td>${escapeHtml4(user.email)}</td>
-      <td><span class="us2-user-list__badge ${roleClass(user.role)}">${roleLabel(user.role)}</span></td>
-      <td><span class="us2-user-list__badge ${statusClass(user.status)}">${user.status}</span></td>
+        ${this.selectedUserIds.has(user.id) ? "checked" : ""} ${adminActionsDisabled ? "disabled" : ""}></td>
+      <td class="us2-user-list__name">${escapeHtml4(user.fullName)}</td>
+      <td class="us2-user-list__email">${escapeHtml4(user.email)}</td>
+      <td><span class="us2-user-list__badge us2-user-list__role-badge ${roleClass(user.role)}">${roleLabel(user.role)}</span></td>
+      <td><span class="us2-user-list__badge us2-user-list__status-badge ${statusClass(user.status)}">
+        <span class="us2-user-list__status-dot" aria-hidden="true"></span>${escapeHtml4(user.status)}
+      </span></td>
       <td>${formatDate(user.createdAt)}</td>
-      <td><div class="us2-user-list__actions">
-        <button class="us2-user-list__action" type="button" data-user-action="permissions"
-          data-user-id="${escapeHtml4(user.id)}">S\u1EEDa quy\u1EC1n</button>
-        <button class="us2-user-list__action" type="button" data-user-action="restrictions"
-          data-user-id="${escapeHtml4(user.id)}">Gi\u1EDBi h\u1EA1n ph\xF2ng</button>
-      </div></td>
-      <td>${restrictionCount === void 0 || restrictionCount === null ? "\u2014" : `${restrictionCount} ph\xF2ng`}</td>
+      <td><button class="btn btn-sm btn-light border dropdown-toggle-no-caret us2-user-list__menu-toggle"
+        data-bs-toggle="dropdown" data-user-menu-toggle type="button" aria-label="Thao t\xE1c v\u1EDBi ${escapeHtml4(user.fullName)}"
+        aria-haspopup="menu" aria-expanded="false" ${this.loading ? "disabled" : ""}>\u22EE</button>
+        <div class="us2-user-list__menu" data-user-menu role="menu" hidden>
+          <button class="us2-user-list__menu-item" data-user-action="details" data-user-id="${escapeHtml4(user.id)}"
+            type="button" role="menuitem">Xem &amp; Ch\u1EC9nh s\u1EEDa chi ti\u1EBFt</button>
+          <button class="us2-user-list__menu-item" data-user-action="permissions" data-user-id="${escapeHtml4(user.id)}"
+            type="button" role="menuitem" ${adminActionsDisabled ? "disabled" : ""}>S\u1EEDa nhanh quy\u1EC1n &amp; vai tr\xF2</button>
+          <button class="us2-user-list__menu-item" data-user-action="restrictions" data-user-id="${escapeHtml4(user.id)}"
+            type="button" role="menuitem" ${this.loading ? "disabled" : ""}>C\u1EA5u h\xECnh gi\u1EDBi h\u1EA1n \u0111\u1EB7t ph\xF2ng</button>
+          ${user.status === "PENDING" ? `<button class="us2-user-list__menu-item" data-user-action="resend-invite"
+            data-user-id="${escapeHtml4(user.id)}" type="button" role="menuitem" ${adminActionsDisabled ? "disabled" : ""}>
+            G\u1EEDi l\u1EA1i Email k\xEDch ho\u1EA1t</button>` : ""}
+          <button class="us2-user-list__menu-item us2-user-list__menu-item--danger" data-user-action="status"
+            data-user-id="${escapeHtml4(user.id)}" type="button" role="menuitem" ${adminActionsDisabled ? "disabled" : ""}>
+            ${user.status === "ACTIVE" ? "Kh\xF3a t\xE0i kho\u1EA3n" : "M\u1EDF kh\xF3a t\xE0i kho\u1EA3n"}
+          </button>
+        </div>
+      </td>
+      <td class="us2-user-list__restriction-count">${this.restrictionCountLabel(user.id)}</td>
     </tr>`;
+    }
+    restrictionCountLabel(userId) {
+      const restrictionCount = this.restrictionCounts.get(userId);
+      return restrictionCount === void 0 || restrictionCount === null ? "\u2014" : `${restrictionCount} ph\xF2ng`;
+    }
+    closeUserMenus() {
+      this.container?.querySelectorAll("[data-user-menu]").forEach((menu) => {
+        menu.hidden = true;
+        menu.parentElement?.querySelector("[data-user-menu-toggle]")?.setAttribute("aria-expanded", "false");
+      });
+    }
+    getUserProfileHost() {
+      if (!this.profileHost) {
+        this.profileHost = document.createElement("div");
+        document.body.appendChild(this.profileHost);
+        this.profileHost.addEventListener("submit", (event) => {
+          const form = event.target;
+          if (!(form instanceof HTMLFormElement) || !form.matches("[data-user-profile-form]")) return;
+          event.preventDefault();
+          if (this.profileUser) void this.saveUserProfile(String(this.profileUser.id));
+        });
+        this.profileHost.addEventListener("click", (event) => {
+          if (!(event.target instanceof Element)) return;
+          if (event.target.matches("[data-profile-backdrop]") || event.target.closest("[data-close-profile]")) {
+            this.closeUserDetailModal();
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          const dialog = this.profileHost?.querySelector(
+            "[data-profile-backdrop]:not([hidden]) [data-profile-dialog]"
+          );
+          if (!dialog) return;
+          if (event.key === "Escape") {
+            this.closeUserDetailModal();
+            return;
+          }
+          if (event.key !== "Tab") return;
+          const focusable = Array.from(dialog.querySelectorAll(
+            'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'
+          )).filter((element) => element.offsetParent !== null);
+          if (!focusable.length) {
+            event.preventDefault();
+            dialog.focus();
+            return;
+          }
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+            event.preventDefault();
+            first.focus();
+          }
+        });
+      }
+      return this.profileHost;
+    }
+    async fetchProfileJson(url) {
+      const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          ...token ? { Authorization: `Bearer ${token}` } : {}
+        }
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = result && typeof result === "object" ? result.detail : void 0;
+        throw new Error(typeof detail === "string" ? detail : `Kh\xF4ng th\u1EC3 t\u1EA3i h\u1ED3 s\u01A1 ng\u01B0\u1EDDi d\xF9ng (HTTP ${response.status}).`);
+      }
+      return result;
+    }
+    async openUserDetailModal(userId) {
+      const host = this.getUserProfileHost();
+      const requestId = ++this.profileRequestId;
+      this.profileUser = null;
+      this.profileCanEdit = false;
+      this.profileLoading = true;
+      this.profileSaving = false;
+      this.profileError = "";
+      this.renderUserProfileModal();
+      host.querySelector("[data-profile-dialog]")?.focus();
+      try {
+        const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
+        const headers = {
+          Accept: "application/json",
+          ...token ? { Authorization: `Bearer ${token}` } : {}
+        };
+        const [userResponse, departmentsResponse, groupsResponse] = await Promise.all([
+          fetch(`/api/v1/users/${encodeURIComponent(userId)}`, { headers }),
+          fetch("/api/v1/directories/departments", { headers }),
+          fetch("/api/v1/directories/project-groups", { headers })
+        ]);
+        const parseResponse = async (response, label) => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const detail = data && typeof data === "object" ? data.detail : void 0;
+            throw new Error(typeof detail === "string" ? detail : `Kh\xF4ng th\u1EC3 t\u1EA3i ${label} (HTTP ${response.status}).`);
+          }
+          return data;
+        };
+        const [user, departments, projectGroups] = await Promise.all([
+          parseResponse(userResponse, "h\u1ED3 s\u01A1 ng\u01B0\u1EDDi d\xF9ng"),
+          parseResponse(departmentsResponse, "danh s\xE1ch ph\xF2ng ban"),
+          parseResponse(groupsResponse, "danh s\xE1ch nh\xF3m d\u1EF1 \xE1n")
+        ]);
+        if (requestId !== this.profileRequestId) return;
+        if (!Array.isArray(departments) || !Array.isArray(projectGroups)) {
+          throw new Error("Danh m\u1EE5c ph\xF2ng ban ho\u1EB7c nh\xF3m d\u1EF1 \xE1n tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u kh\xF4ng h\u1EE3p l\u1EC7.");
+        }
+        this.profileUser = user;
+        this.profileCanEdit = !(user.role.toUpperCase() === "ADMIN" && (!this.currentUserId || String(user.id) !== this.currentUserId));
+        this.profileLoading = false;
+        this.renderUserProfileModal(departments, projectGroups);
+        host.querySelector("#profileFullName")?.focus();
+      } catch (error) {
+        if (requestId !== this.profileRequestId) return;
+        this.profileLoading = false;
+        this.profileError = error instanceof Error ? error.message : "Kh\xF4ng th\u1EC3 t\u1EA3i h\u1ED3 s\u01A1 ng\u01B0\u1EDDi d\xF9ng.";
+        this.renderUserProfileModal();
+      }
+    }
+    renderUserProfileModal(departments = [], projectGroups = []) {
+      const host = this.getUserProfileHost();
+      const user = this.profileUser;
+      const disabled = this.profileLoading || !this.profileCanEdit || this.profileSaving;
+      const status = user?.status.toUpperCase() === "INACTIVE" ? "LOCKED" : user?.status.toUpperCase() ?? "\u2014";
+      host.innerHTML = `
+      <div class="us2-user-profile-backdrop" data-profile-backdrop role="presentation">
+        <section class="us2-user-profile" data-profile-dialog role="dialog" aria-modal="true"
+          aria-labelledby="userProfileTitle" tabindex="-1">
+          <header class="us2-user-profile__header">
+            <h2 id="userProfileTitle">H\u1ED3 s\u01A1 Chi ti\u1EBFt Ng\u01B0\u1EDDi d\xF9ng</h2>
+            <button class="us2-user-profile__button" type="button" data-close-profile aria-label="\u0110\xF3ng h\u1ED3 s\u01A1">\u0110\xF3ng</button>
+          </header>
+          <form data-user-profile-form>
+            <div class="us2-user-profile__body">
+              ${this.profileLoading ? '<p role="status">\u0110ang t\u1EA3i h\u1ED3 s\u01A1...</p>' : ""}
+              ${this.profileError ? `<p class="us2-user-profile__error" role="alert">${escapeHtml4(this.profileError)}</p>` : ""}
+              ${user ? `
+                <section class="us2-user-profile__section" aria-labelledby="profileAccountHeading">
+                  <h3 id="profileAccountHeading">Th\xF4ng tin c\xE1 nh\xE2n &amp; t\xE0i kho\u1EA3n</h3>
+                  <label class="us2-user-profile__field">H\u1ECD v\xE0 t\xEAn
+                    <input id="profileFullName" name="full_name" type="text" minlength="2" maxlength="150"
+                      required value="${escapeHtml4(user.full_name ?? "")}" ${disabled ? "disabled" : ""}>
+                  </label>
+                  <label class="us2-user-profile__field">Email
+                    <input name="email" type="email" maxlength="150" required
+                      value="${escapeHtml4(user.email ?? "")}" ${disabled ? "disabled" : ""}>
+                  </label>
+                  <label class="us2-user-profile__field">T\xEAn \u0111\u0103ng nh\u1EADp
+                    <input value="${escapeHtml4(user.username)}" disabled>
+                  </label>
+                  <label class="us2-user-profile__field">M\xE3 nh\xE2n vi\xEAn
+                    <input value="${escapeHtml4(user.external_id ?? "\u2014")}" disabled>
+                  </label>
+                  <div class="us2-user-profile__field">Tr\u1EA1ng th\xE1i t\xE0i kho\u1EA3n
+                    <span class="us2-user-profile__status">${escapeHtml4(status)}</span>
+                  </div>
+                  <div class="us2-user-profile__field">Ng\xE0y t\u1EA1o
+                    <span class="us2-user-profile__status">${escapeHtml4(formatDate(user.created_at))}</span>
+                  </div>
+                </section>
+                <section class="us2-user-profile__section" aria-labelledby="profileOrganizationHeading">
+                  <h3 id="profileOrganizationHeading">T\u1ED5 ch\u1EE9c &amp; ch\u1EE9c danh</h3>
+                  <label class="us2-user-profile__field">Ph\xF2ng ban
+                    <select name="department_id" ${disabled ? "disabled" : ""}>
+                      <option value="">Ch\u01B0a ph\xE2n ph\xF2ng ban</option>
+                      ${departments.map((department) => `<option value="${department.id}"
+                        ${Number(user.department_id ?? user.department?.id) === Number(department.id) ? "selected" : ""}>
+                        ${escapeHtml4(department.name)}</option>`).join("")}
+                    </select>
+                  </label>
+                  <label class="us2-user-profile__field">Ch\u1EE9c v\u1EE5 / v\u1ECB tr\xED c\xF4ng vi\u1EC7c
+                    <input name="position" type="text" maxlength="100"
+                      value="${escapeHtml4(user.position ?? "")}" placeholder="V\xED d\u1EE5: Senior Developer"
+                      ${disabled ? "disabled" : ""}>
+                  </label>
+                  <div class="us2-user-profile__field" style="grid-column:1/-1">Nh\xF3m d\u1EF1 \xE1n tham gia
+                    <div class="us2-user-profile__groups">
+                      ${projectGroups.length ? projectGroups.map((group) => `
+                        <label class="us2-user-profile__group">
+                          <input type="checkbox" name="project_group_ids" value="${group.id}"
+                            ${user.project_groups.some((item) => Number(item.id) === Number(group.id)) ? "checked" : ""}
+                            ${disabled ? "disabled" : ""}>
+                          ${escapeHtml4(group.name)}
+                        </label>`).join("") : "<span>Ch\u01B0a c\xF3 nh\xF3m d\u1EF1 \xE1n.</span>"}
+                    </div>
+                  </div>
+                </section>
+                <section class="us2-user-profile__section" aria-labelledby="profilePermissionsHeading">
+                  <h3 id="profilePermissionsHeading">Vai tr\xF2 &amp; quy\u1EC1n h\u1EA1n h\u1EC7 th\u1ED1ng</h3>
+                  <label class="us2-user-profile__field">Vai tr\xF2 ch\xEDnh
+                    <select name="role" required ${disabled ? "disabled" : ""}>
+                      <option value="admin" ${user.role.toLowerCase() === "admin" ? "selected" : ""}>Qu\u1EA3n tr\u1ECB vi\xEAn</option>
+                      <option value="manager" ${user.role.toLowerCase() === "manager" ? "selected" : ""}>Qu\u1EA3n l\xFD</option>
+                      <option value="employee" ${user.role.toLowerCase() === "employee" ? "selected" : ""}>Nh\xE2n vi\xEAn</option>
+                    </select>
+                  </label>
+                  <label class="us2-user-profile__field">Gi\u1EDBi h\u1EA1n gi\u1EDD \u0111\u1EB7t ph\xF2ng / ng\xE0y
+                    <input name="daily_booking_hours_limit" type="number" min="0.5" max="24" step="0.5"
+                      value="${user.daily_booking_hours_limit ?? ""}" placeholder="Kh\xF4ng gi\u1EDBi h\u1EA1n"
+                      ${disabled ? "disabled" : ""}>
+                  </label>
+                  <label class="us2-user-profile__toggle">
+                    <input name="can_bypass_room_approval" type="checkbox"
+                      ${user.can_bypass_room_approval ? "checked" : ""} ${disabled ? "disabled" : ""}>
+                    \u0110\u01B0\u1EE3c b\u1ECF qua b\u01B0\u1EDBc duy\u1EC7t ph\xF2ng \u0111\u1EB7c bi\u1EC7t
+                  </label>
+                  ${!this.profileCanEdit ? '<p class="us2-user-profile__status">Kh\xF4ng th\u1EC3 ch\u1EC9nh s\u1EEDa h\u1ED3 s\u01A1 qu\u1EA3n tr\u1ECB vi\xEAn kh\xE1c.</p>' : ""}
+                </section>
+              ` : ""}
+            </div>
+            <footer class="us2-user-profile__footer">
+              <button class="us2-user-profile__button" type="button" data-close-profile>H\u1EE7y</button>
+              <button class="us2-user-profile__button us2-user-profile__button--save" type="submit"
+                ${!user || disabled ? "disabled" : ""}>${this.profileSaving ? "\u0110ang l\u01B0u..." : "L\u01B0u thay \u0111\u1ED5i"}</button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    `;
+    }
+    closeUserDetailModal() {
+      const userId = this.profileUser ? String(this.profileUser.id) : "";
+      this.profileRequestId += 1;
+      this.profileHost?.remove();
+      this.profileHost = null;
+      this.profileUser = null;
+      if (this.profileTrigger?.isConnected) {
+        this.profileTrigger.focus();
+      } else if (this.container) {
+        Array.from(this.container.querySelectorAll('[data-user-action="details"]')).find((button) => button.dataset.userId === userId)?.focus();
+      }
+      this.profileTrigger = null;
+    }
+    async saveUserProfile(userId) {
+      const host = this.profileHost;
+      const form = host?.querySelector("[data-user-profile-form]");
+      const user = this.profileUser;
+      if (!host || !form || !user || !this.profileCanEdit || !form.reportValidity()) return;
+      const formData = new FormData(form);
+      const limitValue = String(formData.get("daily_booking_hours_limit") ?? "").trim();
+      const projectGroupIds = formData.getAll("project_group_ids").map(Number);
+      const payload = {
+        full_name: String(formData.get("full_name") ?? "").trim(),
+        email: String(formData.get("email") ?? "").trim(),
+        department_id: String(formData.get("department_id") ?? "").trim() ? Number(formData.get("department_id")) : null,
+        position: String(formData.get("position") ?? "").trim() || null,
+        project_group_ids: projectGroupIds,
+        role: String(formData.get("role") ?? ""),
+        daily_booking_hours_limit: limitValue ? Number(limitValue) : null,
+        can_bypass_room_approval: formData.get("can_bypass_room_approval") === "on"
+      };
+      this.profileSaving = true;
+      this.profileError = "";
+      const saveButton = host.querySelector('[type="submit"]');
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "\u0110ang l\u01B0u...";
+      }
+      try {
+        const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
+        const response = await fetch(`/api/v1/users/${encodeURIComponent(userId)}`, {
+          method: "PUT",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            ...token ? { Authorization: `Bearer ${token}` } : {}
+          },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = result && typeof result === "object" ? result.detail : void 0;
+          throw new Error(typeof detail === "string" ? detail : `Kh\xF4ng th\u1EC3 l\u01B0u h\u1ED3 s\u01A1 ng\u01B0\u1EDDi d\xF9ng (HTTP ${response.status}).`);
+        }
+        this.closeUserDetailModal();
+        await this.loadUsers(this.query);
+      } catch (error) {
+        this.profileSaving = false;
+        this.profileError = error instanceof Error ? error.message : "Kh\xF4ng th\u1EC3 l\u01B0u h\u1ED3 s\u01A1 ng\u01B0\u1EDDi d\xF9ng.";
+        this.renderUserProfileModal();
+      }
+    }
+    canModifyUser(user) {
+      return user.role !== "ADMIN" || Boolean(this.currentUserId && user.id === this.currentUserId);
+    }
+    async updateUserStatus(user) {
+      await this.performAdminRequest(
+        `/api/v1/users/${encodeURIComponent(user.id)}`,
+        "PATCH",
+        { status: user.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" }
+      );
+    }
+    async resendInvitation(user) {
+      await this.performAdminRequest(
+        `/api/v1/users/${encodeURIComponent(user.id)}/resend-invite`,
+        "POST"
+      );
+    }
+    async performAdminRequest(url, method, body) {
+      this.error = "";
+      this.loading = true;
+      this.render();
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch(url, {
+          method,
+          headers: {
+            Accept: "application/json",
+            ...body ? { "Content-Type": "application/json" } : {},
+            ...token ? { Authorization: `Bearer ${token}` } : {}
+          },
+          ...body ? { body: JSON.stringify(body) } : {}
+        });
+        const result = await response.json();
+        if (!response.ok || result.email_sent === false) {
+          throw new Error(
+            typeof result.detail === "string" ? result.detail : result.message || `Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt t\xE0i kho\u1EA3n (HTTP ${response.status}).`
+          );
+        }
+        await this.loadUsers({ ...this.query, page: 1 });
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt t\xE0i kho\u1EA3n.";
+      } finally {
+        this.loading = false;
+        this.render();
+      }
     }
     async loadRestrictionCounts(users, requestId) {
       this.restrictionCounts.clear();
@@ -1437,13 +1911,9 @@ ${failures.join("\n")}`;
       this.assignPermissionModal ?? (this.assignPermissionModal = new AssignPermissionModal({
         service: this.permissionService,
         onSaved: (_user, permissions) => {
-          const user = this.result.items.find((item) => item.id === permissions.userId);
-          const selectedUser = this.selectedUsers.get(permissions.userId);
-          const updatedRole = permissions.systemRole === "ADMIN" ? "ADMIN" : permissions.canBook ? "BOOKER" : "ATTENDEE";
+          const updatedRole = permissions.systemRole === "ADMIN" ? "ADMIN" : "EMPLOYEE";
           this.service.updateMockUserRole(permissions.userId, updatedRole);
-          if (user) user.role = updatedRole;
-          if (selectedUser) selectedUser.role = updatedRole;
-          this.render();
+          void this.loadUsers(this.query);
         }
       }));
       return this.assignPermissionModal;
@@ -1498,6 +1968,12 @@ ${failures.join("\n")}`;
       onCreateUser
     }));
     return userListTable.mount(container);
+  }
+  function refreshUserListTable() {
+    if (!userListTable) {
+      throw new Error("The user list has not been mounted yet.");
+    }
+    return userListTable.refreshAfterCreate();
   }
   return __toCommonJS(dashboard_exports);
 })();

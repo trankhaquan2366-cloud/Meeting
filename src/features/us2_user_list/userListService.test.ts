@@ -3,7 +3,7 @@ import { UserListService } from './userListService';
 
 describe('UserListService', () => {
   it('returns mock users in pages of ten by default', async () => {
-    const service = new UserListService();
+    const service = new UserListService({ useMock: true });
     const firstPage = await service.getUsers();
     const secondPage = await service.getUsers({ page: 2 });
 
@@ -14,7 +14,7 @@ describe('UserListService', () => {
   });
 
   it('filters mock users by search text and role', async () => {
-    const service = new UserListService();
+    const service = new UserListService({ useMock: true });
     const result = await service.getUsers({ search: 'EXAMPLE.COM', role: 'ADMIN' });
 
     expect(result.items.length).toBeGreaterThan(0);
@@ -56,9 +56,44 @@ describe('UserListService', () => {
     expect(url.searchParams.get('page')).toBe('3');
     expect(url.searchParams.get('limit')).toBe('5');
     expect(url.searchParams.get('search')).toBe('Minh Tuấn');
-    expect(url.searchParams.get('role')).toBe('ADMIN');
+    expect(url.searchParams.get('role')).toBe('admin');
     expect(result.items[0].id).toBe('42');
     expect(result.items[0].fullName).toBe('Nguyễn Minh Tuấn');
+  });
+
+  it('accepts manager and unknown API roles', async () => {
+    const service = new UserListService({
+      fetcher: async () => new Response(JSON.stringify({
+        items: [
+          { id: 1, full_name: 'Quản lý', role: 'MANAGER', status: 'ACTIVE', created_at: '2025-01-08T09:15:00.000Z' },
+          { id: 2, full_name: 'Kiểm toán', role: 'AUDITOR', status: 'ACTIVE', created_at: '2025-01-08T09:15:00.000Z' },
+        ],
+        total: 2,
+      }), { status: 200 }),
+    });
+
+    const result = await service.getUsers();
+
+    expect(result.items.map(user => user.role)).toEqual(['MANAGER', 'AUDITOR']);
+  });
+
+  it('accepts locked account status from the API', async () => {
+    const service = new UserListService({
+      fetcher: async () => new Response(JSON.stringify({
+        items: [{
+          id: 3,
+          full_name: 'Tài khoản bị khóa',
+          role: 'EMPLOYEE',
+          status: 'LOCKED',
+          created_at: '2025-01-08T09:15:00.000Z',
+        }],
+        total: 1,
+      }), { status: 200 }),
+    });
+
+    const result = await service.getUsers();
+
+    expect(result.items[0].status).toBe('LOCKED');
   });
 
   it('rejects invalid pagination instead of silently returning mock results', async () => {

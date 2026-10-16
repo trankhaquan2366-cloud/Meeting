@@ -129,6 +129,9 @@ def test_admin_cancellation_analytics_filters_and_permissions(
         "cancelled_no_show": 1,
         "total_wasted_hours": 3.5,
     }
+    assert data["total_meetings"] >= data["summary"]["total_cancelled"]
+    assert data["cancellation_rate"] == 100.0
+    assert len(data["cancellation_records"]) == 3
     assert data["breakdown_by_reason"] == [
         {"reason": "Khách mời không thể tham dự", "cancel_count": 2},
         {

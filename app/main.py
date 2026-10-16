@@ -23,9 +23,21 @@ from app.models.notification import Notification
 from app.models.meeting_reminder import MeetingReminder
 from app.models.meeting import MeetingParticipant
 from app.models.chat import ChatSession, ChatMessage
+from app.models.project_group import ProjectGroup
 
 # 2. Routers & Security
-from app.routers import admin_analytics, admin_sync, auth, chatbot, equipment, meetings, notifications, rooms, users
+from app.routers import (
+    admin_analytics,
+    admin_sync,
+    auth,
+    chatbot,
+    directories,
+    equipment,
+    meetings,
+    notifications,
+    rooms,
+    users,
+)
 from app.core.security import authenticate_user
 from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
@@ -84,6 +96,21 @@ def _auto_migrate_schema():
                         "ADD COLUMN response_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
                     ))
                     print("✅ Đã tự động thêm cột 'response_status' vào bảng meeting_participants.")
+
+            if "users" in inspect(conn).get_table_names():
+                user_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("users")
+                }
+                if "daily_booking_hours_limit" not in user_columns:
+                    conn.execute(text(
+                        "ALTER TABLE users ADD COLUMN daily_booking_hours_limit FLOAT NULL"
+                    ))
+                if "can_bypass_room_approval" not in user_columns:
+                    conn.execute(text(
+                        "ALTER TABLE users ADD COLUMN can_bypass_room_approval "
+                        "BOOLEAN NOT NULL DEFAULT FALSE"
+                    ))
 
             if "notifications" in inspect(conn).get_table_names():
                 notification_columns = {
@@ -255,6 +282,7 @@ app.include_router(
 )
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(users.router, prefix="/api/v1", tags=["users-v1"])
+app.include_router(directories.router, prefix="/api/v1", tags=["directories-v1"])
 app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
 app.include_router(chatbot.router, prefix="/api/v1/chatbot", tags=["chatbot"])
 # 8. Endpoints Đăng nhập & Root

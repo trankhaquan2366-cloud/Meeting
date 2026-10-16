@@ -1,9 +1,11 @@
+import json
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -16,11 +18,42 @@ from app.models.user import User
 from app.schemas.chat import ChatMessageResponse, ChatSessionResponse
 from app.schemas.meeting import MeetingCreateRequest, MeetingResponse
 from app.services.chatbot_service import ChatbotService
-from app.services.gemini_service import BookingSlots, GeminiChatResponse
+from app.services.gemini_service import BookingSlots
 from app.services.meeting_service import MeetingService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+CHAT_STREAM_FALLBACK_MESSAGE = (
+    "Trợ lý AI hiện chưa kết nối được máy chủ. Bạn có thể bấm nút "
+    "[Tìm phòng 6 người] ở bên dưới hoặc chọn phòng trực tiếp từ danh sách."
+)
+
+
+def _chat_stream_fallback_events() -> list[dict[str, str]]:
+    response = {
+        "intent": "GENERAL_FAQ",
+        "message": CHAT_STREAM_FALLBACK_MESSAGE,
+        "bot_message": CHAT_STREAM_FALLBACK_MESSAGE,
+        "slots": {},
+        "preview_card": None,
+        "is_ready_for_preview": False,
+    }
+    return [
+        {
+            "event": "chunk",
+            "data": json.dumps(
+                {"type": "chunk", "text": CHAT_STREAM_FALLBACK_MESSAGE},
+                ensure_ascii=False,
+            ),
+        },
+        {
+            "event": "complete",
+            "data": json.dumps(
+                {"type": "complete", "response": response},
+                ensure_ascii=False,
+            ),
+        },
+    ]
 
 
 class ChatSessionCreateRequest(BaseModel):
@@ -138,29 +171,26 @@ def list_chat_messages(
 
 
 @router.post(
-    "/sessions/{session_id}/message",
-    response_model=GeminiChatResponse,
-    summary="Gửi tin nhắn tới trợ lý RoomSync",
+    "/sessions/{session_id}/message/stream",
+    summary="Gửi tin nhắn tới trợ lý RoomSync bằng SSE",
 )
-def send_chat_message(
+@router.post(
+    "/sessions/{session_id}/message",
+    summary="Gửi tin nhắn tới trợ lý RoomSync bằng SSE",
+)
+def stream_chat_message(
     session_id: int,
     payload: ChatUserMessageRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _get_owned_session(db, session_id, current_user.id)
     try:
-        _get_owned_session(db, session_id, current_user.id)
         available_rooms = MeetingService.get_all_active_rooms(db)
-        return ChatbotService.process_message(
-            db=db,
-            chat_session_id=session_id,
-            user_message=payload.content,
-            available_rooms=available_rooms,
-        )
     except SQLAlchemyError as exc:
         db.rollback()
         logger.exception(
-            "Database error while processing chat message for chat_session_id=%s user_id=%s",
+            "Database error while starting streamed chat for session_id=%s user_id=%s",
             session_id,
             current_user.id,
         )
@@ -168,6 +198,80 @@ def send_chat_message(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Trợ lý hiện không thể xử lý yêu cầu. Vui lòng thử lại sau.",
         ) from exc
+
+    async def content_generator():
+        yield ServerSentEvent(comment="keep-alive")
+        try:
+            async for event in ChatbotService.stream_message(
+                db=db,
+                chat_session_id=session_id,
+                user_message=payload.content,
+                available_rooms=available_rooms,
+            ):
+                if event.get("type") == "error" and (
+                    event.get("message") == CHAT_STREAM_FALLBACK_MESSAGE
+                    or "429" in str(event.get("message", ""))
+                    or "503" in str(event.get("message", ""))
+                ):
+                    for fallback_event in _chat_stream_fallback_events():
+                        yield fallback_event
+                    return
+                if event.get("type") == "room_widget":
+                    yield {
+                        "event": "room_widget",
+                        "data": json.dumps(event, ensure_ascii=False),
+                    }
+                    continue
+                event_type = event.get("type", "message")
+                yield {
+                    "event": event_type,
+                    "data": json.dumps(event, ensure_ascii=False),
+                }
+        except TimeoutError:
+            logger.warning(
+                "Chat stream timed out for session_id=%s user_id=%s",
+                session_id,
+                current_user.id,
+            )
+            for fallback_event in _chat_stream_fallback_events():
+                yield fallback_event
+        except Exception as exc:
+            if isinstance(exc, SQLAlchemyError):
+                db.rollback()
+            if getattr(exc, "code", None) in (429, 503) or any(
+                marker in str(exc).upper()
+                for marker in ("429", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE")
+            ):
+                logger.warning("Gemini upstream overload during SSE: %s", exc)
+                for fallback_event in _chat_stream_fallback_events():
+                    yield fallback_event
+                return
+            logger.error(f"SSE stream error: {exc}", exc_info=True)
+            err_data = json.dumps(
+                {
+                    "error": (
+                        "Đã xảy ra lỗi trong quá trình xử lý luồng. "
+                        "Vui lòng thử lại."
+                    ),
+                    "message": (
+                        "Đã xảy ra lỗi trong quá trình xử lý luồng. "
+                        "Vui lòng thử lại."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+            yield {"event": "error", "data": err_data}
+
+    return EventSourceResponse(
+        content_generator(),
+        ping=5,
+        sep="\n",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

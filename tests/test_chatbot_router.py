@@ -1,6 +1,8 @@
+import json
 from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sse_starlette.sse import AppStatus
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,18 @@ from app.services.gemini_service import (
     GeminiService,
 )
 from tests.helpers import _auth_header, _create_room, _create_user, _make_token
+
+
+def _stream_payload(response, event_type):
+    normalized = response.text.replace("\r\n", "\n")
+    for block in normalized.split("\n\n"):
+        lines = block.splitlines()
+        if f"event: {event_type}" in lines:
+            data = "\n".join(
+                line[6:] for line in lines if line.startswith("data: ")
+            )
+            return json.loads(data)
+    raise AssertionError(f"Missing {event_type!r} SSE event.")
 
 
 def test_create_and_list_chat_sessions(client: TestClient, db_session: Session):
@@ -80,10 +94,15 @@ def test_send_chat_message_uses_active_rooms_and_service(
         missing_fields=["booking_date", "start_time", "duration_minutes", "capacity", "room_id"],
         bot_message="Bạn muốn họp vào ngày nào?",
     )
+    async def fake_stream_message(**kwargs):
+        calls.append(kwargs)
+        yield {
+            "type": "complete",
+            "response": response_payload.model_dump(mode="json"),
+        }
+
     monkeypatch.setattr(
-        chatbot_router.ChatbotService,
-        "process_message",
-        lambda **kwargs: calls.append(kwargs) or response_payload,
+        chatbot_router.ChatbotService, "stream_message", fake_stream_message
     )
 
     response = client.post(
@@ -93,9 +112,11 @@ def test_send_chat_message_uses_active_rooms_and_service(
     )
 
     assert response.status_code == 200
-    assert response.json()["intent"] == "BOOK_ROOM"
-    assert response.json()["message"] == response.json()["bot_message"]
-    assert response.json()["preview_card"] is None
+    assert response.headers["content-type"].startswith("text/event-stream")
+    response_data = _stream_payload(response, "complete")["response"]
+    assert response_data["intent"] == "BOOK_ROOM"
+    assert response_data["message"] == response_data["bot_message"]
+    assert response_data["preview_card"] is None
     assert calls[0]["chat_session_id"] == chat_session.id
     assert calls[0]["user_message"] == "Tôi muốn đặt phòng họp"
     assert [item.id for item in calls[0]["available_rooms"]] == [room.id]
@@ -106,6 +127,8 @@ def test_roomsync_booking_message_persists_and_confirms_meeting(
     db_session: Session,
     monkeypatch,
 ):
+    AppStatus.should_exit_event = None
+    AppStatus.should_exit = False
     user = _create_user(db_session, "roomsync-e2e-owner")
     room = _create_room(db_session, "RoomSync E2E Room")
     chat_session = ChatSession(user_id=user.id, title="RoomSync E2E")
@@ -117,17 +140,19 @@ def test_roomsync_booking_message_persists_and_confirms_meeting(
         def __init__(self):
             pass
 
-        def generate_chat_response(
+        async def stream_chat_response(
             self,
-            user_message,
+            messages,
             history,
-            current_time,
-            available_rooms,
+            tool_executor=None,
+            room_tool_executor=None,
         ):
+            user_message = messages["current_user_message"]
+            current_time = datetime.fromisoformat(messages["current_time"])
             if user_message == "Đặt cho tôi 1 phòng họp vào 17h30 chiều nay":
                 assert not history
                 booking_dates["today"] = current_time.date()
-                return GeminiChatResponse(
+                response = GeminiChatResponse(
                     intent="BOOK_ROOM",
                     slots=BookingSlots(
                         booking_date=booking_dates["today"].isoformat(),
@@ -143,24 +168,31 @@ def test_roomsync_booking_message_persists_and_confirms_meeting(
                         "Bạn muốn họp về chủ đề gì, trong bao lâu và có bao nhiêu người?"
                     ),
                 )
-
-            assert history
-            booking_dates["tomorrow"] = current_time.date() + timedelta(days=1)
-            return GeminiChatResponse(
-                intent="BOOK_ROOM",
-                slots=BookingSlots(
-                    title="Lập kế hoạch",
-                    booking_date=booking_dates["tomorrow"].isoformat(),
-                    start_time="17:30",
-                    duration_minutes=60,
-                    capacity=5,
-                    room_id=available_rooms[0].id,
-                    room_name=available_rooms[0].name,
+            else:
+                assert history
+                booking_dates["tomorrow"] = current_time.date() + timedelta(days=1)
+                response = GeminiChatResponse(
+                    intent="BOOK_ROOM",
+                    slots=BookingSlots(
+                        title="Lập kế hoạch",
+                        booking_date=booking_dates["tomorrow"].isoformat(),
+                        start_time="17:30",
+                        duration_minutes=60,
+                        capacity=5,
+                        room_id=room.id,
+                        room_name=room.name,
+                    ),
+                    missing_fields=[],
+                    is_ready_for_preview=True,
+                    bot_message="Đã đủ thông tin. Vui lòng kiểm tra và xác nhận.",
+                )
+            yield {
+                "type": "chunk",
+                "text": json.dumps(
+                    response.model_dump(mode="json"),
+                    ensure_ascii=False,
                 ),
-                missing_fields=[],
-                is_ready_for_preview=True,
-                bot_message="Đã đủ thông tin. Vui lòng kiểm tra và xác nhận.",
-            )
+            }
 
     monkeypatch.setattr(chatbot_service, "GeminiService", FakeGeminiService)
     headers = _auth_header(_make_token(user))
@@ -173,13 +205,15 @@ def test_roomsync_booking_message_persists_and_confirms_meeting(
     )
 
     assert initial_response.status_code == 200
-    initial_data = initial_response.json()
+    initial_data = _stream_payload(initial_response, "complete")["response"]
     assert initial_data["intent"] == "BOOK_ROOM"
     assert initial_data["slots"]["start_time"] == "17:30"
     assert initial_data["slots"]["booking_date"] == booking_dates["today"].isoformat()
     assert initial_data["preview_card"] is None
     assert initial_data["message"] == initial_data["bot_message"]
 
+    AppStatus.should_exit_event = None
+    AppStatus.should_exit = False
     follow_up_response = client.post(
         send_url,
         json={"content": "Ngày mai, cuộc họp lập kế hoạch 60 phút cho 5 người."},
@@ -187,7 +221,7 @@ def test_roomsync_booking_message_persists_and_confirms_meeting(
     )
 
     assert follow_up_response.status_code == 200
-    follow_up_data = follow_up_response.json()
+    follow_up_data = _stream_payload(follow_up_response, "complete")["response"]
     assert follow_up_data["intent"] == "BOOK_ROOM"
     assert (
         follow_up_data["slots"]["booking_date"]

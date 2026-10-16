@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.equipment import Equipment
+from app.models.equipment import Equipment, MeetingEquipment
 from app.models.meeting import Meeting
 from app.routers import meetings as meetings_router
 from tests.helpers import _auth_header, _create_room, _create_user, _make_token
@@ -177,9 +177,82 @@ def test_create_meeting_rejects_equipment_quantity_over_available_stock(
         headers=_auth_header(_make_token(organizer)),
     )
 
-    assert response.status_code == 400
-    assert f"chỉ còn {stock} chiếc khả dụng" in response.json()["detail"]
+    assert response.status_code == 409
+    warning = response.json()["detail"]["warnings"][0]
+    assert warning["type"] == "EquipmentShortageWarning"
+    assert warning["available_qty"] == stock
     assert db_session.query(Meeting).count() == 0
+
+
+def test_validation_warnings_require_force_book_confirmation(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "create-force-organizer")
+    reservation_owner = _create_user(db_session, "create-force-reservation-owner")
+    room = _create_room(db_session, "Create force warning room")
+    room.capacity = 1
+    storage_room = _create_room(db_session, "Create force storage room")
+    equipment = Equipment(
+        name="Create force projector",
+        code="CREATE-EQ-FORCE",
+        total_qty=1,
+        is_active=True,
+    )
+    db_session.add(equipment)
+    db_session.flush()
+    start, end = _future_window()
+    reservation = Meeting(
+        title="Reserved projector",
+        room_id=storage_room.id,
+        organizer_id=reservation_owner.id,
+        start_time=start,
+        end_time=end,
+        status="scheduled",
+    )
+    db_session.add(reservation)
+    db_session.flush()
+    db_session.add(
+        MeetingEquipment(
+            meeting_id=reservation.id,
+            equipment_id=equipment.id,
+            quantity=1,
+        )
+    )
+    db_session.commit()
+
+    payload = {
+        "title": "Meeting with warnings",
+        "meeting_type": "offline",
+        "room_id": room.id,
+        "start_time": start.isoformat(),
+        "end_time": end.isoformat(),
+        "external_guest_count": 2,
+        "equipments": [{"equipment_id": equipment.id, "quantity": 1}],
+    }
+    headers = _auth_header(_make_token(organizer))
+    validation = client.post(
+        "/api/meetings/validate",
+        json=payload,
+        headers=headers,
+    )
+    assert validation.status_code == 200
+    warnings = validation.json()["warnings"]
+    assert {warning["type"] for warning in warnings} == {
+        "OverCapacityWarning",
+        "EquipmentShortageWarning",
+    }
+
+    rejected = client.post("/api/meetings/book", json=payload, headers=headers)
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["warnings"] == warnings
+    assert db_session.query(Meeting).filter(Meeting.title == payload["title"]).count() == 0
+
+    accepted = client.post(
+        "/api/meetings/book",
+        json={**payload, "force_book": True},
+        headers=headers,
+    )
+    assert accepted.status_code == 201
 
 
 def test_create_meeting_rejects_negative_or_fractional_equipment_quantity(

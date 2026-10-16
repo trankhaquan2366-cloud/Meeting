@@ -15,6 +15,7 @@ def get_available_rooms(
     occupied_room_ids = (
         db.query(Meeting.room_id)
         .filter(
+            Meeting.room_id.isnot(None),
             func.upper(Meeting.status).notin_(
                 ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
             ),

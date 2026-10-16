@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import verify_password
+from app.models.department import Department
+from app.models.project_group import ProjectGroup
 from app.models.user import User
 from tests.helpers import (
     _add_participant,
@@ -42,7 +44,16 @@ def test_admin_creates_user_with_generated_password(
 ):
     from app.routers import users as users_router
 
-    monkeypatch.setattr(users_router.secrets, "token_urlsafe", lambda _: "one-time-secret")
+    monkeypatch.setattr(
+        users_router,
+        "generate_temporary_password",
+        lambda: "one-time-secret",
+    )
+    monkeypatch.setattr(
+        users_router,
+        "send_account_activation_email",
+        lambda *args: True,
+    )
     admin = _create_user(db_session, username="create-user-admin", role="admin")
     response = client.post(
         "/api/users/",
@@ -59,7 +70,9 @@ def test_admin_creates_user_with_generated_password(
     assert result["email"] == "new.staff@example.test"
     assert result["full_name"] == "Nhân viên mới"
     assert result["role"] == "employee"
-    assert result["is_active"] is True
+    assert result["is_active"] is False
+    assert result["status"] == "PENDING"
+    assert result["email_sent"] is True
     assert result["username"] == "new.staff"
     assert "hashed_password" not in result
     assert "temporary_password" not in result
@@ -67,6 +80,43 @@ def test_admin_creates_user_with_generated_password(
 
     created_user = db_session.query(User).filter_by(id=result["id"]).one()
     assert verify_password("one-time-secret", created_user.hashed_password)
+
+
+def test_admin_create_user_assigns_optional_department_and_project_groups(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+):
+    from app.routers import users as users_router
+
+    monkeypatch.setattr(users_router, "send_account_activation_email", lambda *args: True)
+    admin = _create_user(db_session, username="create-user-directory-admin", role="admin")
+    department = Department(name="User creation department", code="UCD")
+    project_groups = [
+        ProjectGroup(name="User creation project A", code="UCPA"),
+        ProjectGroup(name="User creation project B", code="UCPB"),
+    ]
+    db_session.add_all([department, *project_groups])
+    db_session.commit()
+
+    response = client.post(
+        "/api/v1/users/",
+        json={
+            "full_name": "Nhân viên có phân công",
+            "email": "assigned.staff@example.test",
+            "role": "employee",
+            "department_id": department.id,
+            "project_group_ids": [group.id for group in project_groups],
+        },
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 201
+    created_user = db_session.query(User).filter_by(email="assigned.staff@example.test").one()
+    assert created_user.department_id == department.id
+    assert {group.id for group in created_user.project_groups} == {
+        group.id for group in project_groups
+    }
 
 
 def test_admin_create_user_rejects_duplicate_email_and_invalid_role(
@@ -127,7 +177,9 @@ def test_admin_create_user_accepts_username_and_password_without_returning_passw
     assert "password" not in created.json()
     assert "hashed_password" not in created.json()
     created_user = db_session.query(User).filter_by(email=payload["email"]).one()
-    assert verify_password(payload["password"], created_user.hashed_password)
+    assert created_user.status == "PENDING"
+    assert created_user.is_active is False
+    assert not verify_password(payload["password"], created_user.hashed_password)
     assert duplicate_username.status_code == 400
 
 
@@ -179,12 +231,13 @@ def test_user_directory_returns_frontend_fields_and_allows_null_email(
     assert response.status_code == 200
     users = {user["id"]: user for user in response.json()}
     legacy_response = users[legacy_user.id]
-    assert legacy_response == {
-        "id": legacy_user.id,
-        "full_name": legacy_user.full_name,
-        "email": None,
-        "username": legacy_user.username,
-    }
+    assert legacy_response["id"] == legacy_user.id
+    assert legacy_response["full_name"] == legacy_user.full_name
+    assert legacy_response["email"] is None
+    assert legacy_response["username"] == legacy_user.username
+    assert legacy_response["role"] == "employee"
+    assert legacy_response["status"] == "ACTIVE"
+    assert "created_at" in legacy_response
 
 
 def test_user_directory_search_and_frequent_users(

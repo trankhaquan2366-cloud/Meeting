@@ -3,7 +3,7 @@ import { PermissionService } from './permissionService';
 
 describe('PermissionService', () => {
   it('persists system roles and operation permissions in mock mode', async () => {
-    const service = new PermissionService();
+    const service = new PermissionService({ useMock: true });
 
     const updated = await service.updateUserPermissions('permission-test-user', {
       systemRole: 'ADMIN',
@@ -22,7 +22,7 @@ describe('PermissionService', () => {
   });
 
   it('rejects unsupported role values', async () => {
-    const service = new PermissionService();
+    const service = new PermissionService({ useMock: true });
 
     await expect(service.updateUserPermissions('permission-invalid-role', {
       systemRole: 'BOOKER' as 'ADMIN',

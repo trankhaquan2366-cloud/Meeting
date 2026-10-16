@@ -16,6 +16,7 @@ from app.schemas.meeting import (
     MeetingCheckOutRequest,
     MeetingCancelRequest,
     MeetingCreateRequest,
+    MeetingExtendRequest,
     MeetingParticipationResponse,
     MeetingResponse,
     RSVPRequest,
@@ -79,6 +80,22 @@ def _schedule_cancellation_emails(
 )
 def list_rooms(db: Session = Depends(get_db)):
     return MeetingService.get_all_active_rooms(db)
+
+
+@router.post(
+    "/validate",
+    summary="Kiểm tra khả dụng trước khi tạo cuộc họp",
+)
+def validate_meeting_booking(
+    payload: MeetingCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.validate_meeting_booking(
+        db=db,
+        payload=payload,
+        organizer_id=current_user.id,
+    )
 
 
 @router.post(
@@ -187,6 +204,43 @@ def check_out_meeting(
     current_user: User = Depends(get_current_user),
 ):
     return MeetingService.check_out_meeting(db, meeting_id, payload.qr_token, current_user)
+
+
+@router.post(
+    "/{meeting_id}/extend",
+    response_model=MeetingResponse,
+    summary="Gia hạn cuộc họp đang diễn ra",
+)
+def extend_meeting(
+    meeting_id: int,
+    payload: MeetingExtendRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        result = MeetingService.extend_meeting(
+            db=db,
+            meeting_id=meeting_id,
+            organizer_id=current_user.id,
+            extend_minutes=payload.extend_minutes,
+        )
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Database error while extending meeting_id=%s user_id=%s",
+            meeting_id,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể gia hạn cuộc họp do lỗi cơ sở dữ liệu.",
+        ) from exc
+    if isinstance(result, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=result,
+        )
+    return result
 
 
 @router.get(

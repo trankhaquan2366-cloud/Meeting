@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (email) localStorage.setItem('user_email', email);
                 if (result.user_name) localStorage.setItem('user_name', result.user_name);
                 if (result.role) localStorage.setItem('role', result.role);
+                if (result.user_id) localStorage.setItem('user_id', String(result.user_id));
 
                 // 👉 LƯU THÊM EMAIL THẬT TỪ DATABASE VÀO LOCALSTORAGE
                 localStorage.setItem('user_email', result.email || username);

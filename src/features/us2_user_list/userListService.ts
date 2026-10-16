@@ -12,7 +12,7 @@ export interface UserListServiceOptions {
   fetcher?: typeof fetch;
 }
 
-const DEFAULT_API_URL = 'http://localhost:8000/api/users/';
+const DEFAULT_API_URL = '/api/v1/users/';
 
 const MOCK_USERS: UserListItem[] = [
   { id: 'USR-001', fullName: 'Nguyễn Minh Tuấn', email: 'tuan.nguyen@example.com', role: 'ADMIN', status: 'ACTIVE', createdAt: '2025-01-08T09:15:00.000Z' },
@@ -54,9 +54,9 @@ function normalizeRole(value: unknown): UserListRole {
   if (typeof value !== 'string') {
     throw new Error('User list API returned a user without a valid role.');
   }
-  const role = value.toUpperCase();
-  if (role === 'ADMIN' || role === 'BOOKER' || role === 'ATTENDEE') return role;
-  throw new Error(`User list API returned an unsupported role: ${value}.`);
+  const role = value.trim();
+  if (!role) throw new Error('User list API returned a user without a valid role.');
+  return role.toUpperCase();
 }
 
 function normalizeStatus(value: unknown): UserListStatus {
@@ -64,7 +64,14 @@ function normalizeStatus(value: unknown): UserListStatus {
     throw new Error('User list API returned a user without a valid status.');
   }
   const status = value.toUpperCase();
-  if (status === 'ACTIVE' || status === 'INACTIVE') return status;
+  if (
+    status === 'ACTIVE'
+    || status === 'INACTIVE'
+    || status === 'PENDING'
+    || status === 'LOCKED'
+  ) {
+    return status;
+  }
   throw new Error(`User list API returned an unsupported status: ${value}.`);
 }
 
@@ -75,14 +82,14 @@ function normalizeUser(value: unknown): UserListItem {
 
   const record = value as Record<string, unknown>;
   const id = record.id;
-  const fullName = record.fullName ?? record.full_name;
+  const fullName = record.fullName ?? record.full_name ?? record.username;
   const email = record.email;
   const createdAt = record.createdAt ?? record.created_at;
 
   if (
     (typeof id !== 'string' && typeof id !== 'number')
     || typeof fullName !== 'string'
-    || typeof email !== 'string'
+    || (email !== null && email !== undefined && typeof email !== 'string')
     || typeof createdAt !== 'string'
     || Number.isNaN(Date.parse(createdAt))
   ) {
@@ -92,14 +99,19 @@ function normalizeUser(value: unknown): UserListItem {
   return {
     id: String(id),
     fullName,
-    email,
+    email: typeof email === 'string' ? email : '',
     role: normalizeRole(record.role),
     status: normalizeStatus(record.status),
     createdAt,
   };
 }
 
-function normalizeResult(payload: unknown, page: number, limit: number): GetUsersResult {
+function normalizeResult(
+  payload: unknown,
+  page: number,
+  limit: number,
+  roleForApi?: string,
+): GetUsersResult {
   const record = Array.isArray(payload) ? { items: payload } : payload;
   if (!record || typeof record !== 'object') {
     throw new Error('User list API returned an invalid response.');
@@ -112,6 +124,18 @@ function normalizeResult(payload: unknown, page: number, limit: number): GetUser
   }
 
   const items = rawItems.map(normalizeUser);
+  if (Array.isArray(payload)) {
+    const filtered = items.filter(
+      user => !roleForApi || user.role === roleForApi.toUpperCase(),
+    );
+    const start = (page - 1) * limit;
+    return {
+      items: filtered.slice(start, start + limit),
+      total: filtered.length,
+      page,
+      limit,
+    };
+  }
   const total = response.total ?? items.length;
   if (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0) {
     throw new Error('User list API returned an invalid total count.');
@@ -132,7 +156,7 @@ export class UserListService {
 
   constructor(options: UserListServiceOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_API_URL;
-    this.useMock = options.useMock ?? true;
+    this.useMock = options.useMock ?? false;
     this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -140,7 +164,7 @@ export class UserListService {
     const page = positiveInteger(query.page, 1, 'page');
     const limit = positiveInteger(query.limit, 10, 'limit');
 
-    if (query.role && !(['ADMIN', 'BOOKER', 'ATTENDEE'] as UserListRole[]).includes(query.role)) {
+    if (query.role && !(['ADMIN', 'EMPLOYEE', 'BOOKER', 'ATTENDEE', 'MANAGER'] as UserListRole[]).includes(query.role)) {
       throw new RangeError(`Unsupported role filter: ${query.role}.`);
     }
 
@@ -153,20 +177,31 @@ export class UserListService {
 
     if (this.useMock) return this.getMockUsers({ ...normalizedQuery, page, limit });
 
-    const url = new URL(this.baseUrl);
+    const url = new URL(
+      this.baseUrl,
+      typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+    );
     url.searchParams.set('page', String(page));
     url.searchParams.set('limit', String(limit));
     if (normalizedQuery.search) url.searchParams.set('search', normalizedQuery.search);
-    if (normalizedQuery.role) url.searchParams.set('role', normalizedQuery.role);
+    const roleForApi = normalizedQuery.role === 'BOOKER' || normalizedQuery.role === 'ATTENDEE'
+      ? 'employee'
+      : normalizedQuery.role?.toLowerCase();
+    if (roleForApi) url.searchParams.set('role', roleForApi);
+
+    const token = typeof localStorage === 'undefined' ? '' : localStorage.getItem('token') ?? '';
 
     const response = await this.fetcher(url.toString(), {
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
     });
     if (!response.ok) {
       throw new Error(`Unable to load users (HTTP ${response.status}).`);
     }
 
-    return normalizeResult(await response.json(), page, limit);
+    return normalizeResult(await response.json(), page, limit, roleForApi);
   }
 
   public updateMockUserRole(userId: string, role: UserListRole): void {

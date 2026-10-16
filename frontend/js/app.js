@@ -2,8 +2,21 @@
    GLOBAL CONFIGURATION & STATE MANAGEMENT
    ========================================================================== */
 const API_BASE = window.API_URL || "http://localhost:8000/api";
+const ROOM_THUMBNAILS = [
+    'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1577412647305-991150c7d163?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1431540015161-0bf868a2d407?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1568992687947-868a62a9f521?auto=format&fit=crop&w=800&q=80',
+];
 let allRooms = [];
 let myBookings = [];
+let allMeetings = [];
+let overviewRoomsLoaded = false;
+let overviewMeetingsLoaded = false;
 let bookingCalendarView = 'month';
 let bookingCalendarDate = new Date();
 let bookingSelectedDate = new Date();
@@ -27,6 +40,7 @@ let activeRoomQrToken = '';
 let activePresenterQrToken = '';
 let pendingCancelMeetingId = null;
 let userListMountPromise = null;
+let userDirectoryLoadPromise = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
@@ -68,6 +82,33 @@ function escapeHtml(value) {
 document.addEventListener('DOMContentLoaded', async () => {
     const token = getAuthToken();
     const isMeetingPreview = new URLSearchParams(location.search).get('preview') === 'meeting';
+    document.getElementById('adminUserProjectGroups')?.addEventListener('change', event => {
+        const select = event.currentTarget;
+        if (!(select instanceof HTMLSelectElement)) return;
+        const hasGroups = Array.from(select.selectedOptions).some(option => option.value !== '');
+        select.options[0].selected = !hasGroups;
+    });
+    document.getElementById('btnRunUsageReport')?.addEventListener('click', loadUsageReportData);
+    document.getElementById('btnFilterCancellation')?.addEventListener('click', loadCancelReportData);
+    document.getElementById('btn-open-executive-modal')?.addEventListener('click', openExecutiveReportModal);
+    document.getElementById('btn-close-executive-modal')?.addEventListener('click', closeExecutiveReportModal);
+    document.getElementById('btn-export-executive-excel')?.addEventListener(
+        'click',
+        () => exportExecutiveReport('excel'),
+    );
+    document.getElementById('btn-export-executive-pdf')?.addEventListener(
+        'click',
+        () => exportExecutiveReport('pdf'),
+    );
+    document.getElementById('executiveReportModal')?.addEventListener('click', event => {
+        if (event.target === event.currentTarget) closeExecutiveReportModal();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape'
+            && document.getElementById('executiveReportModal')?.getAttribute('aria-hidden') === 'false') {
+            closeExecutiveReportModal();
+        }
+    });
     if (!token && !isMeetingPreview) {
         window.location.href = 'index.html';
         return;
@@ -142,20 +183,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const btn2 = document.getElementById('addRoomBtnRooms');
         const addEqBtn = document.getElementById('addEquipmentBtn');
         const adminEqSection = document.getElementById('adminEquipmentSection');
-        const cancellationNav = document.getElementById('navCancellationAnalytics');
         const userManagementNav = document.getElementById('navUserManagement');
         if (btn1) btn1.style.display = 'block';
         if (btn2) btn2.style.display = 'block';
         if (addEqBtn) addEqBtn.style.display = 'block';
         if (adminEqSection) adminEqSection.style.display = 'block';
-        if (cancellationNav) cancellationNav.style.display = 'flex';
         if (userManagementNav) userManagementNav.style.display = 'flex';
     } else {
         const navReport = document.getElementById('navReport');
-        const cancellationNav = document.getElementById('navCancellationAnalytics');
+        const cancellationTab = document.getElementById('report-tab-cancel');
         const userManagementNav = document.getElementById('navUserManagement');
         if (navReport) navReport.style.display = 'none';
-        if (cancellationNav) cancellationNav.style.display = 'none';
+        if (cancellationTab) cancellationTab.hidden = true;
         if (userManagementNav) userManagementNav.style.display = 'none';
     }
 
@@ -164,6 +203,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         fetchMyBookings();
         if (isAdmin) populateCancellationRoomFilter();
     });
+    window.setInterval(() => {
+        updateOverviewKPICards(
+            overviewRoomsLoaded ? allRooms : null,
+            overviewMeetingsLoaded ? allMeetings : null,
+        );
+    }, 60_000);
     initializeNotifications();
     initializeRsvpActions();
     setDefaultEquipmentAvailabilityTimes();
@@ -176,8 +221,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const reportStart = document.getElementById("reportStartDate");
     if (reportEnd && reportStart) {
         const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-        reportEnd.value = now.toISOString().slice(0, 16);
-        reportStart.value = thirtyDaysAgo.toISOString().slice(0, 16);
+        const localDate = value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+        reportEnd.value = localDate(now);
+        reportStart.value = localDate(thirtyDaysAgo);
         loadRoomsForReportFilter();
     }
     const cancellationStartDate = document.getElementById('cancellationStartDate');
@@ -256,7 +302,7 @@ function switchToOverview() {
 }
 
 function switchMainTab(tabName, el) {
-    if ((tabName === 'cancellations' || tabName === 'users') && !isCurrentUserAdmin()) {
+    if (tabName === 'users' && !isCurrentUserAdmin()) {
         showAppToast('Bạn không có quyền truy cập mục quản trị này.', 'error');
         return;
     }
@@ -300,13 +346,7 @@ function switchMainTab(tabName, el) {
         const view = document.getElementById('viewReport');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
-        fetchRoomUsageReport();
-    } else if (tabName === 'cancellations') {
-        if (String(localStorage.getItem('role') || '').trim().toLowerCase() !== 'admin') return;
-        const view = document.getElementById('viewCancellationAnalytics');
-        if (view) view.style.display = 'block';
-        if (searchContainer) searchContainer.style.display = 'none';
-        fetchCancellationAnalytics();
+        switchReportTab('usage');
     } else if (tabName === 'settings') {
         const view = document.getElementById('viewSettings');
         if (view) view.style.display = 'block';
@@ -368,8 +408,68 @@ function showUserManagementSection(section) {
             });
         }
     } else {
+        void loadAdminUserDirectories();
         document.getElementById('adminUserFullName')?.focus();
     }
+}
+
+async function fetchAdminUserDirectory(path, label) {
+    const token = getAuthToken();
+    const response = await fetchAPI(path, {
+        headers: {
+            Accept: 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+    });
+    if (!response.ok) {
+        throw new Error(`Không thể tải danh sách ${label} (HTTP ${response.status}).`);
+    }
+
+    const records = await response.json();
+    if (!Array.isArray(records)) {
+        throw new Error(`Danh sách ${label} trả về dữ liệu không hợp lệ.`);
+    }
+    return records;
+}
+
+function populateAdminUserSelect(selectId, records, label) {
+    const select = document.getElementById(selectId);
+    if (!(select instanceof HTMLSelectElement)) return;
+
+    while (select.options.length > 1) select.remove(1);
+    for (const record of records) {
+        const id = Number(record?.id);
+        const name = typeof record?.name === 'string' ? record.name.trim() : '';
+        if (!Number.isSafeInteger(id) || id < 1 || !name) {
+            throw new Error(`Danh sách ${label} chứa mục không hợp lệ.`);
+        }
+
+        const option = document.createElement('option');
+        option.value = String(id);
+        option.textContent = name;
+        select.add(option);
+    }
+}
+
+function loadAdminUserDirectories() {
+    if (userDirectoryLoadPromise) return userDirectoryLoadPromise;
+
+    userDirectoryLoadPromise = Promise.all([
+        fetchAdminUserDirectory('/api/v1/directories/departments', 'phòng ban'),
+        fetchAdminUserDirectory('/api/v1/directories/project-groups', 'nhóm dự án'),
+    ]).then(([departments, projectGroups]) => {
+        populateAdminUserSelect('adminUserDepartment', departments, 'phòng ban');
+        populateAdminUserSelect('adminUserProjectGroups', projectGroups, 'nhóm dự án');
+    }).catch(error => {
+        console.error('Không thể tải danh mục phòng ban và nhóm dự án:', error);
+        showAppToast(
+            error instanceof Error ? error.message : 'Không thể tải danh sách phòng ban và nhóm dự án.',
+            'error',
+        );
+    }).finally(() => {
+        userDirectoryLoadPromise = null;
+    });
+    return userDirectoryLoadPromise;
 }
 
 function isCurrentUserAdmin() {
@@ -1011,9 +1111,8 @@ function buildViTimeOptions(selectEl, defaultTimeStr) {
     if (!selectEl) return;
     selectEl.innerHTML = '';
 
-    for (let h = 7; h <= 21; h++) {
+    for (let h = 0; h <= 23; h++) {
         for (let m of ['00', '30']) {
-            if (h === 21 && m === '30') continue;
             const valueStr = `${String(h).padStart(2, '0')}:${m}`;
             const opt = document.createElement('option');
             opt.value = valueStr;
@@ -1074,15 +1173,40 @@ function setDefaultBookingTimes() {
 /* ==========================================================================
    ROOM MANAGEMENT & FETCHING
    ========================================================================== */
+async function fetchMeetings() {
+    try {
+        const response = await fetchAPI(`${API_BASE}/meetings/`, {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+        });
+        if (handleUnauthorizedResponse(response)) return;
+        if (!response.ok) throw new Error(`Không thể tải danh sách cuộc họp (HTTP ${response.status}).`);
+        const meetings = await response.json();
+        if (!Array.isArray(meetings)) throw new Error('Dữ liệu danh sách cuộc họp không hợp lệ.');
+        allMeetings = meetings;
+        overviewMeetingsLoaded = true;
+        updateOverviewKPICards(overviewRoomsLoaded ? allRooms : null, allMeetings);
+        if (overviewRoomsLoaded) {
+            applyFilters();
+        }
+    } catch (error) {
+        console.error('Lỗi lấy dữ liệu KPI cuộc họp:', error);
+        updateOverviewKPICards(overviewRoomsLoaded ? allRooms : null, null);
+    }
+}
+
 async function fetchRooms(isAdmin) {
     try {
         const token = getAuthToken();
-        const res = await fetchAPI(`${API_BASE}/rooms/`, {
+        const roomsEndpoint = isAdmin ? `${API_BASE}/rooms/all-status/` : `${API_BASE}/rooms/`;
+        const res = await fetchAPI(roomsEndpoint, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
         if (res.ok) {
-            allRooms = await res.json();
+            const rooms = await res.json();
+            if (!Array.isArray(rooms)) throw new Error('Dữ liệu danh sách phòng họp không hợp lệ.');
+            allRooms = rooms;
+            overviewRoomsLoaded = true;
             renderRooms(allRooms, isAdmin);
             updateStats(allRooms);
         }
@@ -1094,44 +1218,82 @@ async function fetchRooms(isAdmin) {
 function renderRooms(rooms, isAdmin) {
     const gridRooms = document.getElementById('roomGridRooms');
     renderDashboardRooms(rooms, isAdmin);
-    if (!rooms || rooms.length === 0) {
-        if (gridRooms) gridRooms.innerHTML = emptyRoomsMessage();
+    if (!gridRooms) return;
+    if (!Array.isArray(rooms) || rooms.length === 0) {
+        gridRooms.innerHTML = emptyRoomsMessage();
         return;
     }
-    if (gridRooms) gridRooms.innerHTML = buildRoomCards(rooms, isAdmin);
+    gridRooms.innerHTML = buildRoomCards(rooms, isAdmin);
 }
 
 function renderDashboardRooms(rooms, isAdmin) {
     const gridOverview = document.getElementById('roomGridOverview');
     if (!gridOverview) return;
-    if (!rooms || rooms.length === 0) {
+    if (!overviewMeetingsLoaded) {
+        gridOverview.innerHTML = '<p class="text-muted room-grid-empty" role="status">Đang xác minh tình trạng phòng họp...</p>';
+        return;
+    }
+    if (!Array.isArray(rooms) || rooms.length === 0) {
         gridOverview.innerHTML = emptyRoomsMessage();
         return;
     }
-    gridOverview.innerHTML = buildRoomCards(rooms, isAdmin);
+    const availableRooms = rooms.filter(room => getRoomCardState(room).available);
+    gridOverview.innerHTML = availableRooms.length
+        ? buildRoomCards(availableRooms, isAdmin)
+        : '<p class="text-muted room-grid-empty">Hiện không có phòng họp nào đang trống.</p>';
 }
 
 function emptyRoomsMessage() {
     return '<p class="text-muted" style="padding: 16px;">Chưa có phòng họp nào trong hệ thống.</p>';
 }
 
+function getRoomCardState(room) {
+    const roomStatus = String(room.status || room.room_status || '').trim().toUpperCase();
+    const maintenanceStatuses = new Set([
+        'MAINTENANCE', 'UNDER_MAINTENANCE', 'OUT_OF_SERVICE', 'INACTIVE', 'LOCKED',
+    ]);
+    if (room.is_active === false || maintenanceStatuses.has(roomStatus)) {
+        return { available: false, statusClass: 'status-amber', statusText: 'Bảo trì' };
+    }
+
+    const now = Date.now();
+    const isMeetingInProgress = Array.isArray(allMeetings) && allMeetings.some(meeting => {
+        if (String(meeting.room_id) !== String(room.id)) return false;
+        const meetingStatus = String(meeting.status || '').trim().toUpperCase();
+        if (['CANCELLED', 'CANCELED', 'CANCELLED_NO_SHOW', 'COMPLETED', 'COMPLETE', 'FINISHED', 'DONE'].includes(meetingStatus)) {
+            return false;
+        }
+        const start = Date.parse(meeting.start_time);
+        const end = Date.parse(meeting.end_time);
+        return Number.isFinite(start) && Number.isFinite(end) && now >= start && now < end;
+    });
+    if (isMeetingInProgress || ['IN_USE', 'IN_PROGRESS', 'OCCUPIED'].includes(roomStatus)) {
+        return { available: false, statusClass: 'status-red', statusText: 'Đang sử dụng' };
+    }
+
+    const isExplicitlyAvailable = roomStatus === 'AVAILABLE' || room.is_available === true;
+    const hasExplicitUnavailableStatus = room.is_available === false
+        || ['BOOKED', 'RESERVED', 'UNAVAILABLE', 'BUSY'].includes(roomStatus);
+    const available = !hasExplicitUnavailableStatus
+        && (isExplicitlyAvailable || (!roomStatus && room.is_available == null));
+    return available
+        ? { available: true, statusClass: 'status-green', statusText: 'Còn trống' }
+        : { available: false, statusClass: 'status-red', statusText: 'Đã đặt' };
+}
+
 function buildRoomCards(rooms, isAdmin) {
-    const htmlContent = rooms.map(room => {
-        const isAvailable = room.is_available !== false && room.is_active !== false;
-        const statusClass = isAvailable ? 'status-green' : 'status-red';
-        const statusText = isAvailable ? 'Còn trống' : 'Đã đặt';
+    const htmlContent = rooms.map((room, index) => {
+        const roomState = getRoomCardState(room);
+        const roomImg = room.image_url || ROOM_THUMBNAILS[(Number(room.id) || index) % ROOM_THUMBNAILS.length];
 
         let amenitiesHTML = '';
-        if (room.amenities) {
-            let amenitiesList = room.amenities;
-            if (typeof amenitiesList === 'string') {
-                try { amenitiesList = JSON.parse(amenitiesList); }
-                catch (e) { amenitiesList = [amenitiesList]; }
-            }
-            if (Array.isArray(amenitiesList)) {
-                amenitiesHTML = amenitiesList.map(a => `<span class="tag">${getAmenityIcon(a)} ${escapeHtml(a)}</span>`).join(' ');
-            }
-        }
+        const amenities = parseRoomAmenities(room.amenities);
+        amenitiesHTML = amenities.map(amenity =>
+            `<span class="tag room-amenity-tag">${getAmenityIcon(amenity)}<span>${escapeHtml(amenity)}</span></span>`
+        ).join('');
+
+        const capacity = Number(room.capacity);
+        const capacityLabel = Number.isFinite(capacity) && capacity > 0 ? capacity : 10;
 
         const menuActions = `
             <button class="room-action-item" type="button" onclick="openScheduleModal(${room.id})">Xem lịch</button>
@@ -1144,17 +1306,22 @@ function buildRoomCards(rooms, isAdmin) {
 
         return `
             <div class="room-card">
-                <div class="card-image">
-                    <img src="${room.image_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c'}" alt="${escapeHtml(room.name)}">
-                    <span class="status-badge ${statusClass}">${statusText}</span>
+                <div class="card-image room-card-img-wrapper">
+                    <img class="room-card-img" src="${escapeHtml(roomImg)}" alt="Không gian ${escapeHtml(room.name)}"
+                        loading="lazy" decoding="async">
+                    <span class="status-badge ${roomState.statusClass}">${roomState.statusText}</span>
                 </div>
                 <div class="card-body">
                     <h3>${escapeHtml(room.name)}</h3>
-                    <p class="location">📍 ${escapeHtml(room.location || 'Tầng 1')} | 👥 ${room.capacity || '10'} người</p>
+                    <p class="location">
+                        <span class="room-meta-item">${getRoomMetaIcon('location')}<span>${escapeHtml(room.location || 'Tầng 1')}</span></span>
+                        <span class="room-meta-divider" aria-hidden="true"></span>
+                        <span class="room-meta-item">${getRoomMetaIcon('capacity')}<span>${capacityLabel} người</span></span>
+                    </p>
                     <div class="amenities-tags">${amenitiesHTML}</div>
                     <div class="card-actions room-card-actions">
-                        <button class="btn-book room-primary-action" type="button" ${isAvailable ? `onclick="openCreateMeeting({ roomId: ${room.id} })"` : 'disabled'}>
-                            ${isAvailable ? 'Tạo cuộc họp' : 'Hiện đã đặt'}
+                        <button class="btn-book room-primary-action" type="button" ${roomState.available ? `onclick="openCreateMeeting({ roomId: ${room.id} })"` : 'disabled'}>
+                            ${roomState.available ? 'Tạo cuộc họp' : roomState.statusText}
                         </button>
                         <details class="room-actions-menu">
                             <summary aria-label="Thao tác với phòng ${escapeHtml(room.name)}">
@@ -1174,33 +1341,132 @@ function buildRoomCards(rooms, isAdmin) {
     return htmlContent;
 }
 
+function parseRoomAmenities(value) {
+    if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean);
+    if (typeof value !== 'string' || !value.trim()) return [];
+    try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.map(item => String(item || '').trim()).filter(Boolean);
+    } catch {
+        return value.split(',').map(item => item.trim()).filter(Boolean);
+    }
+    return value.split(',').map(item => item.trim()).filter(Boolean);
+}
+
+function getRoomMetaIcon(type) {
+    const paths = type === 'location'
+        ? '<path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/>'
+        : '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>';
+    return `<svg class="room-meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+}
+
 function updateStats(rooms) {
-    const total = rooms.length;
-    const availableCount = rooms.filter(r => r.is_available !== false && r.is_active !== false).length;
-    const inUseCount = total - availableCount;
-    const capacityPercent = total > 0 ? Math.round((inUseCount / total) * 100) : 0;
+    updateOverviewKPICards(rooms, overviewMeetingsLoaded ? allMeetings : null);
+}
 
-    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
+function updateOverviewKPICards(rooms, meetings) {
+    const setText = (id, value) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    };
 
-    setTxt('statTotal', total);
-    setTxt('statAvailable', availableCount);
-    setTxt('statInUse', inUseCount);
-    setTxt('statCapacityText', `${capacityPercent}% công suất`);
-    setTxt('statRatioText', `trong ${total} phòng`);
+    if (!Array.isArray(rooms)) {
+        ['statTotalRooms', 'statTotalRoomsSub', 'statInUseRooms', 'statOccupancyRate',
+            'statAvailableRooms', 'statAvailableRoomsSub', 'statWeeklyBookings',
+            'statWeeklyBookingsSub'].forEach(id => setText(id, '-'));
+        setText('summaryAvailable', '-');
+        setText('summaryInUse', '-');
+        return;
+    }
 
-    setTxt('summaryAvailable', availableCount);
-    setTxt('summaryInUse', inUseCount);
+    const totalRooms = rooms.length;
+    const totalCapacity = rooms.reduce((total, room) => {
+        const capacity = Number(room.capacity);
+        return total + (Number.isFinite(capacity) && capacity > 0 ? capacity : 0);
+    }, 0);
+    setText('statTotalRooms', String(totalRooms));
+    setText('statTotalRoomsSub', `Tổng sức chứa ${totalCapacity} người`);
+
+    if (!Array.isArray(meetings)) {
+        ['statInUseRooms', 'statOccupancyRate', 'statAvailableRooms',
+            'statAvailableRoomsSub', 'statWeeklyBookings', 'statWeeklyBookingsSub']
+            .forEach(id => setText(id, '-'));
+        setText('summaryAvailable', '-');
+        setText('summaryInUse', '-');
+        return;
+    }
+
+    const now = Date.now();
+    const occupiedRoomIds = new Set();
+    const roomIds = new Set(rooms.map(room => String(room.id)));
+    const isCancelled = meeting =>
+        ['CANCELLED', 'CANCELED', 'CANCELLED_NO_SHOW'].includes(
+            String(meeting.status || '').trim().toUpperCase(),
+        );
+    for (const meeting of meetings) {
+        if (isCancelled(meeting)) continue;
+        const start = Date.parse(meeting.start_time);
+        const end = Date.parse(meeting.end_time);
+        if (Number.isFinite(start) && Number.isFinite(end)
+            && now >= start && now < end && meeting.room_id != null
+            && roomIds.has(String(meeting.room_id))) {
+            occupiedRoomIds.add(String(meeting.room_id));
+        }
+    }
+
+    const inUseCount = occupiedRoomIds.size;
+    const availableCount = totalRooms - inUseCount;
+    const occupancyRate = totalRooms > 0 ? Math.round((inUseCount / totalRooms) * 100) : 0;
+    setText('statInUseRooms', String(inUseCount));
+    setText('statOccupancyRate', `${occupancyRate}% công suất`);
+    setText('statAvailableRooms', String(availableCount));
+    setText('statAvailableRoomsSub', `trong ${totalRooms} phòng`);
+    setText('summaryAvailable', String(availableCount));
+    setText('summaryInUse', String(inUseCount));
+
+    const currentDate = new Date();
+    const weekStart = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        currentDate.getDate() - ((currentDate.getDay() + 6) % 7),
+    );
+    const nextWeekStart = new Date(weekStart);
+    nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+    const weeklyMeetings = meetings.filter(meeting => {
+        if (isCancelled(meeting)) return false;
+        const start = Date.parse(meeting.start_time);
+        return Number.isFinite(start) && start >= weekStart.getTime() && start < nextWeekStart.getTime();
+    });
+    const completedCount = weeklyMeetings.filter(meeting =>
+        ['COMPLETED', 'COMPLETE', 'FINISHED', 'DONE'].includes(
+            String(meeting.status || '').trim().toUpperCase(),
+        ),
+    ).length;
+
+    setText('statWeeklyBookings', String(weeklyMeetings.length));
+    setText(
+        'statWeeklyBookingsSub',
+        weeklyMeetings.length
+            ? `${completedCount} cuộc họp đã hoàn thành`
+            : 'Không có cuộc họp tuần này',
+    );
 }
 
 function getAmenityIcon(name) {
-    const lower = (name || '').toLowerCase();
-    if (lower.includes('màn hình') || lower.includes('tv')) return '📺';
-    if (lower.includes('wifi') || lower.includes('internet')) return '📶';
-    if (lower.includes('video') || lower.includes('camera')) return '🎥';
-    if (lower.includes('chiếu') || lower.includes('projector')) return '📽️';
-    if (lower.includes('mic') || lower.includes('loa')) return '🎙️';
-    if (lower.includes('đồ uống') || lower.includes('nước') || lower.includes('trà') || lower.includes('cà phê')) return '☕';
-    return '✨';
+    const lower = String(name || '').toLocaleLowerCase();
+    let paths = '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>';
+    if (lower.includes('wifi') || lower.includes('internet')) {
+        paths = '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><path d="M12 20h.01"/>';
+    } else if (lower.includes('video') || lower.includes('camera')) {
+        paths = '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/>';
+    } else if (lower.includes('chiếu') || lower.includes('projector')) {
+        paths = '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><path d="m9 9 6 2-6 2z"/>';
+    } else if (lower.includes('mic') || lower.includes('loa')) {
+        paths = '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>';
+    } else if (lower.includes('bảng') || lower.includes('whiteboard')) {
+        paths = '<rect x="3" y="3" width="18" height="15" rx="1"/><path d="M7 22l3-4m7 4-3-4M7 8h10"/>';
+    }
+    return `<svg class="room-amenity-icon text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
 }
 
 /* ==========================================================================
@@ -1290,7 +1556,10 @@ async function fetchMyBookings() {
         });
         if (handleUnauthorizedResponse(res)) return;
         if (!res.ok) throw new Error('Không thể tải danh sách lịch họp.');
-        myBookings = await res.json();
+        const meetings = await res.json();
+        if (!Array.isArray(meetings)) throw new Error('Dữ liệu danh sách lịch họp không hợp lệ.');
+        myBookings = meetings;
+        await fetchMeetings();
         renderMyBookings();
         if (userNotifications.length) renderNotifications(userNotifications);
     } catch (err) {
@@ -1357,12 +1626,64 @@ function renderOrganizerBookings(meetings) {
         } catch (error) {
             joinLink = '';
         }
+        const extendActions = String(meeting.status || '').trim().toUpperCase() === 'IN_PROGRESS'
+            ? `<button class="booking-extend-button" type="button" onclick="extendMeeting(${Number(meeting.id)}, 15, this)">+ Gia hạn 15p</button>
+                <button class="booking-extend-button" type="button" onclick="extendMeeting(${Number(meeting.id)}, 30, this)">+ Gia hạn 30p</button>`
+            : '';
         return `<article class="booking-list-card"><div class="booking-list-row">
             <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span></div>
             <div class="booking-list-time">${escapeHtml(time)}</div>
-            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${qrActions}${cancel}</div>
+            <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${qrActions}${extendActions}${cancel}</div>
         </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
+}
+
+async function extendMeeting(meetingId, extendMinutes, button) {
+    if (![15, 30].includes(extendMinutes) || button?.disabled) return;
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Đang gia hạn…';
+    }
+
+    try {
+        const response = await fetchAPI(`${API_BASE}/meetings/${meetingId}/extend`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ extend_minutes: extendMinutes }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (handleUnauthorizedResponse(response)) return;
+        if (response.status === 409 && result.detail?.available_rooms) {
+            const roomNames = result.detail.available_rooms
+                .map(room => room.name)
+                .filter(Boolean);
+            const suggestions = roomNames.length
+                ? ` Phòng thay thế đang trống: ${roomNames.join(', ')}.`
+                : ' Hiện không tìm thấy phòng thay thế phù hợp.';
+            showAppToast(`${result.detail.message || 'Không thể gia hạn.'}${suggestions}`, 'error');
+            return;
+        }
+        if (!response.ok) {
+            const message = typeof result.detail === 'string'
+                ? result.detail
+                : 'Không thể gia hạn cuộc họp. Vui lòng thử lại.';
+            throw new Error(message);
+        }
+
+        showAppToast(`Đã gia hạn cuộc họp thêm ${extendMinutes} phút.`);
+        await fetchMyBookings();
+    } catch (error) {
+        console.error('Không thể gia hạn cuộc họp:', error);
+        showAppToast(error.message || 'Không thể gia hạn cuộc họp. Vui lòng thử lại.', 'error');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = `+ Gia hạn ${extendMinutes}p`;
+        }
+    }
 }
 
 function renderInvitedBookings(meetings) {
@@ -1436,11 +1757,17 @@ async function handleAdminCreateUser(event) {
     const payload = {
         full_name: String(formData.get('full_name') || '').trim(),
         email: String(formData.get('email') || '').trim(),
-        password: String(formData.get('password') || ''),
         role: String(formData.get('role') || 'employee'),
     };
     const username = String(formData.get('username') || '').trim();
     if (username) payload.username = username;
+    const departmentId = String(formData.get('department_id') || '').trim();
+    if (departmentId) payload.department_id = Number(departmentId);
+    const projectGroupIds = formData.getAll('project_group_ids')
+        .map(value => String(value).trim())
+        .filter(value => value !== '')
+        .map(Number);
+    if (projectGroupIds.length) payload.project_group_ids = projectGroupIds;
 
     const submitButton = document.getElementById('adminCreateUserSubmit');
     if (submitButton) {
@@ -1449,7 +1776,7 @@ async function handleAdminCreateUser(event) {
     }
 
     try {
-        const response = await fetchAPI(`${API_BASE}/users/`, {
+        const response = await fetchAPI('/api/v1/users/', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${getAuthToken()}`,
@@ -1475,9 +1802,22 @@ async function handleAdminCreateUser(event) {
         }
 
         form.reset();
-        showAppToast(
-            `Đã tạo tài khoản ${result.full_name || payload.full_name} (${result.username || payload.email}) thành công. Hãy bàn giao mật khẩu ban đầu trực tiếp.`,
-        );
+        const accountName = result.full_name || payload.full_name;
+        if (result.email_sent) {
+            showAppToast(`Đã tạo tài khoản ${accountName} và gửi email hướng dẫn kích hoạt.`);
+        } else {
+            showAppToast(
+                `Đã tạo tài khoản ${accountName} ở trạng thái chờ kích hoạt nhưng không gửi được email. Kiểm tra Gmail/SMTP rồi dùng nút Gửi lại Mail.`,
+                'error',
+            );
+        }
+        showUserManagementSection('list');
+        try {
+            await window.RoomSyncUserList?.refreshUserListTable();
+        } catch (error) {
+            console.error('Tài khoản đã tạo nhưng không tải lại được danh sách:', error);
+            showAppToast('Tài khoản đã tạo; không tải lại được danh sách người dùng.', 'error');
+        }
     } catch (error) {
         console.error('Không thể tạo tài khoản người dùng', error);
         showAppToast('Không thể kết nối máy chủ để tạo tài khoản. Vui lòng thử lại.', 'error');
@@ -2065,45 +2405,32 @@ function filterToday() { alert("Đã đồng bộ lịch họp hôm nay!"); }
 function applyFilters() {
     const searchInput = document.getElementById('searchInput');
     const capSelect = document.getElementById('capacitySelect');
-
-    const query = searchInput ? searchInput.value.toLowerCase() : '';
+    const query = searchInput ? searchInput.value.trim().toLocaleLowerCase() : '';
     const cap = capSelect ? capSelect.value : 'all';
+    const activeFilter = document.querySelector('.filter-chips .chip.active');
+    const amenity = activeFilter && activeFilter.textContent.trim() !== 'Tất cả'
+        ? activeFilter.textContent.trim()
+        : '';
 
-    let filtered = allRooms.filter(r =>
-        r.name.toLowerCase().includes(query) ||
-        (r.location && r.location.toLowerCase().includes(query))
-    );
+    const filtered = allRooms.filter(room => {
+        const matchesSearch = `${room.name || ''} ${room.location || ''}`.toLocaleLowerCase().includes(query);
+        const capacity = Number.parseInt(room.capacity, 10) || 10;
+        const matchesCapacity = cap === 'all'
+            || (cap === 'small' && capacity <= 5)
+            || (cap === 'medium' && capacity > 5 && capacity <= 12)
+            || (cap === 'large' && capacity > 12);
+        const matchesAmenity = !amenity || parseRoomAmenities(room.amenities)
+            .some(item => item.toLocaleLowerCase().includes(amenity.toLocaleLowerCase()));
+        return matchesSearch && matchesCapacity && matchesAmenity;
+    });
 
-    if (cap !== 'all') {
-        filtered = filtered.filter(r => {
-            const num = parseInt(r.capacity) || 10;
-            if (cap === 'small') return num <= 5;
-            if (cap === 'medium') return num > 5 && num <= 12;
-            if (cap === 'large') return num > 12;
-            return true;
-        });
-    }
-
-    const role = localStorage.getItem('role') || 'user';
-    renderRooms(filtered, role === 'admin');
+    renderRooms(filtered, localStorage.getItem('role') === 'admin');
 }
 
 function setFilter(amenity, btn) {
-    document.querySelectorAll('.chip').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.filter-chips .chip').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
-
-    const role = localStorage.getItem('role') || 'user';
-    if (amenity === 'all') {
-        renderRooms(allRooms, role === 'admin');
-    } else {
-        const filtered = allRooms.filter(r => {
-            if (!r.amenities) return false;
-            if (Array.isArray(r.amenities)) return r.amenities.includes(amenity);
-            if (typeof r.amenities === 'string') return r.amenities.includes(amenity);
-            return false;
-        });
-        renderRooms(filtered, role === 'admin');
-    }
+    applyFilters();
 }
 
 /* ==========================================================================
@@ -2405,6 +2732,46 @@ async function deleteEquipment(id) {
 /* ==========================================================================
    ROOM USAGE REPORT LOGIC
    ========================================================================== */
+const reportCharts = new Map();
+const REPORT_CHART_COLORS = [
+    '#4F46E5', '#10B981', '#F59E0B', '#8B5CF6',
+    '#06B6D4', '#EC4899', '#3B82F6', '#64748B',
+];
+
+function setReportButtonLoading(button, isLoading) {
+    if (!button) return;
+    button.disabled = isLoading;
+    button.classList.toggle('is-loading', isLoading);
+    const label = button.querySelector('.report-submit-label');
+    if (label) label.textContent = isLoading ? 'Đang tải...' : 'Cập nhật';
+}
+
+function updateReportChart(elementId, options) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    if (!window.ApexCharts) throw new Error('Không tải được thư viện biểu đồ ApexCharts.');
+
+    const existingChart = reportCharts.get(elementId);
+    if (existingChart) {
+        existingChart.destroy();
+        reportCharts.delete(elementId);
+    }
+
+    const chart = new window.ApexCharts(element, options);
+    reportCharts.set(elementId, chart);
+    chart.render();
+}
+
+function requestReportPath(path, params) {
+    const token = getAuthToken();
+    return fetchAPI(`${API_BASE}${path}?${params.toString()}`, {
+        headers: {
+            Accept: 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+    });
+}
+
 async function loadRoomsForReportFilter() {
     try {
         const response = await fetchAPI(`${API_BASE}/rooms/`);
@@ -2426,76 +2793,172 @@ async function loadRoomsForReportFilter() {
     }
 }
 
-async function fetchRoomUsageReport() {
-    const startDateVal = document.getElementById("reportStartDate").value;
-    const endDateVal = document.getElementById("reportEndDate").value;
-    const roomIdVal = document.getElementById("reportRoomIdSelect").value;
-    const token = getAuthToken();
-
-    let url = `${API_BASE}/v1/reports/room-usage?`;
+async function loadUsageReportData(event) {
+    event?.preventDefault();
+    const startDateVal = document.getElementById('reportStartDate')?.value;
+    const endDateVal = document.getElementById('reportEndDate')?.value;
+    const roomIdVal = document.getElementById('reportRoomIdSelect')?.value;
+    const button = document.getElementById('btnRunUsageReport');
+    const message = document.getElementById('roomUsageReportMessage');
+    if (message) {
+        message.textContent = '';
+        message.hidden = true;
+    }
+    if (startDateVal && endDateVal && startDateVal > endDateVal) {
+        if (message) {
+            message.textContent = 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.';
+            message.hidden = false;
+        }
+        return;
+    }
     const params = new URLSearchParams();
-
-    if (startDateVal) params.append("start_date", new Date(startDateVal).toISOString());
-    if (endDateVal) params.append("end_date", new Date(endDateVal).toISOString());
-    if (roomIdVal) params.append("room_id", roomIdVal);
+    if (startDateVal) params.set('start_date', `${startDateVal}T00:00:00`);
+    if (endDateVal) params.set('end_date', `${endDateVal}T23:59:59.999999`);
+    if (roomIdVal) params.set('room_id', roomIdVal);
+    setReportButtonLoading(button, true);
 
     try {
-        const response = await fetchAPI(url + params.toString(), {
-            method: "GET",
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json"
-            }
-        });
-
-        if (response.status === 400) {
-            const errData = await response.json();
-            alert(`Lỗi tham số: ${errData.detail || "Khoảng thời gian không hợp lệ"}`);
-            return;
+        let response = await requestReportPath('/v1/reports/usage', params);
+        if (response.status === 404) {
+            response = await requestReportPath('/v1/reports/room-usage', params);
         }
-
         if (!response.ok) {
-            throw new Error("Không thể kết nối lấy dữ liệu báo cáo.");
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || 'Không thể tải dữ liệu báo cáo.');
         }
-
         const data = await response.json();
         renderReportDataToDashboard(data);
-
     } catch (error) {
-        console.error("Lỗi gọi API báo cáo:", error);
-        alert("Đã xảy ra lỗi khi tải dữ liệu báo cáo từ máy chủ.");
+        console.error('Lỗi gọi API báo cáo:', error);
+        if (message) {
+            message.textContent = error instanceof Error ? error.message : 'Đã xảy ra lỗi khi tải báo cáo.';
+            message.hidden = false;
+        }
+    } finally {
+        setReportButtonLoading(button, false);
     }
 }
 
+function fetchRoomUsageReport(event) {
+    return loadUsageReportData(event);
+}
+
 function renderReportDataToDashboard(data) {
-    document.getElementById("sumTotalRooms").textContent = data.summary.total_rooms;
-    document.getElementById("sumTotalMeetings").textContent = data.summary.total_meetings;
-    document.getElementById("sumTotalHours").textContent = `${data.summary.total_hours.toFixed(1)} h`;
-    document.getElementById("sumAvgOccupancy").textContent = `${data.summary.average_occupancy_rate.toFixed(1)}%`;
+    const summary = data?.summary || {};
+    const setValue = (id, value) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    };
+    setValue('kpiTotalRooms', String(summary.total_rooms ?? 0));
+    setValue('kpiTotalMeetings', String(summary.total_meetings ?? 0));
+    setValue('kpiTotalHours', `${Number(summary.total_hours ?? 0).toFixed(1)} h`);
+    setValue('kpiOccupancyRate', `${Number(summary.average_occupancy_rate ?? 0).toFixed(1)}%`);
 
-    const tbody = document.getElementById("roomDetailsTableBody");
-    tbody.innerHTML = "";
+    const roomDetails = Array.isArray(data?.room_details) ? data.room_details : [];
+    const roomUsageByName = new Map();
+    roomDetails.forEach(room => {
+        const name = String(room.room_name ?? '').replace(/^(?:DEMO|SEED)\s*-\s*/i, '').trim() || 'Phòng họp';
+        const key = name.toLocaleLowerCase();
+        const aggregate = roomUsageByName.get(key);
+        if (aggregate) {
+            aggregate.totalHours += Math.max(0, Number(room.total_hours ?? 0));
+            return;
+        }
+        roomUsageByName.set(key, {
+            name,
+            totalHours: Math.max(0, Number(room.total_hours ?? 0)),
+        });
+    });
+    const groupedRoomUsage = Array.from(roomUsageByName.values());
+    updateReportChart('chartUsageBar', {
+        chart: { type: 'bar', height: 288, toolbar: { show: false } },
+        series: [{
+            name: 'Tổng số giờ họp',
+            data: roomDetails.map(room => Number(room.total_hours ?? 0)),
+        }],
+        colors: ['#4F46E5'],
+        plotOptions: { bar: { columnWidth: '52%', borderRadius: 6 } },
+        dataLabels: { enabled: false },
+        xaxis: {
+            categories: roomDetails.map(room => String(room.room_name ?? '').replace(/^(?:DEMO|SEED)\s*-\s*/i, '')),
+            labels: {
+                rotate: -45,
+                rotateAlways: true,
+                hideOverlappingLabels: true,
+                trim: true,
+                maxHeight: 60,
+                style: { fontSize: '11px', colors: '#64748B' },
+                formatter: value => {
+                    const name = String(value ?? '');
+                    return name.length > 20 ? `${name.slice(0, 17)}...` : name;
+                },
+            },
+            tooltip: { enabled: false },
+        },
+        yaxis: {
+            min: 0,
+            title: {
+                text: 'Giờ họp (giờ)',
+                rotate: -90,
+                offsetX: -5,
+                style: { fontSize: '12px', fontWeight: '600', color: '#475569' },
+            },
+            labels: { minWidth: 35, style: { colors: '#64748B' } },
+        },
+        noData: { text: 'Không có dữ liệu' },
+        grid: { borderColor: '#e2e8f0', padding: { left: 25, right: 15 } },
+    });
+    updateReportChart('chartUsageDonut', {
+        chart: { type: 'donut', height: 288 },
+        series: groupedRoomUsage.map(room => room.totalHours),
+        labels: groupedRoomUsage.map(room => room.name),
+        colors: REPORT_CHART_COLORS,
+        legend: {
+            show: true,
+            position: 'bottom',
+            horizontalAlign: 'center',
+            fontSize: '12px',
+            fontFamily: 'Inter, sans-serif',
+            onItemHover: { highlightDataSeries: true },
+            itemMargin: { horizontal: 8, vertical: 2 },
+        },
+        dataLabels: {
+            enabled: true,
+            formatter: value => `${Number(value).toFixed(1)}%`,
+            style: {
+                fontSize: '11px',
+                fontFamily: 'Inter, sans-serif',
+                fontWeight: '700',
+                colors: ['#FFFFFF'],
+            },
+            dropShadow: { enabled: false },
+            background: { enabled: false },
+        },
+        states: {
+            normal: { filter: { type: 'none', value: 0 } },
+            hover: { filter: { type: 'none', value: 0 } },
+            inactive: { filter: { type: 'opacityFilter', value: 0.18 } },
+        },
+        plotOptions: { pie: { donut: { size: '62%' } } },
+        noData: { text: 'Không có dữ liệu' },
+    });
 
-    if (!data.room_details || data.room_details.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">Không có dữ liệu cuộc họp trong khoảng thời gian này.</td></tr>`;
+    const tbody = document.getElementById('roomDetailsTableBody');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    if (roomDetails.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="table-empty-state">Không có dữ liệu cuộc họp trong khoảng thời gian này.</td></tr>';
         return;
     }
-
-    data.room_details.forEach(room => {
-        const tr = document.createElement("tr");
+    roomDetails.forEach(room => {
+        const tr = document.createElement('tr');
+        const occupancy = Number(room.occupancy_rate ?? 0);
         tr.innerHTML = `
-            <td>${room.room_id}</td>
-            <td><strong>${escapeHtml(room.room_name)}</strong></td>
-            <td>${room.total_meetings}</td>
-            <td>${room.total_hours.toFixed(1)} h</td>
-            <td>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-weight: 600;">${room.occupancy_rate.toFixed(1)}%</span>
-                    <div style="width: 100px; background: #e2e8f0; border-radius: 9999px; height: 8px; overflow: hidden;">
-                        <div style="background: #2563eb; height: 100%; width: ${Math.min(room.occupancy_rate, 100)}%;"></div>
-                    </div>
-                </div>
-            </td>
+            <td>${escapeHtml(String(room.room_id ?? '—'))}</td>
+            <td><strong>${escapeHtml(String(room.room_name ?? ''))}</strong></td>
+            <td>${Number(room.total_meetings ?? 0)}</td>
+            <td>${Number(room.total_hours ?? 0).toFixed(1)} h</td>
+            <td>${occupancy.toFixed(1)}%</td>
         `;
         tbody.appendChild(tr);
     });
@@ -2512,7 +2975,7 @@ function populateCancellationRoomFilter() {
     if (selectedRoomId) select.value = selectedRoomId;
 }
 
-async function fetchCancellationAnalytics(e) {
+async function loadCancelReportData(e) {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     const msgDiv = document.getElementById('cancellationAnalyticsMessage');
     const button = document.getElementById('btnFilterCancellation');
@@ -2521,21 +2984,29 @@ async function fetchCancellationAnalytics(e) {
     const roomId = document.getElementById('cancellationRoomId')?.value;
     msgDiv?.classList.add('hidden');
     if (msgDiv) msgDiv.textContent = '';
-    if (button) {
-        button.disabled = true;
-        button.textContent = 'Đang tải...';
+    if (startDate && endDate && startDate > endDate) {
+        if (msgDiv) {
+            msgDiv.textContent = 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.';
+            msgDiv.classList.remove('hidden');
+        }
+        return;
     }
+    setReportButtonLoading(button, true);
 
     const params = new URLSearchParams();
     if (startDate) params.set('start_date', startDate.slice(0, 10));
     if (endDate) params.set('end_date', endDate.slice(0, 10));
     if (roomId) params.set('room_id', roomId);
+    const usageParams = new URLSearchParams();
+    if (startDate) usageParams.set('start_date', `${startDate.slice(0, 10)}T00:00:00`);
+    if (endDate) usageParams.set('end_date', `${endDate.slice(0, 10)}T23:59:59.999999`);
+    if (roomId) usageParams.set('room_id', roomId);
 
     try {
-        const response = await fetchAPI(
-            `${API_BASE}/v1/admin/analytics/cancellations?${params.toString()}`,
-            { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
-        );
+        let response = await requestReportPath('/v1/reports/cancellations', params);
+        if (response.status === 404) {
+            response = await requestReportPath('/v1/admin/analytics/cancellations', params);
+        }
         if (!response.ok) {
             let detail = response.statusText;
             try {
@@ -2546,8 +3017,18 @@ async function fetchCancellationAnalytics(e) {
             }
             throw new Error(`Lỗi server (${response.status}): ${detail || 'Không rõ lỗi'}`);
         }
-        const data = await response.json();
-        renderCancellationAnalytics(data);
+        let usageResponse = await requestReportPath('/v1/reports/usage', usageParams);
+        if (usageResponse.status === 404) {
+            usageResponse = await requestReportPath('/v1/reports/room-usage', usageParams);
+        }
+        if (!usageResponse.ok) {
+            throw new Error(`Không thể tải dữ liệu cuộc họp thành công (${usageResponse.status}).`);
+        }
+        const [data, usageData] = await Promise.all([response.json(), usageResponse.json()]);
+        renderCancellationAnalytics({
+            ...data,
+            successful_meetings: Number(usageData?.summary?.total_meetings ?? 0),
+        });
     } catch (err) {
         console.error('Cancellation Analytics Error:', err);
         if (msgDiv) {
@@ -2555,11 +3036,12 @@ async function fetchCancellationAnalytics(e) {
             msgDiv.classList.remove('hidden');
         }
     } finally {
-        if (button) {
-            button.disabled = false;
-            button.textContent = 'Xem thống kê';
-        }
+        setReportButtonLoading(button, false);
     }
+}
+
+function fetchCancellationAnalytics(event) {
+    return loadCancelReportData(event);
 }
 
 async function exportCancellationAnalytics(format) {
@@ -2611,19 +3093,43 @@ async function exportCancellationAnalytics(format) {
 }
 
 async function exportExecutiveReport(format) {
-    const message = document.getElementById('cancellationAnalyticsMessage');
-    message?.classList.add('hidden');
-    if (message) message.textContent = '';
-
-    const params = new URLSearchParams({ format });
+    if (format !== 'excel' && format !== 'pdf') {
+        throw new RangeError(`Định dạng báo cáo không hợp lệ: ${format}.`);
+    }
+    const message = document.getElementById('executiveReportMessage');
+    if (message) {
+        message.hidden = true;
+        message.textContent = '';
+    }
     const startDate = document.getElementById('executiveStartDate')?.value;
     const endDate = document.getElementById('executiveEndDate')?.value;
     const departmentId = document.getElementById('executiveDepartmentId')?.value;
+    if (startDate && endDate && startDate > endDate) {
+        if (message) {
+            message.textContent = 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.';
+            message.hidden = false;
+        }
+        return;
+    }
+
+    const params = new URLSearchParams({ format });
     if (startDate) params.set('start_date', startDate.slice(0, 10));
     if (endDate) params.set('end_date', endDate.slice(0, 10));
     if (departmentId) params.set('department_id', departmentId);
+    const excelButton = document.getElementById('btn-export-executive-excel');
+    const pdfButton = document.getElementById('btn-export-executive-pdf');
+    [excelButton, pdfButton].forEach(button => {
+        if (button) button.disabled = true;
+    });
+    const activeButton = format === 'excel' ? excelButton : pdfButton;
+    const activeLabel = activeButton?.querySelector('.executive-export-label');
+    if (activeLabel) activeLabel.textContent = 'Đang tạo báo cáo...';
+    const reportWindow = window.open('', '_blank');
 
     try {
+        if (!reportWindow) {
+            throw new Error('Trình duyệt đã chặn cửa sổ báo cáo. Hãy cho phép cửa sổ bật lên rồi thử lại.');
+        }
         const response = await fetchAPI(
             `${API_BASE}/v1/admin/analytics/executive-report/export?${params.toString()}`,
             { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } },
@@ -2641,38 +3147,92 @@ async function exportExecutiveReport(format) {
 
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `RoomSync_Executive_Report_${new Date().toISOString().slice(0, 10)}.${format === 'excel' ? 'xlsx' : 'pdf'}`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+        reportWindow.location.href = url;
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
     } catch (err) {
+        reportWindow?.close();
         console.error('Executive Report Export Error:', err);
         if (message) {
             message.textContent = `Lỗi xuất báo cáo: ${err instanceof Error ? err.message : String(err)}`;
-            message.classList.remove('hidden');
+            message.hidden = false;
+        }
+    } finally {
+        [excelButton, pdfButton].forEach(button => {
+            if (button) button.disabled = false;
+        });
+        const excelLabel = excelButton?.querySelector('.executive-export-label');
+        const pdfLabel = pdfButton?.querySelector('.executive-export-label');
+        if (excelLabel) excelLabel.textContent = 'Xuất Excel (.xlsx)';
+        if (pdfLabel) pdfLabel.textContent = 'Xuất PDF (.pdf)';
+    }
+}
+
+async function loadExecutiveDepartments() {
+    const select = document.getElementById('executiveDepartmentId');
+    if (!select || select.options.length > 1) return;
+    const headers = { Authorization: `Bearer ${getAuthToken()}` };
+    let response = await fetchAPI(`${API_BASE}/v1/directories/departments`, { headers });
+    if (response.status === 404) {
+        response = await fetchAPI(`${API_BASE}/v1/departments`, { headers });
+    }
+    if (!response.ok) {
+        throw new Error(`Không thể tải danh sách phòng ban (HTTP ${response.status}).`);
+    }
+    const departments = await response.json();
+    if (!Array.isArray(departments)) {
+        throw new Error('Dữ liệu danh sách phòng ban không hợp lệ.');
+    }
+    departments.forEach(department => {
+        if (department?.id == null || !department.name) return;
+        select.add(new Option(String(department.name), String(department.id)));
+    });
+}
+
+async function openExecutiveReportModal() {
+    const modal = document.getElementById('executiveReportModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    const message = document.getElementById('executiveReportMessage');
+    if (message) {
+        message.hidden = true;
+        message.textContent = '';
+    }
+    try {
+        await loadExecutiveDepartments();
+    } catch (error) {
+        if (message) {
+            message.textContent = error instanceof Error ? error.message : 'Không thể tải phòng ban.';
+            message.hidden = false;
         }
     }
+    document.getElementById('executiveStartDate')?.focus();
+}
+
+function closeExecutiveReportModal() {
+    const modal = document.getElementById('executiveReportModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    document.getElementById('btn-open-executive-modal')?.focus();
 }
 
 function renderCancellationAnalytics(data) {
     const summary = data?.summary ?? {};
     const parsedTotal = Number(summary.total_cancelled ?? 0);
     const totalCancelled = Number.isFinite(parsedTotal) ? parsedTotal : 0;
-    const parsedNoShow = Number(summary.cancelled_no_show ?? 0);
-    const noShow = Number.isFinite(parsedNoShow) ? parsedNoShow : 0;
-    const totalElement = document.getElementById('cancelledTotal');
+    const totalElement = document.getElementById('kpiTotalCancels');
     const hoursElement = document.getElementById('cancelledWastedHours');
-    const noShowElement = document.getElementById('cancelledNoShowRate');
+    const rateElement = document.getElementById('kpiCancelRate');
+    const reasonElement = document.getElementById('cancellationPopularReason');
     if (totalElement) totalElement.textContent = String(totalCancelled);
     const wastedHours = Number(summary.total_wasted_hours ?? 0);
     if (hoursElement) {
         hoursElement.textContent = `${(Number.isFinite(wastedHours) ? wastedHours : 0).toFixed(2)} giờ`;
     }
-    if (noShowElement) noShowElement.textContent =
-        `${totalCancelled > 0 ? ((noShow / totalCancelled) * 100).toFixed(1) : '0.0'}%`;
+    const cancellationRate = Number(data?.cancellation_rate ?? 0);
+    if (rateElement) rateElement.textContent = `${Number.isFinite(cancellationRate) ? cancellationRate.toFixed(1) : '0.0'}%`;
+    if (reasonElement) reasonElement.textContent = data?.breakdown_by_reason?.[0]?.reason || 'Chưa có dữ liệu';
 
     const renderRows = (elementId, rows, emptyMessage, valueKeys) => {
         const tbody = document.getElementById(elementId);
@@ -2721,6 +3281,82 @@ function renderCancellationAnalytics(data) {
         'Không có dữ liệu trong khoảng thời gian này',
         ['user_name'],
     );
+
+    const meetingsBody = document.getElementById('cancellationMeetingsBody');
+    if (meetingsBody) {
+        meetingsBody.replaceChildren();
+        const records = Array.isArray(data?.cancellation_records) ? data.cancellation_records : [];
+        if (!records.length) {
+            meetingsBody.innerHTML = '<tr><td colspan="6" class="cancellation-empty">Không có dữ liệu trong khoảng thời gian này</td></tr>';
+        } else {
+            records.forEach(record => {
+                const row = document.createElement('tr');
+                const startTime = record.start_time ? new Date(record.start_time).toLocaleString('vi-VN') : '—';
+                [record.meeting_id, record.title, record.room_name, record.organizer_name, startTime, record.cancellation_reason]
+                    .forEach(value => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value == null ? '—' : String(value);
+                        row.appendChild(cell);
+                    });
+                meetingsBody.appendChild(row);
+            });
+        }
+    }
+
+    const reasons = Array.isArray(data?.breakdown_by_reason) ? data.breakdown_by_reason : [];
+    updateReportChart('chartCancelReasons', {
+        chart: { type: 'donut', height: 288 },
+        series: reasons.map(item => Number(item.cancel_count ?? 0)),
+        labels: reasons.map(item => String(item.reason ?? 'Không xác định')),
+        colors: REPORT_CHART_COLORS,
+        legend: {
+            position: 'bottom',
+            horizontalAlign: 'center',
+            fontSize: '12px',
+            itemMargin: { horizontal: 8, vertical: 2 },
+        },
+        dataLabels: {
+            enabled: true,
+            formatter: value => `${Number(value).toFixed(1)}%`,
+            style: {
+                fontSize: '11px',
+                fontFamily: 'Inter, sans-serif',
+                fontWeight: '700',
+                colors: ['#FFFFFF'],
+            },
+            dropShadow: { enabled: false },
+            background: { enabled: false },
+        },
+        states: {
+            hover: { filter: { type: 'darken', value: 0.88 } },
+            active: { allowMultipleDataPointsSelection: false, filter: { type: 'none' } },
+        },
+        plotOptions: { pie: { donut: { size: '58%' } } },
+        noData: { text: 'Không có dữ liệu' },
+    });
+    const successfulMeetings = Math.max(0, Number(data?.successful_meetings ?? 0));
+    updateReportChart('chartCancelvsSuccess', {
+        chart: { type: 'bar', height: 288, stacked: true, toolbar: { show: false } },
+        series: [
+            { name: 'Thành công', data: [successfulMeetings] },
+            { name: 'Bị hủy', data: [totalCancelled] },
+        ],
+        colors: ['#10B981', '#E11D48'],
+        plotOptions: { bar: { horizontal: false, columnWidth: '42%', borderRadius: 6 } },
+        dataLabels: { enabled: false },
+        xaxis: { categories: ['Thống kê cuộc họp'] },
+        yaxis: {
+            min: 0,
+            title: {
+                text: 'Số cuộc họp',
+                offsetX: -8,
+                style: { fontSize: '12px', fontWeight: 600, color: '#475569' },
+            },
+        },
+        legend: { position: 'bottom' },
+        noData: { text: 'Không có dữ liệu' },
+        grid: { borderColor: '#e2e8f0' },
+    });
 }
 
 /* GLOBAL EXPORTS (GẮN VÀO WINDOW CHO EVENT HANDLER) */
@@ -2729,6 +3365,7 @@ window.toggleMobileMenu = toggleMobileMenu;
 window.closeMobileMenu = closeMobileMenu;
 window.switchToOverview = switchToOverview;
 window.switchMainTab = switchMainTab;
+window.switchReportTab = switchReportTab;
 window.showUserManagementSection = showUserManagementSection;
 window.navigateToSettings = navigateToSettings;
 window.handleAdminCreateUser = handleAdminCreateUser;
@@ -2774,6 +3411,8 @@ window.handleEquipmentFormSubmit = handleEquipmentFormSubmit;
 window.deleteEquipment = deleteEquipment;
 window.fetchRoomUsageReport = fetchRoomUsageReport;
 window.fetchCancellationAnalytics = fetchCancellationAnalytics;
+window.loadUsageReportData = loadUsageReportData;
+window.loadCancelReportData = loadCancelReportData;
 window.loadRoomsForReportFilter = loadRoomsForReportFilter;
 window.updateUserSettings = updateUserSettings;
 
@@ -2798,6 +3437,14 @@ function initializeAiChat() {
     document.getElementById('ai-chat-close')?.addEventListener('click', closeAiChatDrawer);
     document.getElementById('ai-chat-new-session')?.addEventListener('click', createAiChatSession);
     document.getElementById('ai-chat-history-refresh')?.addEventListener('click', loadAiChatSessions);
+    drawer.querySelectorAll('[data-ai-chat-prompt]').forEach(button => {
+        button.addEventListener('click', () => {
+            const input = document.getElementById('ai-chat-input');
+            if (!input || chatMessageRequestPending) return;
+            input.value = button.dataset.aiChatPrompt || '';
+            form.requestSubmit();
+        });
+    });
     form.addEventListener('submit', sendAiChatMessage);
 }
 
@@ -2954,29 +3601,104 @@ async function sendAiChatMessage(event) {
         const sessionId = activeChatSessionId;
         chatMessageRequestPending = true;
         if (sendButton) sendButton.disabled = true;
+        document.querySelectorAll('[data-ai-chat-prompt]').forEach(button => {
+            button.disabled = true;
+        });
         input.disabled = true;
         input.value = '';
         setAiChatStatus('');
         appendAiChatMessage({ sender: 'user', content });
-        const response = await chatApiRequest(
-            `/sessions/${encodeURIComponent(sessionId)}/message`,
-            { method: 'POST', body: JSON.stringify({ content }) },
+        const response = await fetchAPI(
+            `${CHATBOT_API_BASE}/sessions/${encodeURIComponent(sessionId)}/message/stream`,
+            {
+                method: 'POST',
+                headers: chatAuthHeaders(true),
+                body: JSON.stringify({ content }),
+            },
         );
+        if (!response.ok) {
+            let detail = `Yêu cầu thất bại (${response.status}).`;
+            try {
+                const payload = await response.json();
+                const responseDetail = payload?.detail;
+                detail = typeof responseDetail === 'string'
+                    ? responseDetail
+                    : responseDetail?.message || payload?.message || detail;
+            } catch {
+                // Keep the HTTP status message when the server response is not JSON.
+            }
+            throw new Error(detail);
+        }
+        if (!response.body) throw new Error('Không thể đọc phản hồi từ trợ lý.');
 
-        if (sessionId !== activeChatSessionId) return;
-        appendAiChatMessage({
-            sender: 'bot',
-            content: response.message || response.bot_message,
-            intent: response.intent,
-            slots: response.preview_card || response.slots,
-            is_ready_for_preview: response.is_ready_for_preview,
-        });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let botMessage = null;
+        let completedResponse = null;
+        const handleSseEvent = (block) => {
+            if (!block.trim()) return;
+            let eventType = 'message';
+            const dataLines = [];
+            block.split(/\r?\n/).forEach(line => {
+                if (line.startsWith('event:')) eventType = line.slice(6).trim();
+                else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+            });
+            if (!dataLines.length) return;
+            const payload = JSON.parse(dataLines.join('\n'));
+            if (eventType === 'error') {
+                throw new Error(payload.message || 'Trợ lý không thể xử lý tin nhắn.');
+            }
+            if (eventType === 'chunk') {
+                if (sessionId !== activeChatSessionId) return;
+                if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                botMessage.text.textContent += payload.text || '';
+                scrollAiChatToLatest();
+            } else if (eventType === 'preview_card') {
+                if (sessionId !== activeChatSessionId) return;
+                if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                botMessage.interactivePreview = createAiChatInvitePreview(payload);
+                botMessage.bubble.appendChild(botMessage.interactivePreview);
+                scrollAiChatToLatest();
+            } else if (eventType === 'room_widget') {
+                if (sessionId !== activeChatSessionId) return;
+                if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                botMessage.interactivePreview = createAiChatRoomWidget(payload);
+                botMessage.bubble.appendChild(botMessage.interactivePreview);
+                scrollAiChatToLatest();
+            } else if (eventType === 'complete') {
+                completedResponse = payload.response;
+                if (sessionId === activeChatSessionId) {
+                    if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                    completeAiChatMessage(botMessage, completedResponse);
+                }
+            }
+        };
+
+        try {
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const blocks = buffer.split(/\r?\n\r?\n/);
+                buffer = blocks.pop() || '';
+                blocks.forEach(handleSseEvent);
+            }
+            buffer += decoder.decode();
+            if (buffer.trim()) handleSseEvent(buffer);
+        } finally {
+            reader.releaseLock();
+        }
+        if (!completedResponse) throw new Error('Luồng phản hồi đã kết thúc bất thường.');
         await refreshAiChatSessionsAfterMessage(sessionId);
     } catch (error) {
         setAiChatStatus(error.message || 'Không thể gửi tin nhắn. Vui lòng thử lại.');
     } finally {
         chatMessageRequestPending = false;
         if (sendButton) sendButton.disabled = false;
+        document.querySelectorAll('[data-ai-chat-prompt]').forEach(button => {
+            button.disabled = false;
+        });
         input.disabled = false;
         input.focus();
     }
@@ -3002,7 +3724,7 @@ function renderAiChatMessages(messages) {
     if (!messages.length) {
         const welcome = document.createElement('div');
         welcome.className = 'ai-chat-welcome';
-        welcome.innerHTML = '<span aria-hidden="true">✦</span><strong>Xin chào! Tôi có thể giúp bạn đặt phòng họp.</strong><p>Hãy cho tôi biết ngày, giờ, thời lượng và số người tham dự.</p>';
+        welcome.innerHTML = '<svg class="ai-chat-welcome-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"></path></svg><strong>Xin chào! Tôi có thể giúp bạn đặt phòng họp.</strong><p>Hãy cho tôi biết ngày, giờ, thời lượng và số người tham dự.</p>';
         container.appendChild(welcome);
         return;
     }
@@ -3027,7 +3749,7 @@ function appendAiChatMessage(message) {
     const completeBooking = message.intent === 'BOOK_ROOM'
         && hasCompleteChatBookingSlots(message.slots);
     if (!isUser && (message.is_ready_for_preview === true || completeBooking)) {
-        bubble.appendChild(createAiChatPreview(message.slots));
+        bubble.appendChild(createAiChatPreview(message.slots, message.ui_widget));
     }
 
     const timestamp = document.createElement('div');
@@ -3036,6 +3758,20 @@ function appendAiChatMessage(message) {
     bubble.appendChild(timestamp);
     row.appendChild(bubble);
     container.appendChild(row);
+    scrollAiChatToLatest();
+    return { row, bubble, text, interactivePreview: null };
+}
+
+function completeAiChatMessage(messageElement, response) {
+    const message = response || {};
+    messageElement.text.textContent = message.message || message.bot_message || messageElement.text.textContent;
+    const slots = message.preview_card || message.slots;
+    const completeBooking = message.intent === 'BOOK_ROOM'
+        && hasCompleteChatBookingSlots(slots);
+    if (!messageElement.interactivePreview
+        && (message.is_ready_for_preview === true || completeBooking)) {
+        messageElement.bubble.appendChild(createAiChatPreview(slots, message.ui_widget));
+    }
     scrollAiChatToLatest();
 }
 
@@ -3051,7 +3787,7 @@ function hasCompleteChatBookingSlots(slots) {
     );
 }
 
-function createAiChatPreview(slots) {
+function createAiChatPreview(slots, widget) {
     const card = document.createElement('section');
     card.className = 'ai-chat-preview';
     const heading = document.createElement('h3');
@@ -3076,10 +3812,391 @@ function createAiChatPreview(slots) {
     const confirmButton = document.createElement('button');
     confirmButton.type = 'button';
     confirmButton.className = 'ai-chat-confirm-button';
-    confirmButton.textContent = 'Xác nhận đặt phòng';
+    confirmButton.textContent = widget?.actions?.[0]?.label || 'Xác nhận đặt phòng';
     confirmButton.addEventListener('click', () => confirmAiChatBooking(slots, confirmButton));
     card.append(heading, details, confirmButton);
     return card;
+}
+
+function createAiChatRoomWidget(payload) {
+    const widget = payload.widget || {};
+    if (widget.type === 'ROOM_CONFIRMATION_WIDGET') {
+        return createAiChatRoomConfirmationWidget(widget);
+    }
+    if (widget.type === 'CANCEL_CONFIRM_WIDGET') {
+        return createAiChatCancellationWidget(widget);
+    }
+    if (widget.type === 'MY_SCHEDULE_WIDGET' || widget.type === 'ROOM_LIST_WIDGET') {
+        return createAiChatListWidget(widget);
+    }
+
+    const room = widget.data || {};
+    const meeting = payload.meeting || {};
+    const card = document.createElement('section');
+    card.className = 'ai-chat-preview ai-chat-room-widget';
+
+    const heading = document.createElement('h3');
+    heading.textContent = widget.title || 'Phòng họp phù hợp';
+    const details = document.createElement('dl');
+    [
+        ['Phòng', room.name || 'Phòng họp'],
+        ['Sức chứa', room.capacity ? `${room.capacity} người` : '—'],
+        ['Vị trí', room.location || '—'],
+    ].forEach(([label, value]) => {
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const description = document.createElement('dd');
+        description.textContent = String(value);
+        details.append(term, description);
+    });
+
+    const slots = {
+        ...meeting,
+        room_id: room.id ?? meeting.room_id,
+        room_name: room.name || meeting.room_name,
+    };
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ai-chat-confirm-button';
+    button.textContent = widget.actions?.[0]?.label || 'Đặt ngay';
+    button.addEventListener('click', () => {
+        if (hasCompleteChatBookingSlots(slots)) {
+            confirmAiChatBooking(slots, button);
+        } else if (room.id && typeof window.openCreateMeeting === 'function') {
+            window.openCreateMeeting({ roomId: room.id });
+        } else {
+            setAiChatStatus('Không thể mở biểu mẫu đặt phòng. Vui lòng thử lại.');
+        }
+    });
+    card.append(heading, details, button);
+    return card;
+}
+
+function createAiChatRoomConfirmationWidget(widget) {
+    const meeting = widget.meeting || {};
+    const room = widget.data || {};
+    const participants = Array.isArray(widget.participants) ? widget.participants : [];
+    const card = document.createElement('section');
+    card.className = 'ai-chat-preview ai-chat-room-widget';
+    const heading = document.createElement('h3');
+    heading.textContent = widget.title || 'Xác nhận cuộc họp';
+
+    const details = document.createElement('dl');
+    [
+        ['Cuộc họp', meeting.title],
+        ['Ngày', formatChatDate(meeting.booking_date)],
+        ['Thời gian', `${meeting.start_time || '—'} · ${meeting.duration_minutes || '—'} phút`],
+        ['Phòng', room.name || meeting.room_name || '—'],
+        ['Sức chứa', meeting.capacity ? `${meeting.capacity} người` : '—'],
+    ].forEach(([label, value]) => {
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const description = document.createElement('dd');
+        description.textContent = String(value ?? '—');
+        details.append(term, description);
+    });
+    card.append(heading, details);
+
+    const participantIds = new Set();
+    if (participants.length) {
+        const participantsHeading = document.createElement('h4');
+        participantsHeading.textContent = `Người tham dự (${participants.length})`;
+        const participantList = document.createElement('div');
+        participantList.className = 'ai-chat-attendee-list ai-chat-participant-list';
+        participants.forEach(participant => {
+            const label = document.createElement('label');
+            label.className = 'ai-chat-attendee';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = String(participant.id);
+            checkbox.checked = true;
+            participantIds.add(participant.id);
+            const identity = document.createElement('span');
+            identity.textContent = participant.full_name || participant.email || 'Người tham dự';
+            label.append(checkbox, identity);
+            participantList.appendChild(label);
+        });
+        card.append(participantsHeading, participantList);
+    }
+
+    const equipmentOptions = Array.isArray(widget.equipment_options)
+        ? widget.equipment_options
+        : [];
+    const selectedEquipmentIds = new Set();
+    if (equipmentOptions.length) {
+        const equipmentDetails = document.createElement('details');
+        equipmentDetails.className = 'ai-chat-equipment-options';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Chọn thêm thiết bị';
+        const equipmentList = document.createElement('div');
+        equipmentList.className = 'ai-chat-equipment-list';
+        const requiredNames = (widget.equipments_required || []).map(name => String(name).toLocaleLowerCase());
+        equipmentOptions.forEach(equipment => {
+            const label = document.createElement('label');
+            label.className = 'ai-chat-attendee';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = String(equipment.id);
+            const equipmentName = String(equipment.name).toLocaleLowerCase();
+            checkbox.checked = Number(equipment.available_quantity) > 0
+                && requiredNames.some(name => name.includes(equipmentName) || equipmentName.includes(name));
+            checkbox.disabled = Number(equipment.available_quantity) <= 0;
+            if (checkbox.checked) selectedEquipmentIds.add(equipment.id);
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) selectedEquipmentIds.add(equipment.id);
+                else selectedEquipmentIds.delete(equipment.id);
+            });
+            const identity = document.createElement('span');
+            identity.textContent = `${equipment.name} (${equipment.available_quantity ?? 0} còn)`;
+            label.append(checkbox, identity);
+            equipmentList.appendChild(label);
+        });
+        equipmentDetails.append(summary, equipmentList);
+        card.appendChild(equipmentDetails);
+    }
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = 'ai-chat-confirm-button';
+    confirmButton.textContent = widget.actions?.[0]?.label || 'Đồng ý tạo cuộc họp';
+    confirmButton.addEventListener('click', () => {
+        const selectedParticipants = [...card.querySelectorAll('.ai-chat-participant-list input[type="checkbox"]')]
+            .filter(input => participantIds.has(Number(input.value)) && input.checked)
+            .map(input => Number(input.value));
+        const equipments = [...selectedEquipmentIds].map(equipmentId => ({
+            equipment_id: equipmentId,
+            quantity: 1,
+        }));
+        confirmAiChatMeeting(
+            { ...meeting, room_id: room.id ?? meeting.room_id, room_name: room.name || meeting.room_name },
+            selectedParticipants,
+            confirmButton,
+            equipments,
+        );
+    });
+    card.appendChild(confirmButton);
+    return card;
+}
+
+function createAiChatCancellationWidget(widget) {
+    const meeting = widget.data || {};
+    const card = document.createElement('section');
+    card.className = 'ai-chat-preview ai-chat-room-widget';
+    const heading = document.createElement('h3');
+    heading.textContent = widget.title || 'Xác nhận hủy cuộc họp';
+    const details = document.createElement('p');
+    details.textContent = `${meeting.title || 'Cuộc họp'} · ${formatChatTimestamp(meeting.start_time, true)} · ${meeting.room_name || 'Trực tuyến'}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ai-chat-confirm-button';
+    button.textContent = widget.actions?.[0]?.label || 'Xác nhận hủy';
+    button.addEventListener('click', async () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        button.textContent = 'Đang hủy...';
+        const status = document.createElement('p');
+        status.className = 'ai-chat-confirm-result';
+        status.setAttribute('role', 'status');
+        card.appendChild(status);
+        try {
+            const response = await fetchAPI(`${API_BASE}/v1/meetings/${encodeURIComponent(meeting.id)}/cancel`, {
+                method: 'PATCH',
+                headers: chatAuthHeaders(true),
+                body: JSON.stringify({ cancellation_reason: 'Người dùng xác nhận hủy qua trợ lý RoomSync.' }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result?.detail || 'Không thể hủy cuộc họp.');
+            status.textContent = 'Đã hủy cuộc họp.';
+            button.textContent = 'Đã hủy';
+        } catch (error) {
+            status.classList.add('is-error');
+            status.textContent = error.message || 'Không thể hủy cuộc họp.';
+            button.textContent = 'Thử lại';
+            button.disabled = false;
+        }
+    });
+    card.append(heading, details, button);
+    return card;
+}
+
+function createAiChatListWidget(widget) {
+    const card = document.createElement('section');
+    card.className = 'ai-chat-preview ai-chat-room-widget';
+    const heading = document.createElement('h3');
+    heading.textContent = widget.title || 'Kết quả';
+    card.appendChild(heading);
+    const list = document.createElement('ul');
+    list.className = 'ai-chat-widget-list';
+    const entries = Array.isArray(widget.data) ? widget.data : [];
+    if (!entries.length) {
+        const empty = document.createElement('li');
+        empty.textContent = 'Chưa có dữ liệu phù hợp.';
+        list.appendChild(empty);
+    }
+    entries.forEach(item => {
+        const entry = document.createElement('li');
+        if (widget.type === 'ROOM_LIST_WIDGET') {
+            entry.textContent = `${item.name || 'Phòng họp'} · ${item.capacity ?? '—'} chỗ · ${item.location || 'Vị trí chưa cập nhật'}`;
+        } else {
+            entry.textContent = `${item.title || 'Cuộc họp'} · ${formatChatTimestamp(item.start_time, true)}–${formatChatTimestamp(item.end_time, true)} · ${item.room_name || 'Trực tuyến'}`;
+        }
+        list.appendChild(entry);
+    });
+    card.appendChild(list);
+    return card;
+}
+
+function createAiChatInvitePreview(preview) {
+    const meeting = preview.meeting || {};
+    const participants = Array.isArray(preview.participants) ? preview.participants : [];
+    const card = document.createElement('section');
+    card.className = 'ai-chat-preview ai-chat-invite-preview';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Xem trước cuộc họp và người tham dự';
+
+    const details = document.createElement('dl');
+    [
+        ['Tiêu đề', meeting.title],
+        ['Ngày', formatChatDate(meeting.booking_date)],
+        ['Thời gian', `${meeting.start_time || '—'} · ${meeting.duration_minutes || '—'} phút`],
+        ['Phòng', meeting.room_name || (meeting.room_id ? `Phòng ${meeting.room_id}` : '—')],
+        ['Sức chứa', meeting.room_capacity ?? '—'],
+    ].forEach(([label, value]) => {
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const description = document.createElement('dd');
+        description.textContent = String(value ?? '—');
+        details.append(term, description);
+    });
+
+    const attendeesHeading = document.createElement('h4');
+    attendeesHeading.className = 'ai-chat-attendees-heading';
+    attendeesHeading.textContent = `Người được mời (${participants.length})`;
+    const attendeeList = document.createElement('div');
+    attendeeList.className = 'ai-chat-attendee-list';
+    if (!participants.length) {
+        const empty = document.createElement('p');
+        empty.className = 'ai-chat-muted';
+        empty.textContent = 'Không tìm thấy người phù hợp với tiêu chí.';
+        attendeeList.appendChild(empty);
+    }
+    participants.forEach(participant => {
+        const label = document.createElement('label');
+        label.className = 'ai-chat-attendee';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = String(participant.id);
+        checkbox.checked = true;
+        checkbox.setAttribute('aria-label', `Mời ${participant.full_name || 'người tham dự'}`);
+        const identity = document.createElement('span');
+        const name = document.createElement('strong');
+        name.textContent = participant.full_name || 'Chưa có tên';
+        const meta = document.createElement('small');
+        const department = participant.department?.name || 'Chưa có phòng ban';
+        meta.textContent = [
+            participant.email,
+            participant.position,
+            department,
+        ].filter(Boolean).join(' · ');
+        identity.append(name, meta);
+        label.append(checkbox, identity);
+        attendeeList.appendChild(label);
+    });
+
+    const warning = document.createElement('p');
+    warning.className = 'ai-chat-capacity-warning';
+    warning.setAttribute('role', 'alert');
+    const updateCapacityWarning = () => {
+        const selectedCount = attendeeList.querySelectorAll('input[type="checkbox"]:checked').length;
+        const roomCapacity = Number(meeting.room_capacity);
+        const overCapacity = Number.isFinite(roomCapacity) && selectedCount > roomCapacity;
+        warning.hidden = !overCapacity;
+        warning.textContent = overCapacity
+            ? `Cảnh báo: ${selectedCount} người được mời vượt sức chứa ${roomCapacity} người của phòng.`
+            : '';
+    };
+    attendeeList.addEventListener('change', updateCapacityWarning);
+    card.append(heading, details, attendeesHeading, attendeeList, warning);
+    updateCapacityWarning();
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-chat-preview-actions';
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = 'ai-chat-confirm-button';
+    confirmButton.textContent = preview.widget?.actions?.[0]?.label
+        || '🚀 Xác nhận tạo cuộc họp';
+    confirmButton.disabled = participants.length === 0;
+    confirmButton.addEventListener('click', () => {
+        const selectedIds = [...attendeeList.querySelectorAll('input[type="checkbox"]:checked')]
+            .map(input => Number(input.value));
+        confirmAiChatMeeting(meeting, selectedIds, confirmButton);
+    });
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'ai-chat-edit-button';
+    editButton.textContent = '⚙ Chỉnh sửa';
+    editButton.addEventListener('click', () => {
+        const input = document.getElementById('ai-chat-input');
+        if (!input) return;
+        input.value = 'Chỉnh sửa cuộc họp này: ';
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+    });
+    actions.append(confirmButton, editButton);
+    card.appendChild(actions);
+    return card;
+}
+
+async function confirmAiChatMeeting(meeting, participantIds, button, equipments = []) {
+    const card = button.closest('.ai-chat-preview');
+    if (!card || button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Đang tạo cuộc họp...';
+    const status = document.createElement('p');
+    status.className = 'ai-chat-confirm-result';
+    status.setAttribute('role', 'status');
+    card.appendChild(status);
+
+    try {
+        const [year, month, day] = String(meeting.booking_date).split('-').map(Number);
+        const [hour, minute] = String(meeting.start_time).split(':').map(Number);
+        const start = new Date(year, month - 1, day, hour, minute);
+        const end = new Date(start.getTime() + Number(meeting.duration_minutes) * 60000);
+        const toLocalDateTime = value => [
+            `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`,
+            `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}:00`,
+        ].join('T');
+        const response = await fetchAPI(`${API_BASE}/v1/meetings/book`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                title: meeting.title,
+                meeting_type: 'offline',
+                room_id: meeting.room_id,
+                start_time: toLocalDateTime(start),
+                end_time: toLocalDateTime(end),
+                participant_ids: participantIds,
+                equipments,
+            }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.detail || 'Không thể tạo cuộc họp.');
+        }
+        status.textContent = participantIds.length
+            ? 'Đã tạo cuộc họp và gửi lời mời tham dự.'
+            : 'Đã tạo cuộc họp.';
+        button.textContent = 'Đã tạo cuộc họp';
+    } catch (error) {
+        status.classList.add('is-error');
+        status.textContent = error.message || 'Không thể tạo cuộc họp.';
+        button.textContent = 'Thử tạo lại';
+        button.disabled = false;
+    }
 }
 
 async function confirmAiChatBooking(slots, button) {
@@ -3135,4 +4252,35 @@ function scrollAiChatToLatest() {
 function setAiChatStatus(message) {
     const status = document.getElementById('ai-chat-status');
     if (status) status.textContent = message || '';
+}
+
+function switchReportTab(tabName, trigger) {
+    const isCancellationTab = tabName === 'cancellations';
+    if (isCancellationTab && !isCurrentUserAdmin()) return;
+
+    const usageTab = document.getElementById('report-tab-usage');
+    const cancellationTab = document.getElementById('report-tab-cancel');
+    const usagePanel = document.getElementById('reportUsagePanel');
+    const cancellationPanel = document.getElementById('reportCancellationPanel');
+    const activeTab = trigger || (isCancellationTab ? cancellationTab : usageTab);
+    [usageTab, cancellationTab].forEach(tab => {
+        if (tab) {
+            const isActive = tab === activeTab;
+            tab.setAttribute('aria-selected', String(isActive));
+            tab.classList.toggle('active', isActive);
+        }
+    });
+    if (usagePanel) {
+        usagePanel.hidden = isCancellationTab;
+        usagePanel.classList.toggle('d-none', isCancellationTab);
+        usagePanel.classList.toggle('active', !isCancellationTab);
+    }
+    if (cancellationPanel) {
+        cancellationPanel.hidden = !isCancellationTab;
+        cancellationPanel.classList.toggle('d-none', !isCancellationTab);
+        cancellationPanel.classList.toggle('active', isCancellationTab);
+    }
+
+    if (isCancellationTab) loadCancelReportData();
+    else loadUsageReportData();
 }

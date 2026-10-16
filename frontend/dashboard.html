@@ -5,14 +5,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RoomSync - Quản lý đặt phòng họp</title>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
     <link rel="icon" type="image/svg+xml"
         href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' fill='none' stroke='%232563EB' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='6' y='9' width='28' height='25' rx='3'/%3E%3Cpath d='M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=19">
+    <link rel="stylesheet" href="/static/css/style.css?v=20">
     <link rel="stylesheet" href="/static/css/booking.css?v=4">
-    <link rel="stylesheet" href="/static/css/create-meeting.css?v=5">
-    <link rel="stylesheet" href="/static/css/chatbot.css?v=2">
-    <link rel="stylesheet" href="/static/css/dashboard-theme.css?v=2">
+    <link rel="stylesheet" href="/static/css/create-meeting.css?v=9">
+    <link rel="stylesheet" href="/static/css/chatbot.css?v=6">
+    <link rel="stylesheet" href="/static/css/dashboard-theme.css?v=5">
+    <style>.d-none { display: none !important; }</style>
 </head>
 
 <body class="dashboard-page">
@@ -68,15 +70,7 @@
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 20V10M12 20V4M6 20v-6"></path>
                     </svg>
-                    <span class="nav-text">Báo cáo sử dụng</span>
-                </a>
-                <a href="#" class="nav-item" id="navCancellationAnalytics"
-                    onclick="switchMainTab('cancellations', this)" style="display: none;">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 19h16M7 16V9m5 7V5m5 11v-4"></path>
-                        <path d="M3 4l17 17"></path>
-                    </svg>
-                    <span class="nav-text">Thống kê Hủy phòng</span>
+                    <span class="nav-text">Báo cáo &amp; Thống kê</span>
                 </a>
                 <a href="#" class="nav-item" id="navUserManagement"
                     onclick="switchMainTab('users', this)" style="display: none;">
@@ -175,56 +169,42 @@
             <div class="content-body p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
                 <!-- VIEW 1: TỔNG QUAN -->
                 <div id="viewOverview" class="tab-view">
-                    <section
-                        class="relative isolate mb-6 overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10"
-                        aria-labelledby="overviewWelcomeTitle">
-                        <div class="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-blue-100/70 blur-3xl"
-                            aria-hidden="true"></div>
-                        <div class="relative flex flex-col items-start gap-6 lg:flex-row lg:items-end lg:justify-between">
-                            <div class="max-w-2xl">
-                                <span
-                                    class="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
-                                    <span class="h-2 w-2 rounded-full bg-blue-600" aria-hidden="true"></span>
-                                    Hệ thống Quản lý Doanh nghiệp
-                                </span>
-                                <h2 id="overviewWelcomeTitle"
-                                    class="mt-5 text-2xl font-bold leading-tight tracking-tight text-slate-900 sm:text-3xl">
-                                    RS-RoomSync — Đặt Lịch Phòng Họp Trực Tuyến Thông Minh
-                                </h2>
-                                <p class="mt-3 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
-                                    Giải pháp quản lý không gian họp hiện đại, tối ưu hóa công suất làm việc, giúp nhóm
-                                    dự án kết nối dễ dàng và nâng cao hiệu suất làm việc doanh nghiệp.
-                                </p>
-                            </div>
-                            <div class="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-                                <button type="button" onclick="openCreateMeeting()"
-                                    class="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-800 hover:shadow-md focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200">
-                                    Tạo cuộc họp
-                                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                        aria-hidden="true">
-                                        <path d="M5 12h14M12 5l7 7-7 7"></path>
-                                    </svg>
-                                </button>
-                                <button type="button"
-                                    onclick="alert('Tính năng hướng dẫn đang được cập nhật!')"
-                                    class="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
-                                    Xem hướng dẫn
-                                </button>
-                            </div>
+                    <header class="overview-header" aria-labelledby="overviewWelcomeTitle">
+                        <div class="overview-heading-copy">
+                            <h1 id="overviewWelcomeTitle">Tổng quan</h1>
+                            <p id="currentDateText" class="overview-date">Đang tải...</p>
                         </div>
-                    </section>
+                        <div class="overview-hero-plan" aria-hidden="true">
+                            <svg viewBox="0 0 220 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="7.5" y="8.5" width="94" height="44" rx="5.5" />
+                                <path d="M7.5 25.5h34v27m16-44v17h44" />
+                                <rect x="49.5" y="62.5" width="51" height="41" rx="5.5" />
+                                <path d="M70 62.5v18h30.5M19 39.5h12m-12 7h12m30 29h12m-12 7h12" />
+                                <rect x="119.5" y="8.5" width="93" height="94" rx="5.5" />
+                                <path d="M119.5 36.5h35v66m18-94v28h40m-75 21h20m-20 8h20m-20 8h20" />
+                                <circle cx="188" cy="77" r="10" />
+                                <path d="M184 77h8m-4-4v8" />
+                            </svg>
+                        </div>
+                        <button type="button" class="overview-primary-action" onclick="openCreateMeeting()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 5v14M5 12h14"></path>
+                            </svg>
+                            Tạo cuộc họp
+                        </button>
+                    </header>
 
-                    <div class="page-header" id="roomsSection">
+                    <section class="page-header overview-room-heading" id="roomsSection">
                         <div>
-                            <h2>Phòng họp hiện có</h2>
-                            <p class="subtitle" id="currentDateText">Đang tải...</p>
+                            <h2>Phòng họp</h2>
+                            <p class="subtitle">Chọn không gian phù hợp cho lịch làm việc của bạn.</p>
                         </div>
                         <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()"
                             style="display: none;">
                             + Thêm phòng họp
                         </button>
-                    </div>
+                    </section>
 
                     <section class="stats-grid overview-stats-grid" aria-label="Thống kê phòng họp">
                         <article class="stat-card overview-stat-card">
@@ -237,8 +217,8 @@
                                     </svg>
                                 </span>
                             </div>
-                            <div class="stat-value overview-stat-value" id="statTotal">0</div>
-                            <span class="stat-sub text-gray">+2 so với tháng trước</span>
+                            <div class="stat-value overview-stat-value" id="statTotal"><span id="statTotalRooms">-</span></div>
+                            <span class="stat-sub text-gray" id="statTotalRoomsSub">-</span>
                         </article>
                         <article class="stat-card overview-stat-card">
                             <div class="overview-stat-heading">
@@ -251,8 +231,8 @@
                                     </svg>
                                 </span>
                             </div>
-                            <div class="stat-value overview-stat-value text-orange" id="statInUse">0</div>
-                            <span class="stat-sub text-orange" id="statCapacityText">0% công suất</span>
+                            <div class="stat-value overview-stat-value text-orange" id="statInUse"><span id="statInUseRooms">-</span></div>
+                            <span class="stat-sub text-orange" id="statCapacityText"><span id="statOccupancyRate">-</span></span>
                         </article>
                         <article class="stat-card overview-stat-card">
                             <div class="overview-stat-heading">
@@ -265,8 +245,8 @@
                                     </svg>
                                 </span>
                             </div>
-                            <div class="stat-value overview-stat-value text-green" id="statAvailable">0</div>
-                            <span class="stat-sub text-gray" id="statRatioText">trong 0 phòng</span>
+                            <div class="stat-value overview-stat-value text-green" id="statAvailable"><span id="statAvailableRooms">-</span></div>
+                            <span class="stat-sub text-gray" id="statRatioText"><span id="statAvailableRoomsSub">-</span></span>
                         </article>
                         <article class="stat-card overview-stat-card">
                             <div class="overview-stat-heading">
@@ -279,17 +259,25 @@
                                     </svg>
                                 </span>
                             </div>
-                            <div class="stat-value overview-stat-value" id="statBookings">142</div>
-                            <span class="stat-sub text-gray">↑ 12% so với tuần trước</span>
+                            <div class="stat-value overview-stat-value" id="statBookings"><span id="statWeeklyBookings">-</span></div>
+                            <span class="stat-sub text-gray" id="statWeeklyBookingsSub">-</span>
                         </article>
                     </section>
 
                     <div class="filter-wrapper">
                         <div class="filter-left">
-                            <button class="btn-filter-date" onclick="filterToday()">📅 Hôm nay — <span
-                                    id="filterDateLabel">26/09/2026</span></button>
-                            <select class="select-capacity" id="capacitySelect" onchange="applyFilters()">
-                                <option value="all">Sức chứa ˅</option>
+                            <button class="btn-filter-date" type="button" onclick="filterToday()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+                                    <path d="M16 3v4M8 3v4M3 10h18"></path>
+                                </svg>
+                                <span>Hôm nay</span>
+                                <span class="overview-filter-date" id="filterDateLabel">26/09/2026</span>
+                            </button>
+                            <select class="select-capacity" id="capacitySelect" aria-label="Lọc phòng theo sức chứa"
+                                onchange="applyFilters()">
+                                <option value="all">Tất cả sức chứa</option>
                                 <option value="small">Nhỏ (1 - 5 người)</option>
                                 <option value="medium">Vừa (6 - 12 người)</option>
                                 <option value="large">Lớn (15+ người)</option>
@@ -489,21 +477,33 @@
                                 <line x1="6" y1="20" x2="6" y2="14"></line>
                                 <line x1="3" y1="20" x2="21" y2="20"></line>
                             </svg>
-                            Báo cáo & Thống kê Sử dụng Phòng họp
+                            Báo cáo &amp; Thống kê
                         </h2>
-                        <p class="subtitle">Cung cấp dữ liệu phân tích tỷ lệ lấp đầy và tổng số giờ họp của từng phòng.
-                        </p>
+                        <button type="button" id="btn-open-executive-modal"
+                            class="btn btn-primary executive-report-open-button">
+                            📈 Báo cáo Quản trị Lãnh đạo
+                        </button>
                     </div>
+
+                    <div class="report-tabs" role="tablist" aria-label="Loại báo cáo">
+                        <button id="report-tab-usage" type="button" class="active" role="tab" aria-selected="true"
+                            aria-controls="reportUsagePanel" onclick="switchReportTab('usage', this)">Báo cáo sử dụng</button>
+                        <button id="report-tab-cancel" type="button" role="tab" aria-selected="false"
+                            aria-controls="reportCancellationPanel" onclick="switchReportTab('cancellations', this)">Thống kê Hủy phòng</button>
+                    </div>
+                    <p id="roomUsageReportMessage" class="report-message" role="alert" hidden></p>
+
+                    <section id="reportUsagePanel" class="report-panel active" role="tabpanel" aria-labelledby="report-tab-usage">
 
                     <!-- Bộ lọc báo cáo -->
                     <div class="report-filter-card">
                         <div class="report-filter-field">
                             <label class="report-filter-label" for="reportStartDate">Từ ngày</label>
-                            <input type="datetime-local" id="reportStartDate" class="report-filter-control">
+                            <input type="date" id="reportStartDate" class="report-filter-control">
                         </div>
                         <div class="report-filter-field">
                             <label class="report-filter-label" for="reportEndDate">Đến ngày</label>
-                            <input type="datetime-local" id="reportEndDate" class="report-filter-control">
+                            <input type="date" id="reportEndDate" class="report-filter-control">
                         </div>
                         <div class="report-filter-field">
                             <label class="report-filter-label" for="reportRoomIdSelect">Phòng họp</label>
@@ -511,8 +511,14 @@
                                 <option value="">Tất cả các phòng</option>
                             </select>
                         </div>
-                        <button type="button" class="report-submit-button" onclick="fetchRoomUsageReport()">
-                            Xem Báo Cáo
+                        <button type="button" id="btnRunUsageReport" class="report-submit-button">
+                            <svg class="report-refresh-icon" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <path d="M20 7v5h-5"></path>
+                                <path d="M19 12a7 7 0 1 1-2.05-4.95L20 12"></path>
+                            </svg>
+                            <span class="report-submit-label">Cập nhật</span>
                         </button>
                     </div>
 
@@ -520,20 +526,35 @@
                     <div class="stats-grid report-summary-grid">
                         <div class="stat-card">
                             <span class="stat-title">Tổng số phòng</span>
-                            <div class="stat-value" id="sumTotalRooms">-</div>
+                            <div class="stat-value" id="kpiTotalRooms">-</div>
                         </div>
                         <div class="stat-card">
                             <span class="stat-title">Tổng số cuộc họp</span>
-                            <div class="stat-value text-green" id="sumTotalMeetings">-</div>
+                            <div class="stat-value text-green" id="kpiTotalMeetings">-</div>
                         </div>
                         <div class="stat-card">
                             <span class="stat-title">Tổng số giờ họp</span>
-                            <div class="stat-value text-orange" id="sumTotalHours">-</div>
+                            <div class="stat-value text-orange" id="kpiTotalHours">-</div>
                         </div>
                         <div class="stat-card">
                             <span class="stat-title">Tỷ lệ lấp đầy TB</span>
-                            <div class="stat-value text-purple" id="sumAvgOccupancy">-</div>
+                            <div class="stat-value text-purple" id="kpiOccupancyRate">-</div>
                         </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 my-6">
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Tổng số giờ họp theo từng phòng họp</h3>
+                            <div id="chartUsageBar" class="report-chart" role="img"
+                                aria-label="Biểu đồ cột tổng số giờ họp theo từng phòng họp">
+                            </div>
+                        </section>
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Tỷ lệ lấp đầy giữa các phòng</h3>
+                            <div id="chartUsageDonut" class="report-chart" role="img"
+                                aria-label="Biểu đồ donut tỷ lệ lấp đầy giữa các phòng">
+                            </div>
+                        </section>
                     </div>
 
                     <!-- Bảng chi tiết -->
@@ -554,16 +575,16 @@
                                 <tbody id="roomDetailsTableBody">
                                     <tr>
                                         <td colspan="5" class="table-empty-state">Chưa
-                                            có dữ liệu. Bấm "Xem Báo Cáo" để tải.</td>
+                                            có dữ liệu. Bấm "Cập nhật" để tải.</td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
                     </div>
-                </div>
+                    </section>
 
-                <!-- ADMIN VIEW: CANCELLATION ANALYTICS -->
-                <div id="viewCancellationAnalytics" class="tab-view" style="display: none;">
+                <section id="reportCancellationPanel" class="report-panel d-none" role="tabpanel"
+                    aria-labelledby="report-tab-cancel" hidden>
                     <div class="page-header">
                         <div>
                             <h2>Thống kê Hủy phòng</h2>
@@ -578,8 +599,15 @@
                                 <option value="">Tất cả phòng</option>
                             </select>
                         </label>
-                        <button type="button" id="btnFilterCancellation"
-                            onclick="fetchCancellationAnalytics(event)">Xem thống kê</button>
+                        <button type="button" id="btnFilterCancellation" class="report-submit-button">
+                            <svg class="report-refresh-icon" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <path d="M20 7v5h-5"></path>
+                                <path d="M19 12a7 7 0 1 1-2.05-4.95L20 12"></path>
+                            </svg>
+                            <span class="report-submit-label">Cập nhật</span>
+                        </button>
                         <button type="button" onclick="exportCancellationAnalytics('excel')"
                             class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất Excel</button>
                         <button type="button" onclick="exportCancellationAnalytics('pdf')"
@@ -588,41 +616,37 @@
                     <div id="cancellationAnalyticsMessage"
                         class="hidden mb-4 p-3 rounded-lg bg-red-50 text-red-600 text-sm font-medium"
                         role="alert" aria-live="assertive"></div>
-                    <section class="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                        <div class="mb-4">
-                            <h3 class="text-lg font-bold text-slate-800">Báo cáo Quản trị Lãnh đạo (Executive Report)</h3>
-                            <p class="text-sm text-slate-500">Tổng hợp hiệu quả sử dụng phòng họp, khung giờ cao điểm và lãng phí tài nguyên.</p>
-                        </div>
-                        <div class="flex flex-wrap items-end gap-3">
-                            <label class="text-sm font-medium text-slate-600">Từ ngày
-                                <input type="date" id="executiveStartDate" class="ml-1 rounded border border-slate-300 px-2 py-2">
-                            </label>
-                            <label class="text-sm font-medium text-slate-600">Đến ngày
-                                <input type="date" id="executiveEndDate" class="ml-1 rounded border border-slate-300 px-2 py-2">
-                            </label>
-                            <label class="text-sm font-medium text-slate-600">Phòng ban (ID, tùy chọn)
-                                <input type="number" min="1" id="executiveDepartmentId" placeholder="Tất cả"
-                                    class="ml-1 w-28 rounded border border-slate-300 px-2 py-2">
-                            </label>
-                            <button type="button" onclick="exportExecutiveReport('excel')"
-                                class="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">📊 Báo cáo Executive (Excel)</button>
-                            <button type="button" onclick="exportExecutiveReport('pdf')"
-                                class="rounded-lg bg-rose-600 px-4 py-2 font-medium text-white hover:bg-rose-700">📄 Báo cáo Executive (PDF)</button>
-                        </div>
-                    </section>
                     <div class="stats-grid cancellation-analytics-stats">
                         <div class="stat-card">
                             <span class="stat-title">Tổng cuộc họp bị hủy</span>
-                            <div class="stat-value text-orange" id="cancelledTotal">0</div>
+                            <div class="stat-value text-orange" id="kpiTotalCancels">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ hủy</span>
+                            <div class="stat-value text-purple" id="kpiCancelRate">0%</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Lý do hủy phổ biến</span>
+                            <div class="stat-value cancellation-top-reason" id="cancellationPopularReason">—</div>
                         </div>
                         <div class="stat-card">
                             <span class="stat-title">Số giờ lãng phí</span>
-                            <div class="stat-value text-purple" id="cancelledWastedHours">0 giờ</div>
+                            <div class="stat-value text-orange" id="cancelledWastedHours">0 giờ</div>
                         </div>
-                        <div class="stat-card">
-                            <span class="stat-title">Tỷ lệ không check-in</span>
-                            <div class="stat-value text-orange" id="cancelledNoShowRate">0%</div>
-                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 my-6">
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Phân bổ lý do hủy phòng</h3>
+                            <div id="chartCancelReasons" class="report-chart" role="img"
+                                aria-label="Biểu đồ donut phân bổ lý do hủy phòng">
+                            </div>
+                        </section>
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Cuộc họp thành công và bị hủy</h3>
+                            <div id="chartCancelvsSuccess" class="report-chart" role="img"
+                                aria-label="Biểu đồ cột chồng so sánh cuộc họp thành công và bị hủy">
+                            </div>
+                        </section>
                     </div>
                     <div class="cancellation-analytics-columns">
                         <div class="table-card">
@@ -653,6 +677,16 @@
                             </table>
                         </div>
                     </div>
+                    <div class="table-card cancellation-offenders-card">
+                        <h3>Chi tiết cuộc họp bị hủy</h3>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Mã</th><th>Cuộc họp</th><th>Phòng</th><th>Người đặt</th><th>Thời gian</th><th>Lý do</th></tr></thead>
+                                <tbody id="cancellationMeetingsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
                 </div>
 
                 <!-- VIEW 7: CÀI ĐẶT -->
@@ -770,8 +804,8 @@
                         <div class="max-w-2xl rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
                             <h2 class="mb-1 text-base font-semibold text-gray-900">Tạo tài khoản mới</h2>
                             <p class="mb-5 text-sm text-gray-500">
-                                Mật khẩu được thiết lập ở đây; hãy bàn giao mật khẩu ban đầu trực tiếp cho người dùng.
-                                Hệ thống chưa gửi email tự động.
+                                Mật khẩu tạm sẽ được hệ thống sinh tự động và gửi qua Gmail. Người dùng cần đổi mật khẩu
+                                để kích hoạt tài khoản.
                             </p>
                             <form id="adminCreateUserForm" onsubmit="handleAdminCreateUser(event)" class="space-y-4">
                             <div>
@@ -805,16 +839,6 @@
                             </div>
 
                             <div>
-                                <label for="adminUserPassword" class="block text-sm font-medium text-gray-700 mb-1.5">
-                                    Mật khẩu ban đầu <span class="text-red-500">*</span>
-                                </label>
-                                <input id="adminUserPassword" name="password" type="password" minlength="8"
-                                    maxlength="128" autocomplete="new-password" required
-                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all"
-                                    placeholder="Ít nhất 8 ký tự">
-                            </div>
-
-                            <div>
                                 <label for="adminUserRole" class="block text-sm font-medium text-gray-700 mb-1.5">
                                     Vai trò <span class="text-red-500">*</span>
                                 </label>
@@ -823,6 +847,30 @@
                                     <option value="employee">Nhân viên</option>
                                     <option value="admin">Quản trị viên</option>
                                 </select>
+                            </div>
+
+                            <div>
+                                <label for="adminUserDepartment" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Phòng ban
+                                </label>
+                                <select id="adminUserDepartment" name="department_id"
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all">
+                                    <option value="" selected>-- Chọn phòng ban (không bắt buộc) --</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="adminUserProjectGroups" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Nhóm dự án
+                                </label>
+                                <select id="adminUserProjectGroups" name="project_group_ids" multiple size="4"
+                                    aria-describedby="adminUserProjectGroupsHelp"
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all">
+                                    <option value="" selected>-- Chọn nhóm dự án (không bắt buộc) --</option>
+                                </select>
+                                <p id="adminUserProjectGroupsHelp" class="mt-1 text-xs text-gray-500">
+                                    Có thể chọn nhiều nhóm dự án.
+                                </p>
                             </div>
 
                             <div class="pt-2">
@@ -838,30 +886,116 @@
             </div>
         </main>
 
-        <nav class="mobile-bottom-nav fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 lg:hidden flex justify-around items-center h-16 shadow-lg"
+        <nav id="mobileBottomNav" class="mobile-bottom-nav fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 lg:hidden flex justify-around items-center h-16 shadow-lg"
             aria-label="Điều hướng nhanh">
-            <button type="button" class="mobile-nav-item" data-tab="overview"
+            <button type="button" class="mobile-nav-item" data-tab="overview" data-nav-target="overview"
                 onclick="switchMainTab('overview', document.getElementById('navOverview'))" aria-label="Tổng quan"
                 aria-current="page">
-                <span aria-hidden="true">🏠</span><span>Tổng quan</span>
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+                <span>Tổng quan</span>
             </button>
-            <button type="button" class="mobile-nav-item" data-tab="my-bookings"
+            <button type="button" class="mobile-nav-item" data-tab="my-bookings" data-nav-target="my-bookings"
                 onclick="switchMainTab('my-bookings', document.getElementById('navMyBookings'))"
                 aria-label="Lịch của tôi">
-                <span aria-hidden="true">📅</span><span>Lịch của tôi</span>
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <rect width="18" height="18" x="3" y="4" rx="2" />
+                    <path d="M16 2v4M8 2v4M3 10h18" />
+                </svg>
+                <span>Lịch của tôi</span>
             </button>
-            <button type="button" class="mobile-nav-item mobile-nav-scan" onclick="openQuickQrScanner()"
+            <button id="qrScanBtnMobile" type="button" class="mobile-nav-item mobile-nav-scan"
+                onclick="openQuickQrScanner()"
                 aria-label="Quét QR">
-                <span aria-hidden="true">📷</span><span>Quét QR</span>
+                <span class="mobile-nav-scan-icon" aria-hidden="true">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        aria-hidden="true" focusable="false">
+                        <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3z" />
+                        <path d="M14 14h3v3h-3zM19 14v2m2 2v3h-3m-4 0h2" />
+                    </svg>
+                </span>
+                <span>Quét QR</span>
             </button>
-            <button type="button" class="mobile-nav-item" data-tab="rooms"
+            <button type="button" class="mobile-nav-item" data-tab="rooms" data-nav-target="rooms"
                 onclick="switchMainTab('rooms', document.getElementById('navRooms'))" aria-label="Phòng họp">
-                <span aria-hidden="true">🚪</span><span>Phòng họp</span>
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <rect x="4" y="2" width="16" height="20" rx="2" />
+                    <path d="M9 22v-4h6v4" />
+                </svg>
+                <span>Phòng họp</span>
             </button>
-            <button type="button" class="mobile-nav-item" onclick="toggleMobileMenu()" aria-label="Mở menu">
-                <span aria-hidden="true">☰</span><span>Menu</span>
+            <button type="button" class="mobile-nav-item" data-nav-target="menu"
+                onclick="toggleMobileMenu()" aria-label="Mở menu">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <rect width="7" height="7" x="3" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="14" rx="1" />
+                    <rect width="7" height="7" x="3" y="14" rx="1" />
+                </svg>
+                <span>Menu</span>
             </button>
         </nav>
+    </div>
+
+    <div id="executiveReportModal" class="modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="executiveReportTitle" aria-hidden="true">
+        <section class="modal-content" aria-describedby="executiveReportDescription">
+            <h3 id="executiveReportTitle" class="text-xl font-bold text-slate-800">
+                Xuất Báo cáo Quản trị Lãnh đạo (Executive Report)
+            </h3>
+            <p id="executiveReportDescription" class="subtitle mb-5">
+                Chọn khoảng thời gian và phòng ban cho báo cáo.
+            </p>
+            <div class="grid gap-4">
+                <label class="grid gap-1 text-sm font-medium text-slate-600" for="executiveStartDate">
+                    Từ ngày
+                    <input type="date" id="executiveStartDate"
+                        class="rounded-lg border border-slate-300 px-3 py-2">
+                </label>
+                <label class="grid gap-1 text-sm font-medium text-slate-600" for="executiveEndDate">
+                    Đến ngày
+                    <input type="date" id="executiveEndDate"
+                        class="rounded-lg border border-slate-300 px-3 py-2">
+                </label>
+                <label class="grid gap-1 text-sm font-medium text-slate-600" for="executiveDepartmentId">
+                    Phòng ban
+                    <select id="executiveDepartmentId" class="rounded-lg border border-slate-300 px-3 py-2">
+                        <option value="">Tất cả phòng ban</option>
+                    </select>
+                </label>
+            </div>
+            <p id="executiveReportMessage" class="mt-4 text-sm text-red-600" role="alert" hidden></p>
+            <div class="modal-actions mt-6 flex flex-wrap justify-end gap-2">
+                <button type="button" id="btn-export-executive-excel"
+                    class="executive-export-button executive-export-excel">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <path d="M14 2v6h6M8 13l4 5m0-5-4 5m8-4h-3"></path>
+                    </svg>
+                    <span class="executive-export-label">Xuất Excel (.xlsx)</span>
+                </button>
+                <button type="button" id="btn-export-executive-pdf"
+                    class="executive-export-button executive-export-pdf">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <path d="M14 2v6h6M8 13h2a1.5 1.5 0 0 1 0 3H8v3m5-6h1.5a3 3 0 0 1 0 6H13zm6 6v-6h3m-3 3h2"></path>
+                    </svg>
+                    <span class="executive-export-label">Xuất PDF (.pdf)</span>
+                </button>
+                <button type="button" id="btn-close-executive-modal"
+                    class="executive-export-button executive-export-close">
+                    Đóng
+                </button>
+            </div>
+        </section>
     </div>
 
     <!-- MODAL XEM LỊCH TRÌNH -->
@@ -1040,7 +1174,7 @@
 
     <!-- MODAL TẠO CUỘC HỌP -->
     <div id="createMeetingModal" class="cm-overlay" aria-hidden="true">
-        <section id="cmDialog" class="cm-dialog cm-dialog--mobile-scroll" role="dialog" aria-modal="true"
+        <section id="cmDialog" class="cm-dialog cm-dialog--mobile-scroll cm-modal-body" role="dialog" aria-modal="true"
             aria-labelledby="cmHeading">
             <div id="cmFormView" class="cm-form-view">
                 <header class="cm-header">
@@ -1049,7 +1183,12 @@
                         <h1 id="cmHeading">Tạo cuộc họp</h1>
                     </div>
                     <button class="cm-icon-btn" type="button" aria-label="Đóng"
-                        onclick="closeCreateMeeting()">×</button>
+                        onclick="closeCreateMeeting()">
+                        <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false">
+                            <path d="m18 6-12 12M6 6l12 12" />
+                        </svg>
+                    </button>
                 </header>
 
                 <form id="createMeetingForm" class="cm-layout">
@@ -1084,13 +1223,13 @@
                                     <p id="cmDateError" class="cm-field-error" data-validation-error>Chọn ngày hợp lệ.</p>
                                 </div>
                                 <div>
-                                    <label class="cm-mini-label" for="cmStart">Giờ bắt đầu</label>
-                                    <select id="cmStart" class="cm-select" aria-describedby="cmStartError"></select>
+                                    <label class="cm-mini-label" for="start_time">Giờ bắt đầu</label>
+                                    <input id="start_time" name="start_time" class="cm-input" type="time" required aria-describedby="cmStartError" />
                                     <p id="cmStartError" class="cm-field-error" data-validation-error>Chọn giờ bắt đầu hợp lệ.</p>
                                 </div>
                                 <div>
-                                    <label class="cm-mini-label" for="cmEnd">Giờ kết thúc</label>
-                                    <select id="cmEnd" class="cm-select" aria-describedby="cmEndError"></select>
+                                    <label class="cm-mini-label" for="end_time">Giờ kết thúc</label>
+                                    <input id="end_time" name="end_time" class="cm-input" type="time" required aria-describedby="cmEndError" />
                                     <p id="cmEndError" class="cm-field-error" data-validation-error>Chọn giờ kết thúc hợp lệ.</p>
                                 </div>
                             </div>
@@ -1125,14 +1264,49 @@
                                 <label class="cm-label" for="cmAttendeeSearch">Người tham dự</label>
                                 <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
                             </div>
+                            <label class="cm-external-guests">
+                                <span class="cm-mini-label">Khách ngoài (số lượng)</span>
+                                <input id="cmExternalGuestCount" class="cm-input" type="number"
+                                    min="0" step="1" value="0" inputmode="numeric" />
+                            </label>
+                            <div class="cm-attendee-filters">
+                                <label>
+                                    <span class="cm-mini-label">Phòng ban</span>
+                                    <select id="cmDepartmentFilter" class="cm-select">
+                                        <option value="">Tất cả phòng ban</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span class="cm-mini-label">Nhóm dự án</span>
+                                    <select id="cmProjectGroupFilter" class="cm-select">
+                                        <option value="">Tất cả nhóm dự án</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span class="cm-mini-label">Chức vụ</span>
+                                    <select id="cmPositionFilter" class="cm-select">
+                                        <option value="">Tất cả chức vụ</option>
+                                        <option value="manager">Cấp quản lý</option>
+                                        <option value="specialist">Chuyên viên</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <p id="cmDirectoryError" class="cm-alert cm-alert-error" role="alert" hidden></p>
+                            <div id="cmQuickInviteChips" class="cm-quick-invite-chips"
+                                role="group" aria-label="Mời nhanh theo phòng ban hoặc nhóm dự án" hidden></div>
                             <div class="cm-attendee-search">
                                 <input id="cmAttendeeSearch" class="cm-search" type="search"
-                                    placeholder="Tìm người tham dự..." autocomplete="off" />
-                                <ul id="cmAttendeeSuggest" class="cm-suggest"></ul>
+                                    placeholder="Tìm họ tên, email hoặc mã nhân viên..." autocomplete="off"
+                                    aria-controls="cmAttendeeSuggest" />
                             </div>
+                            <div class="cm-attendee-results-header">
+                                <span id="cmAttendeeSearchStatus" class="cm-help" role="status" aria-live="polite"></span>
+                                <button id="cmSelectAllAttendees" type="button" class="cm-link-btn"
+                                    onclick="selectAllFilteredAttendees()">Chọn tất cả</button>
+                            </div>
+                            <ul id="cmAttendeeSuggest" class="cm-suggest cm-attendee-results"></ul>
+                            <p id="cmCapacityWarning" class="cm-alert cm-alert-error" role="alert" hidden></p>
                             <div id="cmAttendeeChips" class="cm-chips"></div>
-                            <button type="button" class="cm-link-btn" onclick="addAllTeamMembers()">Thêm tất cả thành viên
-                                nhóm</button>
                         </section>
 
                         <section class="cm-section">
@@ -1140,9 +1314,25 @@
                             <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp"
                                 aria-controls="cmOnlineBox cmResources">
                                 <button type="button" id="cmModeOnline" aria-pressed="false"
-                                    onclick="setCreateMeetingMode('online')">🌐 Online</button>
+                                    onclick="setCreateMeetingMode('online')">
+                                    <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                                        aria-hidden="true" focusable="false">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
+                                    </svg>
+                                    Online
+                                </button>
                                 <button type="button" id="cmModeOffline" aria-pressed="true"
-                                    onclick="setCreateMeetingMode('offline')">🏢 Offline</button>
+                                    onclick="setCreateMeetingMode('offline')">
+                                    <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                                        aria-hidden="true" focusable="false">
+                                        <rect x="4" y="2" width="16" height="20" rx="2" />
+                                        <path d="M9 22v-4h6v4" />
+                                    </svg>
+                                    Offline
+                                </button>
                             </div>
                             <div id="cmOnlineBox" class="cm-online-box" aria-hidden="true">
                                 <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
@@ -1164,7 +1354,7 @@
                                     </div>
                                 </div>
 
-                                <div class="cm-capacity">
+                                <div class="cm-capacity cm-search-card">
                                     <div>
                                         <span class="cm-help">Sức chứa cần thiết</span>
                                         <strong id="cmCapacityValue">1 người</strong>
@@ -1172,7 +1362,15 @@
                                     </div>
                                     <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost"
                                         aria-describedby="cmRoomError"
-                                        onclick="searchMatchingRooms()">Tìm phòng phù hợp</button>
+                                        onclick="searchMatchingRooms()">
+                                        <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                            stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                            <circle cx="11" cy="11" r="8" />
+                                            <path d="m21 21-4.35-4.35" />
+                                        </svg>
+                                        Tìm phòng phù hợp
+                                    </button>
                                 </div>
                                 <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
                                 <div id="cmRoomResults" class="cm-room-list">
@@ -1197,7 +1395,23 @@
                     <aside class="cm-summary-pane">
                         <div class="cm-summary-card">
                             <h2>Kiểm tra cuộc họp</h2>
+                            <div class="cm-organizer-summary">
+                                <span>Người tổ chức: <strong id="cmOrganizerName">Chưa xác định</strong></span>
+                                <label>
+                                    <input id="cmOrganizerParticipates" type="checkbox" checked />
+                                    Tôi tham gia cuộc họp
+                                </label>
+                            </div>
+                            <p class="cm-attendee-total">Tổng tham dự:
+                                <strong id="cmTotalAttendees">1 người</strong>
+                            </p>
                             <ul id="cmSummaryList" class="cm-summary-list"></ul>
+                            <div class="cm-equipment-summary">
+                                <strong>Thiết bị đăng ký</strong>
+                                <ul id="cmEquipmentSummary" class="cm-equipment-summary-list">
+                                    <li class="cm-help">Chưa đăng ký thiết bị.</li>
+                                </ul>
+                            </div>
                         </div>
                         <div id="cmSummaryStatus" class="cm-status is-warn">Đang kiểm tra thông tin...</div>
                         <div class="cm-summary-actions">
@@ -1210,7 +1424,13 @@
             </div>
 
             <div id="cmSuccessView" class="cm-success hidden" role="status">
-                <div class="cm-success-icon" aria-hidden="true">✓</div>
+                <div class="cm-success-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" focusable="false">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                </div>
                 <h2>Đã tạo cuộc họp</h2>
                 <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
                 <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp
@@ -1220,30 +1440,63 @@
         </section>
     </div>
 
+    <dialog id="cmWarningDialog" class="cm-warning-dialog"
+        aria-labelledby="cmWarningHeading" aria-describedby="cmWarningDescription">
+        <form method="dialog">
+            <p class="cm-kicker">Kiểm tra khả dụng</p>
+            <h2 id="cmWarningHeading">Có cảnh báo cho cuộc họp</h2>
+            <p id="cmWarningDescription">Bạn có thể điều chỉnh thông tin hoặc xác nhận vẫn đặt phòng.</p>
+            <ul id="cmWarningList" class="cm-warning-list"></ul>
+            <div class="cm-warning-actions">
+                <button class="cm-btn cm-btn-secondary" type="submit" value="adjust">
+                    Điều chỉnh lại
+                </button>
+                <button class="cm-btn cm-btn-primary" type="submit" value="force">
+                    Xác nhận vẫn đặt phòng
+                </button>
+            </div>
+        </form>
+    </dialog>
+
     <button id="ai-chat-launcher" class="ai-chat-launcher" type="button"
+        aria-label="Mở trợ lý RoomSync" title="Mở trợ lý RoomSync"
         aria-controls="ai-chat-drawer" aria-expanded="false">
-        <span aria-hidden="true">✦</span> Trợ lý RoomSync
+        <svg viewBox="0 0 24 24" class="ai-chat-launcher-icon" aria-hidden="true" focusable="false">
+            <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"></path>
+        </svg>
     </button>
     <section id="ai-chat-drawer" class="ai-chat-drawer" role="dialog"
         aria-modal="false" aria-labelledby="ai-chat-title" aria-hidden="true" hidden>
         <header class="ai-chat-header">
             <div>
-                <p class="ai-chat-eyebrow">ROOMSYNC AI</p>
-                <h2 id="ai-chat-title">Trợ lý đặt phòng</h2>
+                <h2 id="ai-chat-title">Trợ lý RoomSync AI</h2>
             </div>
             <div class="ai-chat-header-actions">
                 <button id="ai-chat-new-session" class="ai-chat-icon-button" type="button"
-                    title="Tạo cuộc trò chuyện mới" aria-label="Tạo cuộc trò chuyện mới">＋</button>
+                    title="Tạo cuộc trò chuyện mới" aria-label="Tạo cuộc trò chuyện mới">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 5v14M5 12h14"></path>
+                    </svg>
+                </button>
                 <button id="ai-chat-close" class="ai-chat-icon-button" type="button"
-                    title="Đóng trợ lý" aria-label="Đóng trợ lý">×</button>
+                    title="Đóng trợ lý" aria-label="Đóng trợ lý">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="m18 6-12 12M6 6l12 12"></path>
+                    </svg>
+                </button>
             </div>
         </header>
         <div class="ai-chat-layout">
             <aside id="ai-chat-history-panel" class="ai-chat-history-panel" aria-label="Lịch sử chat">
                 <div class="ai-chat-history-heading">
-                    <span>Chat History</span>
+                    <span>Lịch sử trò chuyện</span>
                     <button id="ai-chat-history-refresh" type="button" title="Tải lại lịch sử"
-                        aria-label="Tải lại lịch sử">↻</button>
+                        aria-label="Tải lại lịch sử">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M20 7v5h-5"></path>
+                            <path d="M19 12a7 7 0 1 1-2.05-4.95L20 12"></path>
+                        </svg>
+                    </button>
                 </div>
                 <div id="ai-chat-history-list" class="ai-chat-history-list" aria-live="polite">
                     <p class="ai-chat-muted">Đang tải lịch sử...</p>
@@ -1253,17 +1506,53 @@
                 <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"
                     aria-relevant="additions text">
                     <div class="ai-chat-welcome">
-                        <span aria-hidden="true">✦</span>
+                        <svg class="ai-chat-welcome-icon" viewBox="0 0 24 24" aria-hidden="true"
+                            focusable="false">
+                            <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"></path>
+                        </svg>
                         <strong>Xin chào! Tôi có thể giúp bạn đặt phòng họp.</strong>
                         <p>Hãy cho tôi biết ngày, giờ, thời lượng và số người tham dự.</p>
                     </div>
                 </div>
                 <p id="ai-chat-status" class="ai-chat-status" role="status" aria-live="polite"></p>
+                <div class="ai-chat-quick-chips" role="group" aria-label="Thao tác nhanh">
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-prompt="Tìm phòng họp cho 6 người">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            aria-hidden="true" focusable="false">
+                            <path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="8"></circle>
+                        </svg>
+                        <span>Tìm phòng 6 người</span>
+                    </button>
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-prompt="Cho tôi xem lịch họp hôm nay">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            aria-hidden="true" focusable="false">
+                            <rect width="18" height="18" x="3" y="4" rx="2"></rect>
+                            <path d="M16 2v4M8 2v4M3 10h18"></path>
+                        </svg>
+                        <span>Lịch họp hôm nay</span>
+                    </button>
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-prompt="Tôi muốn hủy cuộc họp gần nhất">
+                        <svg class="ai-chat-quick-chip-icon-danger" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="m15 9-6 6M9 9l6 6"></path>
+                        </svg>
+                        <span>Hủy cuộc họp gần nhất</span>
+                    </button>
+                </div>
                 <form id="ai-chat-form" class="ai-chat-compose">
                     <label class="ai-chat-sr-only" for="ai-chat-input">Tin nhắn của bạn</label>
                     <textarea id="ai-chat-input" rows="2" maxlength="4000"
                         placeholder="Nhập tin nhắn..." required></textarea>
-                    <button id="ai-chat-send" type="submit" aria-label="Gửi tin nhắn">Gửi</button>
+                    <button id="ai-chat-send" type="submit" aria-label="Gửi tin nhắn">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="m22 2-7 20-4-9-9-4Z"></path>
+                            <path d="M22 2 11 13"></path>
+                        </svg>
+                    </button>
                 </form>
                 <p class="ai-chat-disclaimer">AI có thể nhầm lẫn. Vui lòng kiểm tra thông tin trước khi xác nhận.</p>
             </div>
@@ -1272,9 +1561,9 @@
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="/static/js/user-list.bundle.js?v=1"></script>
-    <script src="/static/js/app.js?v=22"></script>
-    <script src="/static/js/create-meeting.js?v=4"></script>
+    <script src="/static/js/user-list.bundle.js?v=2"></script>
+    <script src="/static/js/app.js?v=31"></script>
+    <script src="/static/js/create-meeting.js?v=8"></script>
     <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
 </body>
 

@@ -55,3 +55,16 @@ def test_non_mysql_database_url_is_not_modified_by_mysql_host_settings(monkeypat
     monkeypatch.setenv("DATABASE_PORT", "3307")
 
     assert _resolve_database_url() == "sqlite:///test.db"
+
+
+def test_render_postgres_scheme_is_normalized(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgres://render-host:5432/meeting_db")
+    monkeypatch.setenv("DATABASE_HOST", "127.0.0.1")
+    monkeypatch.setenv("DATABASE_PORT", "3307")
+
+    url = make_url(_resolve_database_url())
+
+    assert url.drivername == "postgresql"
+    assert url.host == "render-host"
+    assert url.port == 5432
+    assert url.database == "meeting_db"
