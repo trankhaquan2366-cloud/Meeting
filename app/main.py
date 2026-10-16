@@ -232,6 +232,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 if FRONTEND_DIR.exists():
+    js_dir = FRONTEND_DIR / "js"
+    if js_dir.exists():
+        app.mount("/js", StaticFiles(directory=str(js_dir)), name="js")
+    css_dir = FRONTEND_DIR / "css"
+    if css_dir.exists():
+        app.mount("/css", StaticFiles(directory=str(css_dir)), name="css")
+    images_dir = FRONTEND_DIR / "images"
+    if images_dir.exists():
+        app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
     assets_dir = FRONTEND_DIR / "assets"
     if assets_dir.exists():
