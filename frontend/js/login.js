@@ -1,4 +1,8 @@
-const API_URL = window.API_URL || 'http://localhost:8000/api';
+const loginApiOrigin = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    && window.location.port !== '8000'
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : window.location.origin;
+const API_URL = window.API_URL || `${loginApiOrigin}/api`;
 
 document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('loginForm');

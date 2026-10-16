@@ -3,6 +3,8 @@ import tkinter as tk
 from PIL import Image, ImageTk
 import os
 
+API_BASE_URL = os.getenv("API_BASE_URL", "https://roomsync-app.onrender.com").rstrip("/")
+
 # Set Appearance
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")

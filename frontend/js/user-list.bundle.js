@@ -27,7 +27,13 @@ var RoomSyncUserList = (() => {
   });
 
   // src/features/us2_user_list/userListService.ts
-  var DEFAULT_API_URL = "/api/v1/users/";
+  function getDefaultApiUrl() {
+    if (typeof window === "undefined") return "/api/v1/users/";
+    const configuredApiUrl = window.API_URL;
+    const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port !== "8000";
+    const apiOrigin = isLocalFrontend ? `${window.location.protocol}//${window.location.hostname}:8000` : window.location.origin;
+    return `${(configuredApiUrl ?? `${apiOrigin}/api`).replace(/\/+$/, "")}/v1/users/`;
+  }
   var MOCK_USERS = [
     { id: "USR-001", fullName: "Nguy\u1EC5n Minh Tu\u1EA5n", email: "tuan.nguyen@example.com", role: "ADMIN", status: "ACTIVE", createdAt: "2025-01-08T09:15:00.000Z" },
     { id: "USR-002", fullName: "Tr\u1EA7n Thu H\xE0", email: "ha.tran@example.com", role: "BOOKER", status: "ACTIVE", createdAt: "2025-01-12T03:30:00.000Z" },
@@ -140,7 +146,7 @@ var RoomSyncUserList = (() => {
       __publicField(this, "baseUrl");
       __publicField(this, "useMock");
       __publicField(this, "fetcher");
-      this.baseUrl = options.baseUrl ?? DEFAULT_API_URL;
+      this.baseUrl = options.baseUrl ?? getDefaultApiUrl();
       this.useMock = options.useMock ?? false;
       this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     }
@@ -501,7 +507,13 @@ var RoomSyncUserList = (() => {
   };
 
   // src/features/us4_room_booking_restriction/restrictionService.ts
-  var DEFAULT_API_BASE_URL2 = "http://localhost:8000/api";
+  function getDefaultApiBaseUrl() {
+    if (typeof window === "undefined") return "/api";
+    const configuredApiUrl = window.API_URL;
+    const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port !== "8000";
+    const apiOrigin = isLocalFrontend ? `${window.location.protocol}//${window.location.hostname}:8000` : window.location.origin;
+    return configuredApiUrl ?? `${apiOrigin}/api`;
+  }
   var MOCK_ROOMS = [
     { id: "room-a1", name: "Ph\xF2ng h\u1ECDp A1", location: "T\u1EA7ng 1" },
     { id: "room-b2", name: "Ph\xF2ng h\u1ECDp B2", location: "T\u1EA7ng 2" },
@@ -566,7 +578,7 @@ var RoomSyncUserList = (() => {
       __publicField(this, "baseUrl");
       __publicField(this, "useMock");
       __publicField(this, "fetcher");
-      this.baseUrl = (options.baseUrl ?? DEFAULT_API_BASE_URL2).replace(/\/+$/, "");
+      this.baseUrl = (options.baseUrl ?? getDefaultApiBaseUrl()).replace(/\/+$/, "");
       this.useMock = options.useMock ?? true;
       this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     }

@@ -10,7 +10,16 @@ export interface RestrictionServiceOptions {
   fetcher?: typeof fetch;
 }
 
-const DEFAULT_API_BASE_URL = 'http://localhost:8000/api';
+function getDefaultApiBaseUrl(): string {
+  if (typeof window === 'undefined') return '/api';
+  const configuredApiUrl = (window as Window & { API_URL?: string }).API_URL;
+  const isLocalFrontend = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    && window.location.port !== '8000';
+  const apiOrigin = isLocalFrontend
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : window.location.origin;
+  return configuredApiUrl ?? `${apiOrigin}/api`;
+}
 
 const MOCK_ROOMS: RoomOption[] = [
   { id: 'room-a1', name: 'Phòng họp A1', location: 'Tầng 1' },
@@ -95,7 +104,7 @@ export class RestrictionService {
   private readonly fetcher: typeof fetch;
 
   constructor(options: RestrictionServiceOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, '');
+    this.baseUrl = (options.baseUrl ?? getDefaultApiBaseUrl()).replace(/\/+$/, '');
     this.useMock = options.useMock ?? true;
     this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   }

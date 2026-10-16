@@ -1,7 +1,11 @@
 /* ==========================================================================
    GLOBAL CONFIGURATION & STATE MANAGEMENT
    ========================================================================== */
-const API_BASE = window.API_URL || "http://localhost:8000/api";
+const appApiOrigin = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    && window.location.port !== '8000'
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : window.location.origin;
+const API_BASE = window.API_URL || `${appApiOrigin}/api`;
 const ROOM_THUMBNAILS = [
     'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80',
     'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=800&q=80',

@@ -1,4 +1,8 @@
-const AUTH_API_BASE = window.AUTH_API_BASE || window.API_URL || 'http://localhost:8000/api';
+const authApiOrigin = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    && window.location.port !== '8000'
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : window.location.origin;
+const AUTH_API_BASE = window.AUTH_API_BASE || window.API_URL || `${authApiOrigin}/api`;
 
 function handleGoogleAuthCallback() {
     const callbackValues = new URLSearchParams(window.location.hash.slice(1));

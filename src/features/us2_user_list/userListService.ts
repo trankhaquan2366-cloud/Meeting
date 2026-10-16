@@ -12,7 +12,16 @@ export interface UserListServiceOptions {
   fetcher?: typeof fetch;
 }
 
-const DEFAULT_API_URL = '/api/v1/users/';
+function getDefaultApiUrl(): string {
+  if (typeof window === 'undefined') return '/api/v1/users/';
+  const configuredApiUrl = (window as Window & { API_URL?: string }).API_URL;
+  const isLocalFrontend = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    && window.location.port !== '8000';
+  const apiOrigin = isLocalFrontend
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : window.location.origin;
+  return `${(configuredApiUrl ?? `${apiOrigin}/api`).replace(/\/+$/, '')}/v1/users/`;
+}
 
 const MOCK_USERS: UserListItem[] = [
   { id: 'USR-001', fullName: 'Nguyễn Minh Tuấn', email: 'tuan.nguyen@example.com', role: 'ADMIN', status: 'ACTIVE', createdAt: '2025-01-08T09:15:00.000Z' },
@@ -155,7 +164,7 @@ export class UserListService {
   private readonly fetcher: typeof fetch;
 
   constructor(options: UserListServiceOptions = {}) {
-    this.baseUrl = options.baseUrl ?? DEFAULT_API_URL;
+    this.baseUrl = options.baseUrl ?? getDefaultApiUrl();
     this.useMock = options.useMock ?? false;
     this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   }
