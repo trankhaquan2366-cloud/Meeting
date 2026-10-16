@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from fastapi import FastAPI, Depends, Request
@@ -297,6 +298,14 @@ def legacy_login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/", tags=["Root"])
 def read_root():
+    index_path = FRONTEND_DIR / "index.html"
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    return {"status": "success", "message": "Meeting Management System API is running"}
+
+
+@app.get("/api/health", tags=["Health"])
+def health_check():
     return {"status": "success", "message": "Meeting Management System API is running"}
 
 @app.get("/dashboard", tags=["Web UI"])
