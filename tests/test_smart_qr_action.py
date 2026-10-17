@@ -55,7 +55,7 @@ def test_smart_qr_checkin_success_within_time_window(
     participant_scans: bool,
 ):
     now = datetime(2026, 10, 11, 10, 0)
-    monkeypatch.setattr("app.services.meeting_service._utc_now", lambda: now)
+    monkeypatch.setattr("app.services.meeting_service._vietnam_now", lambda: now)
     organizer = _create_user(db_session, f"smart-qr-organizer-{participant_scans}")
     scanner = (
         _create_user(db_session, "smart-qr-attendee")
@@ -82,13 +82,57 @@ def test_smart_qr_checkin_success_within_time_window(
     assert meeting.check_in_time == now
 
 
+@pytest.mark.parametrize("use_room_qr", [False, True], ids=["meeting-check-in", "smart-room-qr"])
+def test_qr_checkin_uses_vietnam_time_when_server_clock_is_utc(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    use_room_qr: bool,
+):
+    now_vn = datetime(2026, 10, 11, 10, 0)
+    monkeypatch.setattr(
+        "app.services.meeting_service._vietnam_now",
+        lambda: now_vn,
+    )
+    monkeypatch.setattr(
+        "app.services.meeting_service._utc_now",
+        lambda: now_vn - timedelta(hours=7),
+    )
+    organizer = _create_user(db_session, f"smart-qr-timezone-{use_room_qr}")
+    room = _create_room(db_session, f"Smart QR timezone room {use_room_qr}")
+    meeting = _create_smart_qr_meeting(
+        db_session,
+        room=room,
+        organizer=organizer,
+        start_time=now_vn + timedelta(minutes=10),
+    )
+    headers = _auth_header(_make_token(organizer))
+
+    if use_room_qr:
+        response = _scan_room_qr(client, organizer, room)
+        assert response.status_code == 200
+        assert response.json()["action"] == "CHECK_IN"
+    else:
+        response = client.post(
+            f"/api/v1/meetings/{meeting.id}/check-in",
+            json={"qr_token": room.qr_token},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "IN_PROGRESS"
+
+    db_session.refresh(meeting)
+    assert meeting.status == "IN_PROGRESS"
+    assert meeting.check_in_time == now_vn
+
+
 def test_smart_qr_checkin_rejected_too_early(
     client: TestClient,
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ):
     now = datetime(2026, 10, 11, 10, 0)
-    monkeypatch.setattr("app.services.meeting_service._utc_now", lambda: now)
+    monkeypatch.setattr("app.services.meeting_service._vietnam_now", lambda: now)
     organizer = _create_user(db_session, "smart-qr-early")
     room = _create_room(db_session, "Smart QR early room")
     _create_smart_qr_meeting(
@@ -113,7 +157,7 @@ def test_smart_qr_checkin_accepts_room_qr_token(
     monkeypatch: pytest.MonkeyPatch,
 ):
     now = datetime(2026, 10, 11, 10, 0)
-    monkeypatch.setattr("app.services.meeting_service._utc_now", lambda: now)
+    monkeypatch.setattr("app.services.meeting_service._vietnam_now", lambda: now)
     organizer = _create_user(db_session, "smart-qr-token")
     room = _create_room(db_session, "Smart QR token room")
     meeting = _create_smart_qr_meeting(
@@ -136,7 +180,7 @@ def test_smart_qr_checkin_rejected_too_late(
     monkeypatch: pytest.MonkeyPatch,
 ):
     now = datetime(2026, 10, 11, 10, 0)
-    monkeypatch.setattr("app.services.meeting_service._utc_now", lambda: now)
+    monkeypatch.setattr("app.services.meeting_service._vietnam_now", lambda: now)
     organizer = _create_user(db_session, "smart-qr-late")
     room = _create_room(db_session, "Smart QR late room")
     _create_smart_qr_meeting(
@@ -160,7 +204,7 @@ def test_smart_qr_checkin_rejected_unauthorized_user(
     monkeypatch: pytest.MonkeyPatch,
 ):
     now = datetime(2026, 10, 11, 10, 0)
-    monkeypatch.setattr("app.services.meeting_service._utc_now", lambda: now)
+    monkeypatch.setattr("app.services.meeting_service._vietnam_now", lambda: now)
     organizer = _create_user(db_session, "smart-qr-owner")
     unauthorized = _create_user(db_session, "smart-qr-outsider")
     room = _create_room(db_session, "Smart QR private room")
@@ -185,7 +229,7 @@ def test_smart_qr_checkout_success(
     monkeypatch: pytest.MonkeyPatch,
 ):
     now = datetime(2026, 10, 11, 10, 0)
-    monkeypatch.setattr("app.services.meeting_service._utc_now", lambda: now)
+    monkeypatch.setattr("app.services.meeting_service._vietnam_now", lambda: now)
     organizer = _create_user(db_session, "smart-qr-checkout")
     room = _create_room(db_session, "Smart QR checkout room")
     meeting = _create_smart_qr_meeting(

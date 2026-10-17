@@ -230,9 +230,48 @@ def seed_initial_rooms(force: bool = False) -> None:
         db.close()
 
 
+def seed_initial_directories(force: bool = False) -> None:
+    """Seed sample departments and project groups when their tables are empty."""
+    if not force and ("pytest" in sys.modules or os.getenv("TESTING")):
+        return
+
+    db = SessionLocal()
+    try:
+        if db.query(Department).count() == 0:
+            departments = [
+                ("Phòng Công nghệ thông tin", "PHONG-CONG-NGHE-THONG-TIN"),
+                ("Phòng Nhân sự", "PHONG-NHAN-SU"),
+                ("Phòng Kế toán", "PHONG-KE-TOAN"),
+                ("Phòng Kinh doanh", "PHONG-KINH-DOANH"),
+                ("Phòng Ban Giám đốc", "PHONG-BAN-GIAM-DOC"),
+            ]
+            db.add_all(
+                Department(name=name, code=code)
+                for name, code in departments
+            )
+        if db.query(ProjectGroup).count() == 0:
+            project_groups = [
+                ("Dự án RoomSync", "DU-AN-ROOMSYNC"),
+                ("Dự án AI Assistant", "DU-AN-AI-ASSISTANT"),
+                ("Dự án Chuyển đổi số", "DU-AN-CHUYEN-DOI-SO"),
+            ]
+            db.add_all(
+                ProjectGroup(name=name, code=code)
+                for name, code in project_groups
+            )
+        db.commit()
+        logger.info("Initial department and project group directories are ready.")
+    except Exception:
+        db.rollback()
+        logger.exception("Error seeding department and project group directories.")
+        raise
+    finally:
+        db.close()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed_initial_rooms()
+    seed_initial_directories()
     scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
     try:
         from app.services.reminder_service import start_reminder_scheduler
@@ -354,6 +393,7 @@ app.include_router(
 )
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(users.router, prefix="/api/v1", tags=["users-v1"])
+app.include_router(directories.router, prefix="/api", tags=["directories"])
 app.include_router(directories.router, prefix="/api/v1", tags=["directories-v1"])
 app.include_router(reports.router, prefix="/api/v1", tags=["reports"])
 app.include_router(chatbot.router, prefix="/api/v1/chatbot", tags=["chatbot"])

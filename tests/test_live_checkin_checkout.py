@@ -1,8 +1,9 @@
 """Real-time API smoke test for the QR check-in/check-out flow."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import sys
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -17,7 +18,7 @@ def test_live_checkin_notification_and_checkout(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    """Run both authenticated endpoints using the current UTC time."""
+    """Run both authenticated endpoints using the current Vietnam local time."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
@@ -35,7 +36,7 @@ def test_live_checkin_notification_and_checkout(
     db_session.add(equipment)
     db_session.flush()
 
-    start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    start_time = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
     end_time = start_time + timedelta(hours=1)
     meeting = Meeting(
         title=f"Live QR check-in test {suffix}",
@@ -62,7 +63,7 @@ def test_live_checkin_notification_and_checkout(
 
     print(f"[STEP] Tạo cuộc họp '{meeting.title}' trong phòng '{room.name}'")
     print(
-        f"[INFO] Bắt đầu UTC: {start_time.isoformat()} | "
+        f"[INFO] Bắt đầu giờ Việt Nam: {start_time.isoformat()} | "
         f"Kết thúc UTC: {end_time.isoformat()}"
     )
 
@@ -139,7 +140,7 @@ def test_live_checkin_notification_and_checkout(
         )
         failures.append("Check-out response/status/timestamp invalid")
 
-    availability_start = datetime.now(timezone.utc).replace(tzinfo=None)
+    availability_start = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
     availability_end = availability_start + timedelta(minutes=1)
     params = {
         "start_time": availability_start.isoformat(),

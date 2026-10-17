@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -33,9 +34,12 @@ class AdminUserCreate(BaseModel):
     def normalize_username(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
-        if not value or not re.fullmatch(r"[A-Za-z0-9._-]+", value):
-            raise ValueError("Tên đăng nhập chỉ được chứa chữ, số, dấu chấm, gạch dưới hoặc gạch ngang.")
+        value = unicodedata.normalize("NFKD", value.strip().lower())
+        value = "".join(character for character in value if not unicodedata.combining(character))
+        value = value.replace("đ", "d")
+        value = re.sub(r"[^a-z0-9._-]+", "", value).strip("._-")
+        if not value:
+            raise ValueError("Tên đăng nhập phải có ít nhất một chữ cái hoặc chữ số.")
         return value
 
 

@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
             new_password: String(formData.get('new_password') || ''),
             confirm_password: String(formData.get('confirm_password') || ''),
         };
+        const token = localStorage.getItem('token') || localStorage.getItem('access_token') || '';
         if (submitButton instanceof HTMLButtonElement) {
             submitButton.disabled = true;
             submitButton.textContent = 'Đang cập nhật...';
@@ -32,7 +33,11 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/v1/auth/change-password', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
                 body: JSON.stringify(payload),
             });
             const result = await response.json();

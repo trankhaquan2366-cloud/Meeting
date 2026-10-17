@@ -77,7 +77,14 @@ function getAuthToken() {
 }
 
 async function fetchAPI(...args) {
-    const response = await window.fetch(...args);
+    const [input, init = {}] = args;
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init.headers || {}).forEach((value, name) => headers.set(name, value));
+    const token = getAuthToken();
+    if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+    }
+    const response = await window.fetch(input, { ...init, headers });
     if (response.status === 401 && getAuthToken()) {
         localStorage.removeItem('token');
         localStorage.removeItem('access_token');
@@ -111,6 +118,7 @@ function escapeHtml(value) {
 document.addEventListener('DOMContentLoaded', async () => {
     const token = getAuthToken();
     const isMeetingPreview = new URLSearchParams(location.search).get('preview') === 'meeting';
+    initializeDirectoryManagement();
     document.getElementById('adminUserProjectGroups')?.addEventListener('change', event => {
         const select = event.currentTarget;
         if (!(select instanceof HTMLSelectElement)) return;
@@ -396,28 +404,32 @@ function showUserManagementSection(section) {
         return;
     }
 
-    const showList = section !== 'create';
+    const selectedSection = ['create', 'directories'].includes(section) ? section : 'list';
+    const showList = selectedSection === 'list';
+    const showCreate = selectedSection === 'create';
+    const showDirectories = selectedSection === 'directories';
     const listPanel = document.getElementById('userListModePanel');
     const createPanel = document.getElementById('userCreateModePanel');
+    const directoriesPanel = document.getElementById('userDirectoriesModePanel');
     const listTab = document.getElementById('userListModeTab');
     const createTab = document.getElementById('userCreateModeTab');
+    const directoriesTab = document.getElementById('userDirectoriesModeTab');
 
     if (listPanel) listPanel.hidden = !showList;
-    if (createPanel) createPanel.hidden = showList;
-    if (listTab) {
-        listTab.setAttribute('aria-selected', String(showList));
-        listTab.classList.toggle('border-blue-600', showList);
-        listTab.classList.toggle('text-blue-700', showList);
-        listTab.classList.toggle('border-transparent', !showList);
-        listTab.classList.toggle('text-slate-500', !showList);
-    }
-    if (createTab) {
-        createTab.setAttribute('aria-selected', String(!showList));
-        createTab.classList.toggle('border-blue-600', !showList);
-        createTab.classList.toggle('text-blue-700', !showList);
-        createTab.classList.toggle('border-transparent', showList);
-        createTab.classList.toggle('text-slate-500', showList);
-    }
+    if (createPanel) createPanel.hidden = !showCreate;
+    if (directoriesPanel) directoriesPanel.hidden = !showDirectories;
+    [
+        [listTab, showList],
+        [createTab, showCreate],
+        [directoriesTab, showDirectories],
+    ].forEach(([tab, selected]) => {
+        if (!tab) return;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.classList.toggle('border-blue-600', selected);
+        tab.classList.toggle('text-blue-700', selected);
+        tab.classList.toggle('border-transparent', !selected);
+        tab.classList.toggle('text-slate-500', !selected);
+    });
 
     if (showList) {
         const userList = window.RoomSyncUserList;
@@ -436,9 +448,11 @@ function showUserManagementSection(section) {
                 showAppToast('Không thể khởi tạo danh sách người dùng. Vui lòng thử lại.', 'error');
             });
         }
-    } else {
+    } else if (showCreate) {
         void loadAdminUserDirectories();
         document.getElementById('adminUserFullName')?.focus();
+    } else {
+        void loadAdminUserDirectories();
     }
 }
 
@@ -465,6 +479,7 @@ function populateAdminUserSelect(selectId, records, label) {
     const select = document.getElementById(selectId);
     if (!(select instanceof HTMLSelectElement)) return;
 
+    const selectedValues = new Set(Array.from(select.selectedOptions, option => option.value));
     while (select.options.length > 1) select.remove(1);
     for (const record of records) {
         const id = Number(record?.id);
@@ -476,20 +491,85 @@ function populateAdminUserSelect(selectId, records, label) {
         const option = document.createElement('option');
         option.value = String(id);
         option.textContent = name;
+        option.selected = selectedValues.has(option.value);
         select.add(option);
     }
+}
+
+const directoryManagementState = {
+    departments: [],
+    projectGroups: [],
+    editing: null,
+};
+
+function renderManagedDirectory(type) {
+    const isDepartment = type === 'department';
+    const records = isDepartment
+        ? directoryManagementState.departments
+        : directoryManagementState.projectGroups;
+    const container = document.getElementById(isDepartment ? 'departmentsList' : 'projectGroupsList');
+    if (!container) return;
+    const editing = directoryManagementState.editing;
+
+    if (!records.length) {
+        container.innerHTML = `<li class="py-3 text-sm text-slate-500">Chưa có ${isDepartment ? 'phòng ban' : 'nhóm dự án'} nào. Hãy thêm mục đầu tiên.</li>`;
+        return;
+    }
+
+    container.innerHTML = records.map(record => {
+        const isEditing = editing?.type === type && editing.id === record.id;
+        const safeName = escapeHtml(record.name);
+        const accessibleType = isDepartment ? 'phòng ban' : 'nhóm dự án';
+        return `<li class="flex items-center justify-between gap-3 py-3" data-directory-row="${record.id}">
+            ${isEditing
+                ? `<form class="flex min-w-0 flex-1 items-center gap-2" data-directory-edit-form data-directory-type="${type}" data-directory-id="${record.id}">
+                    <label class="sr-only" for="edit-${type}-${record.id}">Tên ${accessibleType}</label>
+                    <input id="edit-${type}-${record.id}" name="name" value="${safeName}" maxlength="120" required
+                        class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                    <button type="submit" class="rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50">Lưu</button>
+                    <button type="button" data-directory-action="cancel" data-directory-type="${type}" class="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">Hủy</button>
+                </form>`
+                : `<span class="min-w-0 flex-1 text-sm font-medium text-slate-800">${safeName}</span>
+                    <div class="flex shrink-0 gap-1">
+                        <button type="button" data-directory-action="edit" data-directory-type="${type}" data-directory-id="${record.id}"
+                            class="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Sửa</button>
+                        <button type="button" data-directory-action="delete" data-directory-type="${type}" data-directory-id="${record.id}"
+                            class="rounded-lg px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500">Xóa</button>
+                    </div>`}
+        </li>`;
+    }).join('');
+
+    if (editing?.type === type) {
+        container.querySelector('input')?.focus();
+    }
+}
+
+function setDirectoryMessage(type, message, isError = false) {
+    const messageId = type === 'department' ? 'departmentsMessage' : 'projectGroupsMessage';
+    const element = document.getElementById(messageId);
+    if (!element) return;
+    element.textContent = message;
+    element.classList.toggle('text-red-700', isError);
+    element.classList.toggle('text-emerald-700', !isError && Boolean(message));
+}
+
+async function refreshAdminUserDirectories() {
+    const [departments, projectGroups] = await Promise.all([
+        fetchAdminUserDirectory(`${API_BASE}/departments`, 'phòng ban'),
+        fetchAdminUserDirectory(`${API_BASE}/teams`, 'nhóm dự án'),
+    ]);
+    directoryManagementState.departments = departments;
+    directoryManagementState.projectGroups = projectGroups;
+    populateAdminUserSelect('adminUserDepartment', departments, 'phòng ban');
+    populateAdminUserSelect('adminUserProjectGroups', projectGroups, 'nhóm dự án');
+    renderManagedDirectory('department');
+    renderManagedDirectory('project-group');
 }
 
 function loadAdminUserDirectories() {
     if (userDirectoryLoadPromise) return userDirectoryLoadPromise;
 
-    userDirectoryLoadPromise = Promise.all([
-        fetchAdminUserDirectory('/api/v1/directories/departments', 'phòng ban'),
-        fetchAdminUserDirectory('/api/v1/directories/project-groups', 'nhóm dự án'),
-    ]).then(([departments, projectGroups]) => {
-        populateAdminUserSelect('adminUserDepartment', departments, 'phòng ban');
-        populateAdminUserSelect('adminUserProjectGroups', projectGroups, 'nhóm dự án');
-    }).catch(error => {
+    userDirectoryLoadPromise = refreshAdminUserDirectories().catch(error => {
         console.error('Không thể tải danh mục phòng ban và nhóm dự án:', error);
         showAppToast(
             error instanceof Error ? error.message : 'Không thể tải danh sách phòng ban và nhóm dự án.',
@@ -499,6 +579,134 @@ function loadAdminUserDirectories() {
         userDirectoryLoadPromise = null;
     });
     return userDirectoryLoadPromise;
+}
+
+function initializeDirectoryManagement() {
+    document.querySelectorAll('form[data-directory-type]:not([data-directory-edit-form])').forEach(form => {
+        form.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (!isCurrentUserAdmin()) {
+                showAppToast('Chỉ quản trị viên mới được quản lý phòng ban và nhóm dự án.', 'error');
+                return;
+            }
+            const type = form.dataset.directoryType;
+            const isDepartment = type === 'department';
+            const input = form.elements.namedItem('name');
+            if (!(input instanceof HTMLInputElement) || !form.reportValidity()) return;
+            const button = form.querySelector('button[type="submit"]');
+            if (button) button.disabled = true;
+            setDirectoryMessage(type, '');
+            try {
+                const response = await fetchAPI(
+                    `${API_BASE}/${isDepartment ? 'departments' : 'teams'}`,
+                    {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: input.value.trim() }),
+                    },
+                );
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || `Không thể thêm mục (HTTP ${response.status}).`);
+                form.reset();
+                await refreshAdminUserDirectories();
+                setDirectoryMessage(type, `Đã thêm ${isDepartment ? 'phòng ban' : 'nhóm dự án'} "${result.name}".`);
+            } catch (error) {
+                setDirectoryMessage(
+                    type,
+                    error instanceof Error ? error.message : 'Không thể thêm mục. Vui lòng thử lại.',
+                    true,
+                );
+            } finally {
+                if (button) button.disabled = false;
+            }
+        });
+    });
+
+    document.addEventListener('submit', async event => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.matches('[data-directory-edit-form]')) return;
+        event.preventDefault();
+        if (!isCurrentUserAdmin()) {
+            showAppToast('Chỉ quản trị viên mới được quản lý phòng ban và nhóm dự án.', 'error');
+            return;
+        }
+        const type = form.dataset.directoryType;
+        const isDepartment = type === 'department';
+        const input = form.elements.namedItem('name');
+        if (!(input instanceof HTMLInputElement) || !form.reportValidity()) return;
+        const button = form.querySelector('button[type="submit"]');
+        if (button) button.disabled = true;
+        try {
+            const response = await fetchAPI(
+                `${API_BASE}/${isDepartment ? 'departments' : 'teams'}/${form.dataset.directoryId}`,
+                {
+                    method: 'PUT',
+                    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: input.value.trim() }),
+                },
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.detail || `Không thể cập nhật mục (HTTP ${response.status}).`);
+            directoryManagementState.editing = null;
+            await refreshAdminUserDirectories();
+            setDirectoryMessage(type, `Đã cập nhật tên thành "${result.name}".`);
+        } catch (error) {
+            setDirectoryMessage(
+                type,
+                error instanceof Error ? error.message : 'Không thể cập nhật mục. Vui lòng thử lại.',
+                true,
+            );
+        } finally {
+            if (button) button.disabled = false;
+        }
+    });
+
+    document.addEventListener('click', async event => {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest('button[data-directory-action]');
+        if (!button) return;
+        const { directoryAction: action, directoryType: type, directoryId } = button.dataset;
+        if (action === 'cancel') {
+            directoryManagementState.editing = null;
+            renderManagedDirectory(type);
+            return;
+        }
+        if (action === 'edit') {
+            directoryManagementState.editing = { type, id: Number(directoryId) };
+            renderManagedDirectory(type);
+            return;
+        }
+        if (action !== 'delete' || !isCurrentUserAdmin()) return;
+        const isDepartment = type === 'department';
+        const noun = isDepartment ? 'phòng ban' : 'nhóm dự án';
+        const impact = isDepartment
+            ? 'Người dùng đang thuộc phòng ban này sẽ không còn được gán phòng ban.'
+            : 'Liên kết giữa nhóm này và người dùng sẽ bị gỡ.';
+        if (!window.confirm(`Xóa ${noun} này? ${impact}`)) return;
+        button.disabled = true;
+        setDirectoryMessage(type, '');
+        try {
+            const response = await fetchAPI(
+                `${API_BASE}/${isDepartment ? 'departments' : 'teams'}/${directoryId}`,
+                { method: 'DELETE', headers: { Accept: 'application/json' } },
+            );
+            if (!response.ok) {
+                const result = await response.json();
+                throw new Error(result.detail || `Không thể xóa mục (HTTP ${response.status}).`);
+            }
+            directoryManagementState.editing = null;
+            await refreshAdminUserDirectories();
+            setDirectoryMessage(type, `Đã xóa ${noun}.`);
+        } catch (error) {
+            setDirectoryMessage(
+                type,
+                error instanceof Error ? error.message : 'Không thể xóa mục. Vui lòng thử lại.',
+                true,
+            );
+        } finally {
+            button.disabled = false;
+        }
+    });
 }
 
 function isCurrentUserAdmin() {

@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta, timezone, timezone
+from datetime import datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
@@ -177,7 +178,7 @@ def test_check_out_completes_meeting_with_room_qr(db_session: Session):
 def test_versioned_check_in_endpoint(client: TestClient, db_session: Session):
     organizer = _create_user(db_session, f"api-organizer-{uuid4().hex}")
     room = _create_room(db_session, f"API QR Room {uuid4().hex}")
-    start_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
+    start_time = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None) + timedelta(minutes=5)
     meeting = _create_meeting(
         db_session,
         room,
@@ -221,7 +222,7 @@ def test_meeting_organizer_can_retrieve_qr_for_their_scheduled_meeting(
     organizer = _create_user(db_session, f"qr-owner-{uuid4().hex}")
     outsider = _create_user(db_session, f"qr-outsider-{uuid4().hex}")
     room = _create_room(db_session, f"Organizer QR Room {uuid4().hex}")
-    start_time = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
+    start_time = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None) + timedelta(minutes=5)
     meeting = _create_meeting(
         db_session, room, organizer, start_time, start_time + timedelta(hours=1)
     )

@@ -790,6 +790,11 @@
                             class="border-b-2 border-transparent px-4 py-3 text-sm font-semibold text-slate-500 hover:text-slate-800">
                             Tạo tài khoản mới
                         </button>
+                        <button id="userDirectoriesModeTab" type="button" role="tab" aria-selected="false"
+                            aria-controls="userDirectoriesModePanel" onclick="showUserManagementSection('directories')"
+                            class="border-b-2 border-transparent px-4 py-3 text-sm font-semibold text-slate-500 hover:text-slate-800">
+                            Quản lý phòng ban &amp; nhóm dự án
+                        </button>
                     </div>
 
                     <section id="userListModePanel" role="tabpanel" aria-labelledby="userListModeTab">
@@ -833,9 +838,9 @@
                                     Tên đăng nhập <span class="text-gray-400">(không bắt buộc)</span>
                                 </label>
                                 <input id="adminUserUsername" name="username" type="text" maxlength="50"
-                                    autocomplete="username" pattern="[A-Za-z0-9._-]+"
+                                    autocomplete="username"
                                     class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all"
-                                    placeholder="Tự tạo từ email nếu để trống">
+                                    placeholder="Tự chuẩn hóa không dấu nếu nhập tiếng Việt">
                             </div>
 
                             <div>
@@ -880,6 +885,59 @@
                                 </button>
                             </div>
                             </form>
+                        </div>
+                    </section>
+
+                    <section id="userDirectoriesModePanel" role="tabpanel"
+                        aria-labelledby="userDirectoriesModeTab" hidden>
+                        <div class="grid gap-5 lg:grid-cols-2">
+                            <section class="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm"
+                                aria-labelledby="departmentsHeading">
+                                <h2 id="departmentsHeading" class="mb-1 text-base font-semibold text-slate-900">
+                                    Phòng ban
+                                </h2>
+                                <p class="mb-4 text-sm text-slate-500">Thêm, đổi tên hoặc xóa phòng ban.</p>
+                                <form id="createDepartmentForm" data-directory-type="department"
+                                    class="mb-4 flex flex-col gap-2 sm:flex-row">
+                                    <label class="sr-only" for="newDepartmentName">Tên phòng ban mới</label>
+                                    <input id="newDepartmentName" name="name" type="text" maxlength="120" required
+                                        class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                        placeholder="Ví dụ: Phòng Marketing">
+                                    <button type="submit"
+                                        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                                        Thêm mới
+                                    </button>
+                                </form>
+                                <p id="departmentsMessage" class="mb-3 text-sm" role="status" aria-live="polite"></p>
+                                <ul id="departmentsList" class="divide-y divide-slate-100"
+                                    aria-label="Danh sách phòng ban">
+                                    <li class="py-3 text-sm text-slate-500">Đang tải phòng ban...</li>
+                                </ul>
+                            </section>
+
+                            <section class="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm"
+                                aria-labelledby="projectGroupsHeading">
+                                <h2 id="projectGroupsHeading" class="mb-1 text-base font-semibold text-slate-900">
+                                    Nhóm dự án
+                                </h2>
+                                <p class="mb-4 text-sm text-slate-500">Thêm, đổi tên hoặc xóa nhóm dự án.</p>
+                                <form id="createProjectGroupForm" data-directory-type="project-group"
+                                    class="mb-4 flex flex-col gap-2 sm:flex-row">
+                                    <label class="sr-only" for="newProjectGroupName">Tên nhóm dự án mới</label>
+                                    <input id="newProjectGroupName" name="name" type="text" maxlength="120" required
+                                        class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                        placeholder="Ví dụ: Dự án Mobile">
+                                    <button type="submit"
+                                        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                                        Thêm mới
+                                    </button>
+                                </form>
+                                <p id="projectGroupsMessage" class="mb-3 text-sm" role="status" aria-live="polite"></p>
+                                <ul id="projectGroupsList" class="divide-y divide-slate-100"
+                                    aria-label="Danh sách nhóm dự án">
+                                    <li class="py-3 text-sm text-slate-500">Đang tải nhóm dự án...</li>
+                                </ul>
+                            </section>
                         </div>
                     </section>
                 </div>
@@ -1562,7 +1620,7 @@
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="/static/js/user-list.bundle.js?v=2"></script>
-    <script src="/static/js/app.js?v=31"></script>
+    <script src="/static/js/app.js?v=32"></script>
     <script src="/static/js/create-meeting.js?v=8"></script>
     <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
 </body>

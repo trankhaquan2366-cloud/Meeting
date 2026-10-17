@@ -3,6 +3,7 @@ import json
 import logging
 import re
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -16,10 +17,15 @@ from app.models.user import User
 from app.schemas.meeting import MeetingCreateRequest
 
 logger = logging.getLogger(__name__)
+VIETNAM_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _vietnam_now() -> datetime:
+    return datetime.now(VIETNAM_TIMEZONE).replace(tzinfo=None)
 
 
 class MeetingService:
@@ -555,7 +561,7 @@ class MeetingService:
         now: datetime | None = None,
     ) -> dict[str, int | str]:
         reference = MeetingService._parse_smart_qr_payload(qr_payload)
-        current_time = now or _utc_now()
+        current_time = now or _vietnam_now()
         meeting: Meeting | None = None
         room: Room | None = None
 
@@ -700,7 +706,7 @@ class MeetingService:
         if meeting.room is None or not meeting.room.qr_token or meeting.room.qr_token != qr_token:
             raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
 
-        current_time = now or _utc_now()
+        current_time = now or _vietnam_now()
         if current_time < meeting.start_time - timedelta(minutes=15):
             raise HTTPException(
                 status_code=400,
@@ -753,7 +759,7 @@ class MeetingService:
             raise HTTPException(status_code=400, detail="Mã QR phòng họp không hợp lệ.")
 
         meeting.status = "COMPLETED"
-        meeting.check_out_time = now or _utc_now()
+        meeting.check_out_time = now or _vietnam_now()
         try:
             db.commit()
             db.refresh(meeting)
