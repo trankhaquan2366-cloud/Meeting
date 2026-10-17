@@ -350,6 +350,11 @@ def google_callback(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"detail": "Google account email is not verified"},
             )
+        admin_emails = {
+            admin_email.strip().lower()
+            for admin_email in os.getenv("ADMIN_EMAILS", "").split(",")
+            if admin_email.strip()
+        }
 
         # Xử lý luồng kết nối Calendar
         if flow in {"calendar", "calendar_settings"}:
@@ -441,7 +446,7 @@ def google_callback(
                     email=email,
                     full_name=str(profile.get("name") or email.split("@", 1)[0])[:150],
                     hashed_password=hash_password(secrets.token_urlsafe(48)),
-                    role="employee",
+                    role="admin" if email in admin_emails else "employee",
                     is_active=True,
                 )
                 try:
@@ -456,6 +461,9 @@ def google_callback(
                             status_code=status.HTTP_409_CONFLICT,
                             content={"detail": "Could not create Google account"},
                         )
+            if email in admin_emails and user.role != "admin":
+                user.role = "admin"
+                db.commit()
         except Exception as db_exc:
             logger.error(f"Database error during user sign-in: {db_exc}", exc_info=True)
             db.rollback()

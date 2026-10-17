@@ -199,6 +199,60 @@ def test_google_callback_registers_new_user_and_redirects_with_token(
     assert values["picture"] == ["https://images.example.test/person.png"]
 
 
+def test_google_callback_grants_admin_role_to_configured_email(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("ADMIN_EMAILS", " someone@example.test, ADMIN@example.test ")
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "admin@EXAMPLE.test",
+            "email_verified": True,
+            "name": "Configured Admin",
+        },
+    )
+    login_response, location = _start_google_login(client)
+
+    response = _complete_google_login(client, login_response, location)
+
+    assert response.status_code == 303
+    user = db_session.query(User).filter_by(email="admin@example.test").one()
+    assert user.role == "admin"
+
+
+def test_google_callback_promotes_existing_configured_user(
+    client, db_session, monkeypatch
+):
+    _configure_google_oauth(monkeypatch)
+    monkeypatch.setenv("ADMIN_EMAILS", "known@example.test")
+    user = User(
+        username="known-google-admin",
+        email="known@example.test",
+        full_name="Existing User",
+        hashed_password=hash_password("local-password"),
+        role="employee",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    _mock_google_profile(
+        monkeypatch,
+        {
+            "email": "known@example.test",
+            "email_verified": True,
+            "name": "Existing User",
+        },
+    )
+    login_response, location = _start_google_login(client)
+
+    response = _complete_google_login(client, login_response, location)
+
+    assert response.status_code == 303
+    db_session.refresh(user)
+    assert user.role == "admin"
+
+
 def test_google_callback_logs_in_existing_user(client, db_session, monkeypatch):
     _configure_google_oauth(monkeypatch)
     user = User(
@@ -413,6 +467,5 @@ def test_google_callback_strips_localhost_to_relative_url(client, monkeypatch):
     assert "127.0.0.1" not in loc
     assert loc.startswith("/static/dashboard.html#")
     assert "access_token=" in loc
-
 
 
