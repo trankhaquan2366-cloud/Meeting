@@ -470,7 +470,7 @@ def google_callback(
                 content={"detail": "Tài khoản đã bị khóa"},
             )
 
-        # 4. Sinh JWT token và chuyển hướng về trang web thành công
+        # 4. Sinh JWT token và chuyển hướng về trang web thành công (dùng đường dẫn tương đối)
         token = issue_token(user)
         redirect_values = {
             "access_token": token.access_token,
@@ -482,8 +482,17 @@ def google_callback(
             "user_id": str(user.id),
             "picture": str(profile.get("picture") or ""),
         }
+        # Đường dẫn tương đối sang Dashboard (tránh bị dính cứng localhost:8000 khi deploy)
+        target_dashboard = os.getenv("FRONTEND_DASHBOARD_URL", "/static/dashboard.html")
+        parts = urlsplit(target_dashboard)
+        if "localhost" in parts.netloc or "127.0.0.1" in parts.netloc:
+            target_dashboard = parts.path or "/static/dashboard.html"
+        elif not parts.scheme and not parts.netloc:
+            target_dashboard = target_dashboard or "/static/dashboard.html"
+
+        redirect_url = _frontend_redirect(target_dashboard, redirect_values, fragment=True)
         redirect = RedirectResponse(
-            _frontend_redirect(frontend_login_url, redirect_values, fragment=True),
+            redirect_url,
             status_code=status.HTTP_303_SEE_OTHER,
         )
         redirect.delete_cookie(

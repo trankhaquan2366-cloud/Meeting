@@ -46,6 +46,31 @@ let pendingCancelMeetingId = null;
 let userListMountPromise = null;
 let userDirectoryLoadPromise = null;
 
+// Trích xuất access_token từ URL hash hoặc query param nếu có (sau khi Google OAuth redirect)
+(function initAuthFromUrl() {
+    const hashParams = window.location.hash ? new URLSearchParams(window.location.hash.slice(1)) : null;
+    const queryParams = window.location.search ? new URLSearchParams(window.location.search) : null;
+    const token = hashParams?.get('access_token') || hashParams?.get('token') || queryParams?.get('token') || queryParams?.get('access_token');
+    if (token) {
+        localStorage.setItem('token', token);
+        localStorage.setItem('access_token', token);
+        const params = (hashParams && (hashParams.get('access_token') || hashParams.get('token'))) ? hashParams : queryParams;
+        if (params) {
+            const userFields = {
+                role: params.get('role'),
+                user_name: params.get('full_name') || params.get('username'),
+                user_email: params.get('email'),
+                user_id: params.get('user_id'),
+                user_picture: params.get('picture'),
+            };
+            Object.entries(userFields).forEach(([key, val]) => {
+                if (val) localStorage.setItem(key, val);
+            });
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+})();
+
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
     return localStorage.getItem('token') || localStorage.getItem('access_token') || '';
