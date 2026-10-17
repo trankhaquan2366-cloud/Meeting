@@ -327,3 +327,85 @@ def test_calendar_consent_rejects_google_email_mismatch(client, db_session, monk
     db_session.expire_all()
     saved_user = db_session.query(User).filter_by(id=user.id).one()
     assert saved_user.google_refresh_token is None
+
+
+def test_google_callback_token_exchange_failure_returns_400(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    login_response, _ = _start_google_login(client)
+    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+
+    class MockFailedResponse:
+        status_code = 400
+        text = '{"error": "invalid_grant", "error_description": "Bad Request"}'
+
+        def json(self):
+            return {"error": "invalid_grant"}
+
+    monkeypatch.setattr(auth_router.httpx, "post", lambda *args, **kwargs: MockFailedResponse())
+
+    response = client.get(
+        f"/api/auth/google/callback?code=bad-code&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+    assert "Token exchange failed" in response.json()["detail"]
+
+
+def test_google_callback_network_error_returns_502(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    login_response, _ = _start_google_login(client)
+    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+
+    def _fail_request(*args, **kwargs):
+        raise auth_router.httpx.ConnectError("Connection refused")
+
+    monkeypatch.setattr(auth_router.httpx, "post", _fail_request)
+
+    response = client.get(
+        f"/api/auth/google/callback?code=any-code&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 502
+    assert "Could not connect to Google OAuth service" in response.json()["detail"]
+
+
+def test_google_callback_database_error_returns_500(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    _mock_google_profile(
+        monkeypatch,
+        {"email": "crash.test@example.com", "email_verified": True, "name": "Crash Test"},
+    )
+    login_response, _ = _start_google_login(client)
+    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+
+    def _mock_db_crash(*args, **kwargs):
+        raise RuntimeError("Database connection dropped unexpectedly")
+
+    monkeypatch.setattr(auth_router, "_unique_google_username", _mock_db_crash)
+
+    response = client.get(
+        f"/api/auth/google/callback?code=test-code&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 500
+    assert "Database error during sign-in" in response.json()["detail"]
+
+
+def test_google_callback_unexpected_crash_returns_500(client, monkeypatch):
+    _configure_google_oauth(monkeypatch)
+    login_response, _ = _start_google_login(client)
+    state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
+
+    def _mock_crash(*args, **kwargs):
+        raise RuntimeError("Something completely unexpected happened")
+
+    monkeypatch.setattr(auth_router, "_google_oauth_config", _mock_crash)
+
+    response = client.get(
+        f"/api/auth/google/callback?code=test-code&state={state}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 500
+    assert "Google Sign-In Server Error" in response.json()["detail"]
+
+

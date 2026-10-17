@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import secrets
@@ -30,6 +31,8 @@ from app.services.google_calendar_service import (
     verify_calendar_consent_signature,
 )
 
+logger = logging.getLogger("uvicorn.error")
+
 router = APIRouter(prefix="/auth")
 
 GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -43,12 +46,18 @@ def _google_oauth_config() -> tuple[str, str, str, str]:
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
     redirect_uri = os.getenv(
         "GOOGLE_REDIRECT_URI",
-        "http://localhost:8000/api/auth/google/callback",
+        "https://roomsync-app.onrender.com/api/auth/google/callback"
+        if (os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"))
+        else "http://localhost:8000/api/auth/google/callback",
     )
+    if "localhost" not in redirect_uri and "127.0.0.1" not in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
     frontend_login_url = os.getenv(
         "FRONTEND_LOGIN_URL",
         "http://localhost:8000/static/login.html",
     )
+    if "localhost" not in frontend_login_url and "127.0.0.1" not in frontend_login_url:
+        frontend_login_url = frontend_login_url.replace("http://", "https://")
     if not client_id or not client_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -206,108 +215,275 @@ def google_callback(
     error: str | None = None,
     db: Session = Depends(get_db),
 ):
-    _, client_secret, redirect_uri, frontend_login_url = _google_oauth_config()
-    cookie_parts = request.cookies.get(GOOGLE_STATE_COOKIE, "").split("|", 2)
-    if len(cookie_parts) != 3:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
-    expected_state, flow, flow_user_text = cookie_parts
-    if not state or not expected_state or not secrets.compare_digest(state, expected_state):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
-    if flow not in {"login", "calendar", "calendar_settings"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth flow")
-    if error:
-        error_code = (
-            "calendar_permission_denied"
-            if flow in {"calendar", "calendar_settings"} and error == "access_denied"
-            else "access_denied" if error == "access_denied" else "oauth_failed"
-        )
-        redirect_url = (
-            _frontend_dashboard_url(frontend_login_url)
-            if flow == "calendar_settings"
-            else frontend_login_url
-        )
-        return RedirectResponse(
-            _frontend_redirect(redirect_url, {"google_error": error_code}, fragment=False),
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-    if not code:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OAuth code")
-
     try:
-        token_response = httpx.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "code": code,
-                "client_id": os.environ["GOOGLE_CLIENT_ID"],
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-            timeout=10,
-        )
-        token_response.raise_for_status()
-        token_data = token_response.json()
+        code = code or request.query_params.get("code")
+        state = state or request.query_params.get("state")
+        error = error or request.query_params.get("error")
+
+        try:
+            client_id, client_secret, redirect_uri, frontend_login_url = _google_oauth_config()
+        except HTTPException as conf_exc:
+            logger.error(f"Google OAuth configuration error: {conf_exc.detail}")
+            return JSONResponse(status_code=conf_exc.status_code, content={"detail": conf_exc.detail})
+
+        # Ensure HTTPS for non-localhost redirect URIs (e.g. Render)
+        if "localhost" not in redirect_uri and "127.0.0.1" not in redirect_uri:
+            redirect_uri = redirect_uri.replace("http://", "https://")
+
+        cookie_parts = request.cookies.get(GOOGLE_STATE_COOKIE, "").split("|", 2)
+        if len(cookie_parts) != 3:
+            logger.warning("OAuth callback: Missing or invalid OAuth state cookie")
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": "Invalid OAuth state"})
+
+        expected_state, flow, flow_user_text = cookie_parts
+        if not state or not expected_state or not secrets.compare_digest(state, expected_state):
+            logger.warning("OAuth callback: State mismatch or missing")
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": "Invalid OAuth state"})
+
+        if flow not in {"login", "calendar", "calendar_settings"}:
+            logger.warning(f"OAuth callback: Invalid flow '{flow}'")
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": "Invalid OAuth flow"})
+
+        if error:
+            error_code = (
+                "calendar_permission_denied"
+                if flow in {"calendar", "calendar_settings"} and error == "access_denied"
+                else "access_denied" if error == "access_denied" else "oauth_failed"
+            )
+            redirect_url = (
+                _frontend_dashboard_url(frontend_login_url)
+                if flow == "calendar_settings"
+                else frontend_login_url
+            )
+            return RedirectResponse(
+                _frontend_redirect(redirect_url, {"google_error": error_code}, fragment=False),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+
+        if not code:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Missing authorization code"},
+            )
+
+        # 1. Đổi code lấy token từ Google (bọc try-except an toàn)
+        try:
+            token_response = httpx.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+                timeout=10.0,
+            )
+        except Exception as net_exc:
+            logger.error(f"Google Token Request Network/Timeout Error: {net_exc}", exc_info=True)
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"detail": f"Could not connect to Google OAuth service: {str(net_exc)}"},
+            )
+
+        token_status = getattr(token_response, "status_code", 200)
+        if token_status != 200:
+            token_err_text = getattr(token_response, "text", str(token_response))
+            logger.error(f"Google Token Exchange Failed ({token_status}): {token_err_text}")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": f"Token exchange failed: {token_err_text}"},
+            )
+
+        try:
+            token_data = token_response.json()
+        except Exception as json_exc:
+            logger.error(f"Failed to parse token response JSON: {json_exc}", exc_info=True)
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"detail": "Invalid JSON response from Google Token endpoint"},
+            )
+
         google_access_token = token_data.get("access_token")
         if not google_access_token:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Google did not return an access token")
+            logger.error(f"Google did not return an access token: {token_data}")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Google did not return an access token"},
+            )
 
-        profile_response = httpx.get(
-            GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {google_access_token}"},
-            timeout=10,
-        )
-        profile_response.raise_for_status()
-        profile = profile_response.json()
-    except HTTPException:
-        raise
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not complete Google sign-in",
-        ) from exc
-
-    email = str(profile.get("email") or "").strip().lower()
-    if not email or profile.get("email_verified") is not True:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google account email is not verified")
-
-    if flow in {"calendar", "calendar_settings"}:
+        # 2. Lấy thông tin user từ Google (bọc try-except an toàn)
         try:
-            calendar_user_id = int(flow_user_text)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid calendar account") from exc
-        user = db.query(User).filter(User.id == calendar_user_id, User.is_active.is_(True)).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Calendar account is not available",
+            profile_response = httpx.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {google_access_token}"},
+                timeout=10.0,
             )
-        if flow == "calendar" and (
-            not user.email or user.email.strip().lower() != email
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Google email must match the invited RoomSync account",
-            )
-        refresh_token = token_data.get("refresh_token")
-        if not refresh_token:
-            raise HTTPException(
+        except Exception as net_exc:
+            logger.error(f"Google Userinfo Request Network/Timeout Error: {net_exc}", exc_info=True)
+            return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Google did not return calendar authorization; retry consent",
+                content={"detail": f"Could not connect to Google Userinfo service: {str(net_exc)}"},
             )
+
+        profile_status = getattr(profile_response, "status_code", 200)
+        if profile_status != 200:
+            profile_err_text = getattr(profile_response, "text", str(profile_response))
+            logger.error(f"Google Profile Fetch Failed ({profile_status}): {profile_err_text}")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": f"Profile fetch failed: {profile_err_text}"},
+            )
+
         try:
-            user.google_refresh_token = encrypt_refresh_token(refresh_token)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-        user.google_calendar_connected_at = datetime.now()
-        db.commit()
-        background_tasks.add_task(sync_user_meetings_to_google, user.id)
-        _, _, redirect_uri, frontend_login_url = _google_oauth_config()
+            profile = profile_response.json()
+        except Exception as json_exc:
+            logger.error(f"Failed to parse profile response JSON: {json_exc}", exc_info=True)
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"detail": "Invalid JSON response from Google Userinfo endpoint"},
+            )
+
+        email = str(profile.get("email") or "").strip().lower()
+        if not email or profile.get("email_verified") is not True:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Google account email is not verified"},
+            )
+
+        # Xử lý luồng kết nối Calendar
+        if flow in {"calendar", "calendar_settings"}:
+            try:
+                calendar_user_id = int(flow_user_text)
+            except (ValueError, TypeError) as exc:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": "Invalid calendar account"},
+                )
+
+            try:
+                user = db.query(User).filter(User.id == calendar_user_id, User.is_active.is_(True)).first()
+            except Exception as db_exc:
+                logger.error(f"Database error querying user for calendar: {db_exc}", exc_info=True)
+                db.rollback()
+                return JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content={"detail": f"Database error querying calendar account: {str(db_exc)}"},
+                )
+
+            if not user:
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Calendar account is not available"},
+                )
+            if flow == "calendar" and (
+                not user.email or user.email.strip().lower() != email
+            ):
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Google email must match the invited RoomSync account"},
+                )
+
+            refresh_token = token_data.get("refresh_token")
+            if not refresh_token:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": "Google did not return calendar authorization; retry consent"},
+                )
+
+            try:
+                user.google_refresh_token = encrypt_refresh_token(refresh_token)
+            except RuntimeError as exc:
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"detail": str(exc)},
+                )
+
+            try:
+                user.google_calendar_connected_at = datetime.now()
+                db.commit()
+            except Exception as db_exc:
+                logger.error(f"Database error saving calendar authorization: {db_exc}", exc_info=True)
+                db.rollback()
+                return JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content={"detail": f"Database error saving calendar authorization: {str(db_exc)}"},
+                )
+
+            try:
+                background_tasks.add_task(sync_user_meetings_to_google, user.id)
+            except Exception as bg_exc:
+                logger.warning(f"Could not enqueue calendar sync task: {bg_exc}")
+
+            redirect = RedirectResponse(
+                _frontend_redirect(
+                    _frontend_dashboard_url(frontend_login_url),
+                    {"calendar_connected": "1"},
+                    fragment=False,
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+            redirect.delete_cookie(
+                GOOGLE_STATE_COOKIE,
+                path="/api/auth/google",
+                secure=redirect_uri.startswith("https://"),
+                httponly=True,
+                samesite="lax",
+            )
+            return redirect
+
+        # 3. Tìm hoặc tạo User trong DB (Flow: Đăng nhập người dùng)
+        try:
+            user = db.query(User).filter(func.lower(User.email) == email).first()
+            if user is None:
+                user = User(
+                    username=_unique_google_username(db, email),
+                    email=email,
+                    full_name=str(profile.get("name") or email.split("@", 1)[0])[:150],
+                    hashed_password=hash_password(secrets.token_urlsafe(48)),
+                    role="employee",
+                    is_active=True,
+                )
+                try:
+                    db.add(user)
+                    db.commit()
+                    db.refresh(user)
+                except IntegrityError:
+                    db.rollback()
+                    user = db.query(User).filter(func.lower(User.email) == email).first()
+                    if user is None:
+                        return JSONResponse(
+                            status_code=status.HTTP_409_CONFLICT,
+                            content={"detail": "Could not create Google account"},
+                        )
+        except Exception as db_exc:
+            logger.error(f"Database error during user sign-in: {db_exc}", exc_info=True)
+            db.rollback()
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": f"Database error during sign-in: {str(db_exc)}"},
+            )
+
+        if not user.is_active:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Tài khoản đã bị khóa"},
+            )
+
+        # 4. Sinh JWT token và chuyển hướng về trang web thành công
+        token = issue_token(user)
+        redirect_values = {
+            "access_token": token.access_token,
+            "token_type": token.token_type,
+            "role": user.role,
+            "username": user.username,
+            "full_name": user.full_name or user.username,
+            "email": user.email or "",
+            "user_id": str(user.id),
+            "picture": str(profile.get("picture") or ""),
+        }
         redirect = RedirectResponse(
-            _frontend_redirect(
-                _frontend_dashboard_url(frontend_login_url),
-                {"calendar_connected": "1"},
-                fragment=False,
-            ),
+            _frontend_redirect(frontend_login_url, redirect_values, fragment=True),
             status_code=status.HTTP_303_SEE_OTHER,
         )
         redirect.delete_cookie(
@@ -319,51 +495,18 @@ def google_callback(
         )
         return redirect
 
-    user = db.query(User).filter(func.lower(User.email) == email).first()
-    if user is None:
-        user = User(
-            username=_unique_google_username(db, email),
-            email=email,
-            full_name=str(profile.get("name") or email.split("@", 1)[0])[:150],
-            hashed_password=hash_password(secrets.token_urlsafe(48)),
-            role="employee",
-            is_active=True,
+    except HTTPException as exc:
+        logger.warning(f"OAuth Callback HTTPException ({exc.status_code}): {exc.detail}")
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
         )
-        try:
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-        except IntegrityError as exc:
-            db.rollback()
-            user = db.query(User).filter(func.lower(User.email) == email).first()
-            if user is None:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Could not create Google account") from exc
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
-
-    token = issue_token(user)
-    redirect_values = {
-        "access_token": token.access_token,
-        "token_type": token.token_type,
-        "role": user.role,
-        "username": user.username,
-        "full_name": user.full_name or user.username,
-        "email": user.email or "",
-        "user_id": str(user.id),
-        "picture": str(profile.get("picture") or ""),
-    }
-    redirect = RedirectResponse(
-        _frontend_redirect(frontend_login_url, redirect_values, fragment=True),
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
-    redirect.delete_cookie(
-        GOOGLE_STATE_COOKIE,
-        path="/api/auth/google",
-        secure=redirect_uri.startswith("https://"),
-        httponly=True,
-        samesite="lax",
-    )
-    return redirect
+    except Exception as exc:
+        logger.error(f"CRITICAL OAUTH CALLBACK ERROR: {str(exc)}", exc_info=True)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": f"Google Sign-In Server Error: {str(exc)}"},
+        )
 
 
 @router.get("/me", response_model=UserResponse, summary="Lấy thông tin cá nhân")
