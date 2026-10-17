@@ -391,21 +391,28 @@ def test_google_callback_database_error_returns_500(client, monkeypatch):
     assert "Database error during sign-in" in response.json()["detail"]
 
 
-def test_google_callback_unexpected_crash_returns_500(client, monkeypatch):
+def test_google_callback_strips_localhost_to_relative_url(client, monkeypatch):
     _configure_google_oauth(monkeypatch)
-    login_response, _ = _start_google_login(client)
+    # Set explicit localhost dashboard URL to verify it gets normalized
+    monkeypatch.setenv("FRONTEND_DASHBOARD_URL", "http://localhost:8000/static/dashboard.html")
+    _mock_google_profile(
+        monkeypatch,
+        {"email": "relative.url@example.test", "email_verified": True, "name": "Relative Url"},
+    )
+    login_response, location = _start_google_login(client)
     state = login_response.cookies[auth_router.GOOGLE_STATE_COOKIE].split("|", 1)[0]
-
-    def _mock_crash(*args, **kwargs):
-        raise RuntimeError("Something completely unexpected happened")
-
-    monkeypatch.setattr(auth_router, "_google_oauth_config", _mock_crash)
 
     response = client.get(
         f"/api/auth/google/callback?code=test-code&state={state}",
         follow_redirects=False,
     )
-    assert response.status_code == 500
-    assert "Google Sign-In Server Error" in response.json()["detail"]
+
+    assert response.status_code == 303
+    loc = response.headers["location"]
+    assert "localhost" not in loc
+    assert "127.0.0.1" not in loc
+    assert loc.startswith("/static/dashboard.html#")
+    assert "access_token=" in loc
+
 
 

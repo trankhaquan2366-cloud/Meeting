@@ -491,6 +491,12 @@ def google_callback(
             target_dashboard = target_dashboard or "/static/dashboard.html"
 
         redirect_url = _frontend_redirect(target_dashboard, redirect_values, fragment=True)
+
+        # Tự động loại bỏ localhost/127.0.0.1 nếu xuất hiện trong redirect_url
+        if "localhost" in redirect_url or "127.0.0.1" in redirect_url:
+            parsed = urlsplit(redirect_url)
+            redirect_url = urlunsplit(('', '', parsed.path or '/static/dashboard.html', parsed.query, parsed.fragment))
+
         redirect = RedirectResponse(
             redirect_url,
             status_code=status.HTTP_303_SEE_OTHER,
