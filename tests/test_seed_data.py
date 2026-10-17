@@ -93,3 +93,24 @@ def test_seed_database_is_repeatable_and_keeps_unrelated_records(db_session):
     assert locked_user.status == "LOCKED"
     assert locked_user.is_active is False
     assert verify_password(DEFAULT_PASSWORD, pending_user.hashed_password)
+
+
+def test_seed_initial_rooms_when_empty(db_session, monkeypatch):
+    import app.main
+    from app.main import seed_initial_rooms
+    from app.models.room import Room
+
+    session_factory = sessionmaker(bind=db_session.get_bind())
+    monkeypatch.setattr(app.main, "SessionLocal", session_factory)
+
+    assert db_session.query(Room).count() == 0
+    seed_initial_rooms(force=True)
+    assert db_session.query(Room).count() == 4
+    room_names = {r.name for r in db_session.query(Room).all()}
+    assert "Phòng Hội Thảo A" in room_names
+    assert "Phòng VIP C" in room_names
+
+    # Calling it again when rooms already exist should not duplicate
+    seed_initial_rooms(force=True)
+    assert db_session.query(Room).count() == 4
+

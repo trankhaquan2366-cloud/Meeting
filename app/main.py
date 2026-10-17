@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from fastapi import FastAPI, Depends, Request
@@ -175,8 +176,63 @@ async def _meeting_scheduler_loop() -> None:
         await asyncio.to_thread(_run_meeting_scheduler_cycle)
 
 
+def seed_initial_rooms(force: bool = False) -> None:
+    """Tự động kiểm tra và chèn dữ liệu phòng họp mẫu nếu bảng rooms trống."""
+    if not force and ("pytest" in sys.modules or os.getenv("TESTING")):
+        return
+
+    db: Session = SessionLocal()
+    try:
+        if db.query(Room).count() == 0:
+            sample_rooms = [
+                Room(
+                    name="Phòng Hội Thảo A",
+                    capacity=20,
+                    location="Tầng 2",
+                    description="Phòng hội thảo lớn dành cho thuyết trình và hội nghị.",
+                    amenities='["Màn hình", "Wifi", "Micro", "Máy chiếu"]',
+                    is_active=True,
+                ),
+                Room(
+                    name="Phòng Họp Nhóm B",
+                    capacity=8,
+                    location="Tầng 1",
+                    description="Phòng họp nhóm dự án linh hoạt.",
+                    amenities='["Wifi", "Bảng trắng", "Ổ cắm điện"]',
+                    is_active=True,
+                ),
+                Room(
+                    name="Phòng VIP C",
+                    capacity=12,
+                    location="Tầng 3",
+                    description="Phòng họp cấp cao với trang thiết bị cao cấp.",
+                    amenities='["Màn hình", "Video", "Đồ uống", "Wifi"]',
+                    is_active=True,
+                ),
+                Room(
+                    name="Phòng Đào Tạo D",
+                    capacity=25,
+                    location="Tầng 4",
+                    description="Phòng đào tạo và workshop nội bộ.",
+                    amenities='["Máy chiếu", "Wifi", "Âm thanh", "Micro"]',
+                    is_active=True,
+                ),
+            ]
+            db.add_all(sample_rooms)
+            db.commit()
+            logger.info("Successfully seeded initial room data!")
+            print("✅ Successfully seeded initial room data!")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error seeding rooms: {e}", exc_info=True)
+        print(f"❌ Error seeding rooms: {e}")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    seed_initial_rooms()
     scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
     try:
         from app.services.reminder_service import start_reminder_scheduler
@@ -192,6 +248,12 @@ async def lifespan(app: FastAPI):
 
 # 4. Khởi tạo ứng dụng FastAPI (Phải khởi tạo TRƯỚC khi gán Middleware/Router)
 app = FastAPI(title="Meeting Management System API", version="1.0.0", lifespan=lifespan)
+
+
+@app.on_event("startup")
+def startup_seed_rooms():
+    seed_initial_rooms()
+
 
 
 @app.exception_handler(Exception)
