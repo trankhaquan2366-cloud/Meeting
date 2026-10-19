@@ -1032,6 +1032,65 @@ async function apiErrorMessage(response, fallback) {
     }
 }
 
+function linkifyNotificationContent(content) {
+    const text = String(content || '');
+    const urlPattern = /https?:\/\/[^\s<>"']+/gi;
+    const trailingPunctuationPattern = /[.,!?;:)\]}]+$/;
+    let html = '';
+    let cursor = 0;
+    let match;
+
+    while ((match = urlPattern.exec(text)) !== null) {
+        const rawUrl = match[0];
+        const trailingPunctuation = rawUrl.match(trailingPunctuationPattern)?.[0] || '';
+        const candidate = rawUrl.slice(0, rawUrl.length - trailingPunctuation.length);
+        let safeUrl = '';
+        try {
+            const parsed = new URL(candidate);
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                safeUrl = parsed.href;
+            }
+        } catch (error) {
+            safeUrl = '';
+        }
+        if (!safeUrl) continue;
+
+        html += escapeHtml(text.slice(cursor, match.index));
+        html += `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer"
+            class="text-blue-600 underline hover:text-blue-800"
+            onclick="event.stopPropagation()">${escapeHtml(candidate)}</a>${escapeHtml(trailingPunctuation)}`;
+        cursor = match.index + rawUrl.length;
+    }
+    return html + escapeHtml(text.slice(cursor));
+}
+
+function notificationMeetingLink(notification) {
+    const candidate = notification?.meeting_link;
+    if (candidate) {
+        try {
+            const parsed = new URL(candidate);
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+        } catch (error) {
+            // Fall through and look for a Google Meet URL in the message.
+        }
+    }
+    const content = String(notification?.content || '');
+    const urls = content.match(/https?:\/\/[^\s<>"']+/gi) || [];
+    for (const rawUrl of urls) {
+        const candidateUrl = rawUrl.replace(/[.,!?;:)\]}]+$/, '');
+        try {
+            const parsed = new URL(candidateUrl);
+            if (parsed.protocol === 'http:' && parsed.hostname === 'meet.google.com'
+                || parsed.protocol === 'https:' && parsed.hostname === 'meet.google.com') {
+                return parsed.href;
+            }
+        } catch (error) {
+            continue;
+        }
+    }
+    return '';
+}
+
 function renderNotifications(notifications) {
     const popup = document.getElementById('notificationPopup');
     if (!popup) return;
@@ -1067,6 +1126,13 @@ function renderNotifications(notifications) {
                     : timestamp.toLocaleString();
                 const linkedMeeting = cancelled ? null : resolveNotificationMeeting(n);
                 const actions = linkedMeeting ? renderNotificationRsvpActions(n, linkedMeeting) : '';
+                const meetingLink = notificationMeetingLink(n);
+                const joinAction = !cancelled && meetingLink
+                    ? `<a class="notification-join-meeting" href="${escapeHtml(meetingLink)}"
+                        target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">
+                        📹 Tham gia họp
+                    </a>`
+                    : '';
                 const itemTitle = cancelled ? 'Cuộc họp đã bị hủy' : n.title;
                 const itemContent = cancelled
                     ? `Cuộc họp '${n.meeting_title || 'này'}' đã bị người tổ chức hủy. Bạn không cần tham gia.`
@@ -1075,9 +1141,10 @@ function renderNotifications(notifications) {
                     <button type="button" class="notification-item ${n.is_read ? '' : 'unread'}"
                         data-notification-id="${Number(n.id)}">
                         <span class="notification-item-title">${escapeHtml(itemTitle)}</span>
-                        <span class="notification-item-content">${escapeHtml(itemContent)}</span>
                         <span class="notification-item-time">${escapeHtml(localTimestamp)}</span>
                     </button>
+                    <div class="notification-item-content">${linkifyNotificationContent(itemContent)}</div>
+                    ${joinAction ? `<div class="notification-join-row">${joinAction}</div>` : ''}
                     ${actions}
                 </article>`;
             }).join('')}
@@ -1815,9 +1882,91 @@ function renderMyBookings() {
 }
 
 function bookingRoomName(meeting) {
-    if (String(meeting.meeting_type || '').toLowerCase() === 'online') return 'Cuộc họp online';
-    return meeting.room_name || allRooms.find(room => room.id === meeting.room_id)?.name
+    if (isOnlineMeeting(meeting)) return 'Cuộc họp online';
+    return meeting.room_details?.name || meeting.room_name
+        || allRooms.find(room => room.id === meeting.room_id)?.name
         || (meeting.room_id ? `Phòng ${meeting.room_id}` : 'Phòng chưa xác định');
+}
+
+function isOnlineMeeting(meeting) {
+    return meeting.is_online === true
+        || String(meeting.meeting_type || '').trim().toLowerCase() === 'online';
+}
+
+function bookingSafeLink(value) {
+    try {
+        const url = new URL(String(value || ''));
+        return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+    } catch (error) {
+        return '';
+    }
+}
+
+function bookingList(value) {
+    if (Array.isArray(value)) return value.filter(item => item != null && String(item).trim());
+    if (typeof value !== 'string' || !value.trim()) return [];
+    try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.filter(item => item != null && String(item).trim());
+    } catch (error) {
+        return value.split(',').map(item => item.trim()).filter(Boolean);
+    }
+    return [];
+}
+
+function bookingEquipmentLabel(equipment) {
+    if (typeof equipment === 'string') return equipment;
+    if (!equipment || typeof equipment !== 'object') return '';
+    const name = equipment.equipment_name || equipment.name;
+    if (!name) return '';
+    const quantity = Number(equipment.quantity);
+    return Number.isFinite(quantity) && quantity > 1 ? `${name} × ${quantity}` : String(name);
+}
+
+function bookingMeetingDetailsMarkup(meeting) {
+    if (isOnlineMeeting(meeting)) {
+        const link = bookingSafeLink(meeting.meeting_link || meeting.online_link);
+        if (!link) return '<span>Link cuộc họp chưa được cung cấp.</span>';
+        return `<div class="booking-online-link-row">
+            <a class="booking-meeting-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link)}</a>
+            <button class="booking-copy-link-button" type="button" data-meeting-link="${escapeHtml(link)}"
+                onclick="copyMeetingLink(this)" aria-label="Sao chép link cuộc họp">Sao chép link</button>
+        </div>`;
+    }
+
+    const room = meeting.room_details
+        || allRooms.find(item => Number(item.id) === Number(meeting.room_id))
+        || null;
+    const roomName = room?.name || meeting.room_name
+        || (meeting.room_id ? `Phòng ${meeting.room_id}` : 'Phòng chưa xác định');
+    const capacity = room?.capacity ?? meeting.room_capacity;
+    const location = room?.location || meeting.room_location || '';
+    const locationParts = [roomName];
+    if (capacity != null && capacity !== '') locationParts.push(`${capacity} người`);
+    if (location) locationParts.push(location);
+
+    const amenities = bookingList(room?.amenities || meeting.room_amenities);
+    const roomEquipment = bookingList(room?.equipment || room?.default_equipments)
+        .map(bookingEquipmentLabel).filter(Boolean);
+    const meetingEquipment = bookingList(meeting.equipments)
+        .map(bookingEquipmentLabel).filter(Boolean);
+    const allEquipment = [...new Set([...amenities, ...roomEquipment, ...meetingEquipment])];
+    const equipmentMarkup = allEquipment.length
+        ? `<ul class="booking-equipment-list">${allEquipment.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+        : '<p class="booking-room-empty">Chưa có tiện nghi hoặc thiết bị được ghi nhận.</p>';
+    const description = room?.description
+        ? `<p class="booking-room-description">${escapeHtml(room.description)}</p>`
+        : '';
+
+    return `<span class="booking-room-location">${escapeHtml(locationParts.join(' · '))}</span>
+        <details class="booking-room-details">
+            <summary>Xem chi tiết phòng</summary>
+            <div class="booking-room-details-content">
+                ${description}
+                <span class="booking-room-details-heading">Tiện nghi và thiết bị</span>
+                ${equipmentMarkup}
+            </div>
+        </details>`;
 }
 
 function bookingDate(value) {
@@ -1844,6 +1993,9 @@ function renderOrganizerBookings(meetings) {
         const start = bookingDate(meeting.start_time);
         const end = bookingDate(meeting.end_time);
         const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
+        const summary = isOnlineMeeting(meeting)
+            ? `${bookingRoomName(meeting)} · ${date}`
+            : date;
         const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
         const participants = (meeting.participants || []).filter(person => person.user_id !== meeting.organizer_id);
         const attendeeMarkup = participants.length ? participants.map(person => {
@@ -1854,25 +2006,57 @@ function renderOrganizerBookings(meetings) {
         }).join('') : '<div class="booking-guest pending">Chưa có người được mời.</div>';
         const cancel = `<button class="booking-cancel-button" type="button" onclick="cancelBooking(${meeting.id})">Hủy lịch</button>`;
         const qrActions = meetingPresenterQrAction(meeting);
-        let joinLink = '';
-        try {
-            const url = new URL(String(meeting.meeting_link || meeting.online_link || ''));
-            if (url.protocol === 'http:' || url.protocol === 'https:') {
-                joinLink = `<a class="booking-rsvp-button" href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Tham gia</a>`;
-            }
-        } catch (error) {
-            joinLink = '';
-        }
+        const meetingLink = isOnlineMeeting(meeting)
+            ? bookingSafeLink(meeting.meeting_link || meeting.online_link)
+            : '';
+        const joinLink = meetingLink
+            ? `<a class="booking-rsvp-button" href="${escapeHtml(meetingLink)}" target="_blank" rel="noopener noreferrer">Tham gia</a>`
+            : '';
         const extendActions = String(meeting.status || '').trim().toUpperCase() === 'IN_PROGRESS'
             ? `<button class="booking-extend-button" type="button" onclick="extendMeeting(${Number(meeting.id)}, 15, this)">+ Gia hạn 15p</button>
                 <button class="booking-extend-button" type="button" onclick="extendMeeting(${Number(meeting.id)}, 30, this)">+ Gia hạn 30p</button>`
             : '';
         return `<article class="booking-list-card"><div class="booking-list-row">
-            <div class="booking-list-main"><strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong><span>${escapeHtml(bookingRoomName(meeting))} · ${escapeHtml(date)}</span></div>
+            <div class="booking-list-main">
+                <strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong>
+                <span>${escapeHtml(summary)}</span>
+                ${bookingMeetingDetailsMarkup(meeting)}
+            </div>
             <div class="booking-list-time">${escapeHtml(time)}</div>
             <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${qrActions}${extendActions}${cancel}</div>
         </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
+}
+
+async function copyMeetingLink(button) {
+    const link = bookingSafeLink(button?.dataset.meetingLink);
+    if (!link) {
+        showAppToast('Link cuộc họp không hợp lệ.', 'error');
+        return;
+    }
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(link);
+        } else {
+            const input = document.createElement('textarea');
+            input.value = link;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            let copied = false;
+            try {
+                input.select();
+                copied = document.execCommand('copy');
+            } finally {
+                input.remove();
+            }
+            if (!copied) throw new Error('Trình duyệt không thể sao chép link.');
+        }
+        showAppToast('Đã sao chép link cuộc họp.');
+    } catch (error) {
+        showAppToast(error.message || 'Không thể sao chép link cuộc họp.', 'error');
+    }
 }
 
 async function extendMeeting(meetingId, extendMinutes, button) {

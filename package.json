@@ -7,6 +7,9 @@
     "frontend": "npm run build:user-list && npx serve frontend -l 3000"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",
     "serve": "^14.2.6"
   }

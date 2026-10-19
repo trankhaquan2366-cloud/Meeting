@@ -185,6 +185,7 @@ class NotificationResponse(BaseModel):
     meeting_id: Optional[int] = None
     meeting_title: Optional[str] = None
     meeting_status: Optional[str] = None
+    meeting_link: Optional[str] = None
     title: str
     content: str
     is_read: bool

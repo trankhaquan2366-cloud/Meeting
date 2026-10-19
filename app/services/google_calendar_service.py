@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import logging
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -161,15 +162,23 @@ def _google_event_id(user_id: int, meeting_id: int) -> str:
 
 def _event_payload(user_id: int, meeting: Meeting) -> dict:
     room = meeting.room
+    create_google_meet = (
+        meeting.meeting_type == "online"
+        and meeting.organizer_id == user_id
+    )
     if meeting.meeting_type == "online":
-        location = meeting.meeting_link or ""
+        location = "" if create_google_meet else meeting.meeting_link or ""
     elif room:
         location = " - ".join(part for part in (room.name, room.location) if part)
     else:
         location = ""
 
     details = [meeting.description or ""]
-    if meeting.meeting_type == "online" and meeting.meeting_link:
+    if (
+        meeting.meeting_type == "online"
+        and meeting.meeting_link
+        and not create_google_meet
+    ):
         details.append(f"Meeting link: {meeting.meeting_link}")
     description = "\n".join(part for part in details if part)
     start = _local_datetime(meeting.start_time)
@@ -182,6 +191,13 @@ def _event_payload(user_id: int, meeting: Meeting) -> dict:
         "start": {"dateTime": start.isoformat(), "timeZone": _timezone_name()},
         "end": {"dateTime": end.isoformat(), "timeZone": _timezone_name()},
     }
+    if create_google_meet:
+        payload["conferenceData"] = {
+            "createRequest": {
+                "requestId": f"meet-{uuid.uuid4().hex[:8]}",
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
     if meeting.organizer_id == user_id:
         attendees = [
             {"email": participant.user.email}
@@ -191,6 +207,28 @@ def _event_payload(user_id: int, meeting: Meeting) -> dict:
         if attendees:
             payload["attendees"] = attendees
     return payload
+
+
+def _google_meet_link(event: dict) -> str | None:
+    hangout_link = event.get("hangoutLink")
+    if isinstance(hangout_link, str) and hangout_link:
+        return hangout_link
+
+    conference_data = event.get("conferenceData")
+    if not isinstance(conference_data, dict):
+        return None
+    entry_points = conference_data.get("entryPoints")
+    if not isinstance(entry_points, list):
+        return None
+    for entry_point in entry_points:
+        if (
+            isinstance(entry_point, dict)
+            and entry_point.get("entryPointType") == "video"
+            and isinstance(entry_point.get("uri"), str)
+            and entry_point["uri"]
+        ):
+            return entry_point["uri"]
+    return None
 
 
 def _log_calendar_sync_http_error(
@@ -270,17 +308,39 @@ def sync_user_meetings_to_google(user_id: int) -> None:
                 continue
             google_event_id = _google_event_id(user_id, meeting.id)
             try:
+                event_payload = _event_payload(user_id, meeting)
+                request_params = (
+                    {"sendUpdates": "all"} if meeting.organizer_id == user_id else {}
+                )
+                if "conferenceData" in event_payload:
+                    request_params["conferenceDataVersion"] = 1
                 response = httpx.post(
                     GOOGLE_EVENTS_URL,
                     headers=headers,
-                    json=_event_payload(user_id, meeting),
-                    params={"sendUpdates": "all"} if meeting.organizer_id == user_id else None,
+                    json=event_payload,
+                    params=request_params or None,
                     timeout=15,
                 )
                 if response.status_code == 409:
                     pass
                 else:
                     response.raise_for_status()
+                if "conferenceData" in event_payload:
+                    try:
+                        calendar_event = response.json()
+                    except ValueError:
+                        calendar_event = {}
+                    if isinstance(calendar_event, dict):
+                        meet_link = _google_meet_link(calendar_event)
+                        if meet_link:
+                            meeting.meeting_link = meet_link
+                        else:
+                            logger.warning(
+                                "Google Calendar created event without returning a "
+                                "Meet link for meeting_id=%s user_id=%s",
+                                meeting.id,
+                                user_id,
+                            )
                 db.add(
                     GoogleCalendarEvent(
                         user_id=user_id,
@@ -409,4 +469,3 @@ def delete_google_event_for_user_meeting(user_id: int, meeting_id: int) -> None:
         logger.exception("Could not delete Google event for user_id=%s meeting_id=%s", user_id, meeting_id)
     finally:
         db.close()
-

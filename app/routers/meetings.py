@@ -1,4 +1,5 @@
 # app/routers/meetings.py
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -158,6 +159,11 @@ def create_meeting(
                     start_time_str=start_str,
                     location_str=location,
                     meeting_link=first_meeting.meeting_link,
+                    meeting_id=first_meeting.id,
+                    start_time=first_meeting.start_time,
+                    end_time=first_meeting.end_time,
+                    organizer_email=current_user.email,
+                    organizer_name=current_user.full_name or current_user.username,
                 )
 
     return created_meetings
@@ -315,6 +321,35 @@ def get_my_meetings(
                 else "Người tổ chức"
             )
             item["room_name"] = meeting.room.name if meeting.room else None
+            if meeting.room:
+                try:
+                    amenities = json.loads(meeting.room.amenities or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    amenities = [
+                        amenity.strip()
+                        for amenity in (meeting.room.amenities or "").split(",")
+                        if amenity.strip()
+                    ]
+                if not isinstance(amenities, list):
+                    amenities = []
+                item["room_details"] = {
+                    "id": meeting.room.id,
+                    "name": meeting.room.name,
+                    "capacity": meeting.room.capacity,
+                    "location": meeting.room.location,
+                    "description": meeting.room.description,
+                    "amenities": [str(amenity) for amenity in amenities if amenity],
+                    "equipment": [
+                        {
+                            "name": room_equipment.equipment.name,
+                            "quantity": room_equipment.quantity,
+                        }
+                        for room_equipment in meeting.room.default_equipments
+                        if room_equipment.equipment is not None
+                    ],
+                }
+            else:
+                item["room_details"] = None
             item["my_response_status"] = next(
                 (
                     participant.response_status

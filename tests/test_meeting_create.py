@@ -359,4 +359,9 @@ def test_create_meeting_schedules_invitation_email_for_invitee(
         "start_time_str": start.strftime("%H:%M %d/%m/%Y"),
         "location_str": f"Phòng {room.name}",
         "meeting_link": None,
+        "meeting_id": response.json()[0]["id"],
+        "start_time": start,
+        "end_time": end,
+        "organizer_email": organizer.email,
+        "organizer_name": organizer.full_name,
     }]

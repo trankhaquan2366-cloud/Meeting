@@ -219,10 +219,19 @@ __marimo__/
 
 
 
-venv/
-__pycache__/
-.env
-
 # Test database
 test.db
+
+# Generated files and local secrets
 node_modules/
+.venv*/
+__pycache__/
+.pytest_cache/
+*.log
+*.tmp
+.env
+playwright-report/
+test-results/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

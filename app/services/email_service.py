@@ -1,10 +1,14 @@
 import logging
+import os
 import smtplib
 import ssl
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from html import escape
 from typing import Iterator, Optional
+from urllib.parse import urlencode, urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import SMTPSettings, get_smtp_settings
 
@@ -39,6 +43,7 @@ def send_email(
     subject: str,
     body_text: str,
     body_html: Optional[str] = None,
+    calendar_invitation: Optional[str] = None,
 ) -> bool:
     """Gửi email qua giao thức SMTP. Nếu chưa cấu hình SMTP, ghi log warning và bỏ qua."""
     if not to_email or "@" not in to_email:
@@ -70,6 +75,13 @@ def send_email(
 
     if body_html:
         message.add_alternative(body_html, subtype="html")
+    if calendar_invitation:
+        message.add_attachment(
+            calendar_invitation,
+            subtype="calendar",
+            params={"method": "REQUEST", "charset": "UTF-8"},
+            filename="meeting-invitation.ics",
+        )
 
     try:
         with smtp_connection(settings) as smtp:
@@ -89,18 +101,78 @@ def send_meeting_invitation_email(
     start_time_str: str,
     location_str: str,
     meeting_link: Optional[str] = None,
+    meeting_id: Optional[int] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    organizer_email: Optional[str] = None,
+    organizer_name: Optional[str] = None,
 ) -> bool:
     """Send a meeting invitation email without propagating SMTP failures."""
     safe_name = escape(user_name)
     safe_title = escape(meeting_title)
     safe_start = escape(start_time_str)
     safe_location = escape(location_str)
-    safe_link = escape(meeting_link, quote=True) if meeting_link else None
-    link_text = f"\n• Link tham gia: {meeting_link}" if meeting_link else ""
+    try:
+        parsed_link = urlsplit(meeting_link or "")
+    except ValueError:
+        parsed_link = urlsplit("")
+    valid_meeting_link = (
+        meeting_link
+        if parsed_link.scheme in {"http", "https"} and parsed_link.netloc
+        else None
+    )
+    safe_link = escape(valid_meeting_link, quote=True) if valid_meeting_link else None
+    link_text = f"\n• Link tham gia: {valid_meeting_link}" if valid_meeting_link else ""
     link_html = (
         f'<p style="margin:6px 0"><strong>Link tham gia:</strong> '
-        f'<a href="{safe_link}">{safe_link}</a></p>'
+        f'<a href="{safe_link}" target="_blank" rel="noopener noreferrer">{safe_link}</a></p>'
         if safe_link
+        else ""
+    )
+    dashboard_url = os.getenv("FRONTEND_DASHBOARD_URL")
+    if not dashboard_url:
+        dashboard_url = (
+            f"{os.getenv('ROOMSYNC_WEB_URL', 'http://localhost:8000').rstrip('/')}"
+            "/static/dashboard.html"
+        )
+    accept_url = (
+        f"{dashboard_url}?{urlencode({'meeting_id': meeting_id, 'action': 'accept'})}"
+        if meeting_id is not None
+        else None
+    )
+    decline_url = (
+        f"{dashboard_url}?{urlencode({'meeting_id': meeting_id, 'action': 'decline'})}"
+        if meeting_id is not None
+        else None
+    )
+    safe_accept_url = escape(accept_url, quote=True) if accept_url else None
+    safe_decline_url = escape(decline_url, quote=True) if decline_url else None
+    actions_html = ""
+    actions_text = ""
+    if safe_accept_url and safe_decline_url:
+        actions_html = f"""
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px auto 8px">
+      <tr><td align="center" style="padding:0 5px 8px">
+        <a href="{safe_accept_url}" target="_blank" style="display:inline-block;padding:12px 18px;border-radius:6px;background-color:#15803d;color:#ffffff;text-decoration:none;font-weight:bold">✅ Đồng ý tham gia</a>
+      </td><td align="center" style="padding:0 5px 8px">
+        <a href="{safe_decline_url}" target="_blank" style="display:inline-block;padding:12px 18px;border-radius:6px;background-color:#b91c1c;color:#ffffff;text-decoration:none;font-weight:bold">❌ Từ chối</a>
+      </td></tr>
+    </table>"""
+        actions_text = (
+            f"\nĐồng ý tham gia: {accept_url}\nTừ chối: {decline_url}"
+        )
+    join_html = (
+        f'<p style="margin:18px 0;text-align:center">'
+        f'<a href="{safe_link}" target="_blank" rel="noopener noreferrer" '
+        'style="display:inline-block;padding:13px 22px;border-radius:6px;'
+        'background-color:#2563eb;color:#ffffff;text-decoration:none;font-weight:bold">'
+        '📹 Vào họp Google Meet</a></p>'
+        if safe_link and parsed_link.hostname == "meet.google.com"
+        else ""
+    )
+    join_text = (
+        f"\nVào họp Google Meet: {valid_meeting_link}"
+        if valid_meeting_link and parsed_link.hostname == "meet.google.com"
         else ""
     )
     body_text = (
@@ -108,7 +180,7 @@ def send_meeting_invitation_email(
         f"Bạn được mời tham dự cuộc họp '{meeting_title}'.\n\n"
         f"• Thời gian: {start_time_str}\n"
         f"• Địa điểm: {location_str}{link_text}\n\n"
-        "Vui lòng đăng nhập RoomSync để xem chi tiết và phản hồi lời mời."
+        f"Vui lòng sử dụng liên kết để phản hồi lời mời.{actions_text}{join_text}"
     )
     body_html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -123,15 +195,107 @@ def send_meeting_invitation_email(
       <p style="margin:6px 0"><strong>Địa điểm:</strong> {safe_location}</p>
       {link_html}
     </div>
-    <p>Đăng nhập RoomSync để xem chi tiết và phản hồi lời mời.</p>
+    {join_html}
+    {actions_html}
+    <p style="margin-top:16px">Nếu các nút không hoạt động, hãy mở RoomSync để xem chi tiết cuộc họp.</p>
   </div>
 </body></html>"""
+    calendar_invitation = None
+    if meeting_id is not None and start_time is not None and end_time is not None:
+        calendar_invitation = _build_calendar_invitation(
+            meeting_id=meeting_id,
+            meeting_title=meeting_title,
+            start_time=start_time,
+            end_time=end_time,
+            location=location_str,
+            attendee_email=to_email,
+            organizer_email=organizer_email,
+            organizer_name=organizer_name,
+        )
     return send_email(
         to_email,
         f"[RoomSync] Lời mời tham dự cuộc họp: {meeting_title}",
         body_text,
         body_html,
+        calendar_invitation,
     )
+
+
+def _ical_escape(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+        .replace(",", "\\,")
+        .replace(";", "\\;")
+    )
+
+
+def _ical_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        timezone_name = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh")
+        try:
+            local_timezone = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            logger.warning("Unknown APP_TIMEZONE %s; using UTC for iCalendar", timezone_name)
+            local_timezone = timezone.utc
+        value = value.replace(tzinfo=local_timezone)
+    return value.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _ical_parameter(value: str) -> str:
+    return (
+        str(value)
+        .replace("^", "^^")
+        .replace("\r\n", "^n")
+        .replace("\n", "^n")
+        .replace("\r", "^n")
+        .replace('"', "^'")
+    )
+
+
+def _build_calendar_invitation(
+    *,
+    meeting_id: int,
+    meeting_title: str,
+    start_time: datetime,
+    end_time: datetime,
+    location: str,
+    attendee_email: str,
+    organizer_email: Optional[str],
+    organizer_name: Optional[str],
+) -> str:
+    """Build an RFC 5545 calendar request for mail clients such as Gmail."""
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VCALENDAR",
+        "PRODID:-//RoomSync//Meeting Invitation//EN",
+        "VERSION:2.0",
+        "CALSCALE:GREGORIAN",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:meeting-{meeting_id}@roomsync",
+        f"DTSTAMP:{now}",
+        f"DTSTART:{_ical_datetime(start_time)}",
+        f"DTEND:{_ical_datetime(end_time)}",
+        f"SUMMARY:{_ical_escape(meeting_title)}",
+        f"LOCATION:{_ical_escape(location)}",
+        f"ATTENDEE;ROLE=REQ-PARTICIPANT;RSVP=TRUE;PARTSTAT=NEEDS-ACTION:mailto:{attendee_email.replace(chr(13), '').replace(chr(10), '')}",
+    ]
+    if organizer_email:
+        if organizer_name:
+            lines.append(
+                f'ORGANIZER;CN="{_ical_parameter(organizer_name)}":'
+                f'mailto:{organizer_email.replace(chr(13), "").replace(chr(10), "")}'
+            )
+        else:
+            lines.append(
+                f"ORGANIZER:mailto:{organizer_email.replace(chr(13), '').replace(chr(10), '')}"
+            )
+    lines.extend(["STATUS:CONFIRMED", "SEQUENCE:0", "END:VEVENT", "END:VCALENDAR"])
+    return "\r\n".join(lines) + "\r\n"
 
 
 def send_meeting_cancellation_email(

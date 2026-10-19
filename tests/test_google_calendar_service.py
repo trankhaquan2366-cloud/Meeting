@@ -15,8 +15,14 @@ from tests.helpers import _add_participant, _create_meeting, _create_room, _crea
 class FakeGoogleResponse:
     status_code = 200
 
+    def __init__(self, event=None):
+        self.event = event or {}
+
     def raise_for_status(self):
         return None
+
+    def json(self):
+        return self.event
 
 
 
@@ -91,6 +97,64 @@ def test_organizer_meeting_is_inserted_with_invitees(db_session, monkeypatch):
         user_id=organizer.id,
         meeting_id=meeting.id,
     ).count() == 1
+
+
+def test_online_organizer_meeting_gets_one_google_meet_link_for_all_attendees(
+    db_session, monkeypatch
+):
+    monkeypatch.setenv(
+        "GOOGLE_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii")
+    )
+    organizer = _create_user(db_session, "calendar-meet-organizer")
+    organizer.google_refresh_token = encrypt_refresh_token("organizer-refresh-token")
+    invitee = _create_user(db_session, "calendar-meet-invitee")
+    invitee.google_refresh_token = encrypt_refresh_token("invitee-refresh-token")
+    db_session.commit()
+    room = _create_room(db_session, "Calendar Meet Room")
+    start = datetime.now() + timedelta(days=3)
+    meeting = _create_meeting(db_session, room, organizer, start, start + timedelta(hours=1))
+    meeting.meeting_type = "online"
+    meeting.meeting_link = "https://example.com/temporary-link"
+    _add_participant(db_session, meeting, invitee)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        google_calendar_service, "SessionLocal", sessionmaker(bind=test_engine)
+    )
+    monkeypatch.setattr(
+        google_calendar_service,
+        "_access_token",
+        lambda token: f"google-access-token-{token}",
+    )
+    meet_link = "https://meet.google.com/abc-defg-hij"
+    inserted_events = []
+
+    def fake_insert(url, **kwargs):
+        inserted_events.append((url, kwargs))
+        return FakeGoogleResponse({"hangoutLink": meet_link})
+
+    monkeypatch.setattr(google_calendar_service.httpx, "post", fake_insert)
+
+    google_calendar_service.sync_user_meetings_to_google(organizer.id)
+    db_session.refresh(meeting)
+    google_calendar_service.sync_user_meetings_to_google(invitee.id)
+
+    assert len(inserted_events) == 2
+    _, organizer_request = inserted_events[0]
+    organizer_payload = organizer_request["json"]
+    create_request = organizer_payload["conferenceData"]["createRequest"]
+    assert organizer_request["params"] == {
+        "sendUpdates": "all",
+        "conferenceDataVersion": 1,
+    }
+    assert create_request["requestId"].startswith("meet-")
+    assert len(create_request["requestId"]) == len("meet-") + 8
+    assert create_request["conferenceSolutionKey"] == {"type": "hangoutsMeet"}
+    assert meeting.meeting_link == meet_link
+
+    _, invitee_request = inserted_events[1]
+    assert "conferenceData" not in invitee_request["json"]
+    assert invitee_request["json"]["location"] == meet_link
 
 
 def test_calendar_permission_403_logs_reconnect_guidance(db_session, monkeypatch, caplog):

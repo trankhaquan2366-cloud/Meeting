@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app import main
+from app.models.equipment import Equipment, MeetingEquipment, RoomEquipment
 from tests.helpers import (
     _add_participant,
     _auth_header,
@@ -51,6 +52,9 @@ def test_mine_separates_organizer_and_invitee_and_includes_rsvp(
     assert organizer_item["id"] == meeting.id
     assert organizer_item["is_organizer"] is True
     assert organizer_item["participants"][0]["response_status"] == "accepted"
+    assert organizer_item["room_details"]["name"] == "Mine Room"
+    assert organizer_item["room_details"]["capacity"] == 10
+    assert organizer_item["room_details"]["location"] == "Floor 1"
     assert all(item["id"] != canceled_meeting.id for item in organizer_response.json())
 
     invitee_response = client.get(
@@ -134,7 +138,67 @@ def test_mine_handles_missing_organizer_and_room_relationships(
     item = response.json()[0]
     assert item["organizer_name"] == "Người tổ chức"
     assert item["room_name"] is None
+    assert item["room_details"] is None
     assert item["is_organizer"] is False
+
+
+def test_mine_includes_room_amenities_and_equipment(
+    client: TestClient, db_session: Session
+):
+    organizer = _create_user(db_session, "room_details_organizer")
+    room = _create_room(db_session, "Detailed Room")
+    room.amenities = '["Bảng trắng", "TV 65 inch"]'
+    room.description = "Phòng họp tầng 2"
+    default_equipment = Equipment(name="Máy chiếu", total_qty=1)
+    borrowed_equipment = Equipment(name="Micro", total_qty=2)
+    db_session.add_all([default_equipment, borrowed_equipment])
+    db_session.flush()
+    db_session.add(
+        RoomEquipment(
+            room_id=room.id,
+            equipment_id=default_equipment.id,
+            quantity=1,
+        )
+    )
+    meeting = _create_meeting(
+        db_session,
+        room,
+        organizer,
+        datetime.utcnow() + timedelta(days=1),
+        datetime.utcnow() + timedelta(days=1, hours=1),
+    )
+    db_session.add(
+        MeetingEquipment(
+            meeting_id=meeting.id,
+            equipment_id=borrowed_equipment.id,
+            quantity=2,
+            note="Đặt trước",
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/api/meetings/mine", headers=_auth_header(_make_token(organizer))
+    )
+
+    assert response.status_code == 200
+    item = response.json()[0]
+    assert item["room_details"] == {
+        "id": room.id,
+        "name": "Detailed Room",
+        "capacity": 10,
+        "location": "Floor 1",
+        "description": "Phòng họp tầng 2",
+        "amenities": ["Bảng trắng", "TV 65 inch"],
+        "equipment": [{"name": "Máy chiếu", "quantity": 1}],
+    }
+    assert item["equipments"] == [
+        {
+            "equipment_id": borrowed_equipment.id,
+            "equipment_name": "Micro",
+            "quantity": 2,
+        }
+    ]
 
 
 def test_missing_rsvp_column_returns_actionable_service_error(

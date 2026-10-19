@@ -23,6 +23,9 @@ def test_invitation_notification_is_linked_to_the_invited_meeting(client, db_ses
         datetime.utcnow() + timedelta(days=1),
         datetime.utcnow() + timedelta(days=1, hours=1),
     )
+    meeting.meeting_type = "online"
+    meeting.meeting_link = "https://meet.google.com/abc-defg-hij"
+    db_session.commit()
     _add_participant(db_session, meeting, invitee)
 
     send_meeting_invitation_notifications(
@@ -47,3 +50,4 @@ def test_invitation_notification_is_linked_to_the_invited_meeting(client, db_ses
 
     assert response.status_code == 200
     assert response.json()[0]["meeting_id"] == meeting.id
+    assert response.json()[0]["meeting_link"] == meeting.meeting_link

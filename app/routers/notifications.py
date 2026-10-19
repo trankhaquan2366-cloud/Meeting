@@ -18,6 +18,9 @@ def _notification_response(notification: Notification) -> NotificationResponse:
         update={
             "meeting_title": notification.meeting.title if notification.meeting else None,
             "meeting_status": notification.meeting.status if notification.meeting else None,
+            "meeting_link": (
+                notification.meeting.meeting_link if notification.meeting else None
+            ),
         }
     )
 

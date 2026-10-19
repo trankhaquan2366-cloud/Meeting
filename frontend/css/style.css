@@ -236,12 +236,17 @@ body {
 .notification-list { max-height: 385px; overflow-y: auto; }
 .notification-entry { border-bottom: 1px solid #f1f5f9; }
 .notification-entry.unread { background: #f0fdf4; }
-.notification-item { display: block; width: 100%; padding: 12px 16px 6px; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.notification-item { display: block; width: 100%; padding: 12px 16px 2px; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .notification-item:hover, .notification-item:focus-visible { background: #f8fafc; outline: none; }
 .notification-item.unread { background: #f0fdf4; }
 .notification-item-title { display: block; margin-bottom: 4px; color: #0f172a; font-size: 12px; font-weight: 600; }
-.notification-item-content { display: block; color: #475569; font-size: 12px; line-height: 1.45; }
+.notification-item-content { display: block; padding: 0 16px 4px; color: #475569; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .notification-item-time { display: block; margin-top: 6px; color: #94a3b8; font-size: 10px; }
+.notification-item-content a { color: #2563eb; text-decoration: underline; }
+.notification-join-row { padding: 3px 16px 10px; }
+.notification-join-meeting { display: inline-flex; align-items: center; min-height: 30px; padding: 5px 9px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; font-size: 11px; font-weight: 700; text-decoration: none; }
+.notification-join-meeting:hover { background: #dbeafe; }
+.notification-join-meeting:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .notification-rsvp-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 5px 16px 12px; }
 .notification-rsvp-actions .badge-status { margin: 0 auto 0 0; }
 .notification-empty { padding: 18px 16px; color: #64748b; text-align: center; font-size: 12px; }
@@ -470,6 +475,20 @@ body {
 .booking-list-main strong, .booking-list-main span { display: block; }
 .booking-list-main strong { overflow: hidden; color: #0f172a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .booking-list-main span, .booking-list-time { margin-top: 4px; color: #64748b; font-size: 12px; }
+.booking-list-main .booking-online-link-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 7px; }
+.booking-online-link-row .booking-meeting-link { min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: #2563eb; font-size: 12px; }
+.booking-copy-link-button { padding: 4px 7px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.booking-copy-link-button:hover { background: #dbeafe; }
+.booking-copy-link-button:focus-visible, .booking-room-details summary:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.booking-list-main .booking-room-location { margin-top: 5px; color: #475569; font-size: 12px; }
+.booking-list-main .booking-room-details { margin-top: 7px; color: #334155; font-size: 12px; }
+.booking-room-details summary { width: fit-content; color: #2563eb; font-weight: 600; cursor: pointer; }
+.booking-room-details-content { margin-top: 7px; padding: 9px 11px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.booking-list-main .booking-room-description { margin: 0 0 7px; color: #64748b; font-size: 12px; white-space: normal; }
+.booking-list-main .booking-room-details-heading { margin-top: 0; color: #334155; font-size: 11px; font-weight: 700; }
+.booking-equipment-list { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 0; padding: 0; list-style: none; }
+.booking-equipment-list li { padding: 3px 7px; color: #334155; border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; font-size: 11px; }
+.booking-list-main .booking-room-empty { margin: 6px 0 0; color: #64748b; font-size: 11px; }
 .booking-list-actions { display: flex; gap: 7px; justify-content: flex-end; }
 .booking-guest-toggle, .booking-rsvp-button { padding: 7px 10px; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .booking-guest-toggle:hover, .booking-rsvp-button:hover { background: #f8fafc; }
