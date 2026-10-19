@@ -170,6 +170,30 @@ def test_validate_meeting_booking_blocks_room_time_conflict(db_session):
     assert result["blocking_errors"][0]["type"] == "RoomConflictError"
 
 
+def test_validate_meeting_booking_rejects_non_active_room_status(db_session):
+    organizer = _create_user(db_session, "booking-locked-room-organizer")
+    room = _create_room(db_session, "Locked operational room")
+    room.room_status = "locked"
+    db_session.commit()
+    start = datetime.utcnow() + timedelta(days=7)
+    payload = MeetingCreateRequest(
+        title="Meeting in locked room",
+        meeting_type="offline",
+        room_id=room.id,
+        start_time=start,
+        end_time=start + timedelta(minutes=30),
+    )
+
+    result = MeetingService.validate_meeting_booking(
+        db_session,
+        payload,
+        organizer_id=organizer.id,
+    )
+
+    assert result["is_valid"] is False
+    assert result["blocking_errors"][0]["type"] == "RoomUnavailableError"
+
+
 def test_validate_meeting_booking_enforces_organizer_daily_hours_limit(db_session):
     organizer = _create_user(db_session, "booking-daily-limit-organizer")
     organizer.daily_booking_hours_limit = 2

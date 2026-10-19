@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "RoomSync - Quản lý phòng họp",
+  "short_name": "RoomSync",
+  "description": "Quản lý phòng họp và lịch họp của nhóm.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#2563EB",
+  "icons": [
+    {
+      "src": "/assets/icons/roomsync-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/roomsync-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

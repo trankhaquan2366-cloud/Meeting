@@ -7,7 +7,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.chat import ChatMessage, ChatSession
+from app.models.department import Department
+from app.models.equipment import Equipment
 from app.models.meeting import Meeting
+from app.models.project_group import ProjectGroup
 from app.routers import chatbot as chatbot_router
 from app.services import chatbot_service
 from app.services.gemini_service import (
@@ -15,7 +18,13 @@ from app.services.gemini_service import (
     GeminiChatResponse,
     GeminiService,
 )
-from tests.helpers import _auth_header, _create_room, _create_user, _make_token
+from tests.helpers import (
+    _auth_header,
+    _create_meeting,
+    _create_room,
+    _create_user,
+    _make_token,
+)
 
 
 def _stream_payload(response, event_type):
@@ -341,3 +350,228 @@ def test_confirm_chatbot_booking_rejects_incomplete_slots(
 
     assert response.status_code == 422
     assert db_session.query(Meeting).count() == 0
+
+
+def test_assistant_meeting_form_options_require_authentication(client: TestClient):
+    response = client.get("/api/v1/chatbot/meeting-form-options")
+
+    assert response.status_code == 401
+
+
+def test_assistant_meeting_form_options_expose_group_and_equipment_choices(
+    client: TestClient,
+    db_session: Session,
+):
+    user = _create_user(db_session, "assistant-form-options-user")
+    department = Department(name="Form Department", code="FORM-DEPT")
+    project = ProjectGroup(name="Form Project", code="FORM-PROJECT")
+    television = Equipment(name="TV screen", code="TV-SCREEN", total_qty=2, is_active=True)
+    db_session.add_all([department, project, television])
+    db_session.commit()
+
+    response = client.get(
+        "/api/v1/chatbot/meeting-form-options",
+        headers=_auth_header(_make_token(user)),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {"id": department.id, "name": department.name, "code": department.code} in data["departments"]
+    assert {"id": project.id, "name": project.name, "code": project.code} in data["projects"]
+    assert next(item for item in data["equipment"] if item["key"] == "tv") == {
+        "key": "tv",
+        "label": "TV",
+        "id": television.id,
+        "available": True,
+    }
+
+
+def test_assistant_meeting_creates_department_booking_and_saves_chat_history(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+):
+    organizer = _create_user(db_session, "assistant-department-organizer")
+    invitee = _create_user(db_session, "assistant-department-invitee")
+    department = Department(name="Assistant Operations", code="ASST-OPS")
+    db_session.add(department)
+    db_session.flush()
+    organizer.department_id = department.id
+    invitee.department_id = department.id
+    room = _create_room(db_session, "Assistant Department Room")
+    room.capacity = 2
+    chat_session = ChatSession(user_id=organizer.id, title="Group meeting")
+    db_session.add(chat_session)
+    db_session.commit()
+    monkeypatch.setattr(
+        chatbot_router,
+        "schedule_meeting_invitations",
+        lambda **_kwargs: None,
+    )
+    booking_day = date.today() + timedelta(days=2)
+
+    response = client.post(
+        "/api/v1/chatbot/meetings",
+        json={
+            "session_id": chat_session.id,
+            "source_prompt": "Tạo họp phòng ban lúc 10h có tivi",
+            "group_type": "department",
+            "group_id": department.id,
+            "title": "Operations planning",
+            "start_time": datetime.combine(
+                booking_day, datetime.strptime("10:00", "%H:%M").time()
+            ).isoformat(),
+            "end_time": datetime.combine(
+                booking_day, datetime.strptime("11:00", "%H:%M").time()
+            ).isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()[0]["room_name"] == room.name
+    meeting = db_session.query(Meeting).filter_by(title="Operations planning").one()
+    assert meeting.room_id == room.id
+    assert {participant.user_id for participant in meeting.participants} == {invitee.id}
+    saved_messages = (
+        db_session.query(ChatMessage)
+        .filter_by(session_id=chat_session.id)
+        .order_by(ChatMessage.id)
+        .all()
+    )
+    assert [message.sender for message in saved_messages] == ["user", "bot"]
+    assert saved_messages[0].content == "Tạo họp phòng ban lúc 10h có tivi"
+    assert saved_messages[1].slots["capacity"] == 2
+
+
+def test_assistant_online_meeting_generates_a_join_link(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+):
+    organizer = _create_user(db_session, "assistant-online-organizer")
+    project = ProjectGroup(name="Online Project", code="ONLINE-PROJECT")
+    db_session.add(project)
+    db_session.commit()
+    project.users.append(organizer)
+    db_session.commit()
+    monkeypatch.setattr(
+        chatbot_router,
+        "schedule_meeting_invitations",
+        lambda **_kwargs: None,
+    )
+    booking_day = date.today() + timedelta(days=2)
+
+    response = client.post(
+        "/api/v1/chatbot/meetings",
+        json={
+            "group_type": "project",
+            "group_id": project.id,
+            "title": "Online project sync",
+            "start_time": datetime.combine(
+                booking_day, datetime.strptime("10:00", "%H:%M").time()
+            ).isoformat(),
+            "end_time": datetime.combine(
+                booking_day, datetime.strptime("11:00", "%H:%M").time()
+            ).isoformat(),
+            "online_meeting": True,
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201, response.text
+    meeting = db_session.query(Meeting).filter_by(title="Online project sync").one()
+    assert meeting.meeting_type == "online"
+    assert meeting.room_id is None
+    assert meeting.meeting_link.startswith("https://meet.jit.si/roomsync-")
+
+
+def test_assistant_meeting_uses_an_alternative_room_when_requested_room_conflicts(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+):
+    organizer = _create_user(db_session, "assistant-conflict-organizer")
+    department = Department(name="Conflict Department", code="CONFLICT-DEPT")
+    db_session.add(department)
+    db_session.flush()
+    organizer.department_id = department.id
+    blocked_room = _create_room(db_session, "Assistant Blocked Room")
+    alternative_room = _create_room(db_session, "Assistant Alternative Room")
+    booking_day = date.today() + timedelta(days=3)
+    start_time = datetime.combine(
+        booking_day, datetime.strptime("10:00", "%H:%M").time()
+    )
+    conflict_organizer = _create_user(db_session, "assistant-conflict-owner")
+    _create_meeting(
+        db_session,
+        blocked_room,
+        conflict_organizer,
+        start_time,
+        start_time + timedelta(hours=1),
+    )
+    monkeypatch.setattr(
+        chatbot_router,
+        "schedule_meeting_invitations",
+        lambda **_kwargs: None,
+    )
+
+    response = client.post(
+        "/api/v1/chatbot/meetings",
+        json={
+            "group_type": "department",
+            "group_id": department.id,
+            "title": "Alternative room meeting",
+            "start_time": start_time.isoformat(),
+            "end_time": (start_time + timedelta(hours=1)).isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 201, response.text
+    meeting = db_session.query(Meeting).filter_by(title="Alternative room meeting").one()
+    assert meeting.room_id == alternative_room.id
+
+
+def test_assistant_meeting_returns_nearest_available_time_when_room_is_busy(
+    client: TestClient,
+    db_session: Session,
+):
+    organizer = _create_user(db_session, "assistant-time-suggestion-organizer")
+    conflict_owner = _create_user(db_session, "assistant-time-suggestion-owner")
+    department = Department(name="Time Suggestion Department", code="TIME-SUGGESTION")
+    db_session.add(department)
+    db_session.flush()
+    organizer.department_id = department.id
+    room = _create_room(db_session, "Assistant Time Suggestion Room")
+    booking_day = date.today() + timedelta(days=3)
+    start_time = datetime.combine(
+        booking_day, datetime.strptime("10:00", "%H:%M").time()
+    )
+    _create_meeting(
+        db_session,
+        room,
+        conflict_owner,
+        start_time,
+        start_time + timedelta(hours=1),
+    )
+
+    response = client.post(
+        "/api/v1/chatbot/meetings",
+        json={
+            "group_type": "department",
+            "group_id": department.id,
+            "title": "Suggested time meeting",
+            "start_time": start_time.isoformat(),
+            "end_time": (start_time + timedelta(hours=1)).isoformat(),
+        },
+        headers=_auth_header(_make_token(organizer)),
+    )
+
+    assert response.status_code == 409
+    suggestions = response.json()["detail"]["suggestions"]
+    assert suggestions
+    assert suggestions[0]["room_id"] == room.id
+    assert suggestions[0]["start_time"] == (
+        start_time + timedelta(hours=1)
+    ).isoformat()

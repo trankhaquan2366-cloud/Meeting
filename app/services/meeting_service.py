@@ -79,6 +79,7 @@ class MeetingService:
                 )
                 available_rooms_query = db.query(Room).filter(
                     Room.is_active.is_(True),
+                    Room.room_status == "active",
                     Room.id != meeting.room_id,
                     ~Room.id.in_(conflicting_room_ids),
                 )
@@ -162,7 +163,11 @@ class MeetingService:
         if meeting_type == "offline":
             room = (
                 db.query(Room)
-                .filter(Room.id == payload.room_id, Room.is_active.is_(True))
+                .filter(
+                    Room.id == payload.room_id,
+                    Room.is_active.is_(True),
+                    Room.room_status == "active",
+                )
                 .first()
             )
             if room is None:
@@ -852,7 +857,10 @@ class MeetingService:
     @staticmethod
     def get_all_active_rooms(db: Session):
         """VIỆC 1: Lấy danh sách tất cả phòng họp đang hoạt động"""
-        return db.query(Room).filter(Room.is_active == True).all()
+        return db.query(Room).filter(
+            Room.is_active.is_(True),
+            Room.room_status == "active",
+        ).all()
 
     @staticmethod
     def create_meeting(db: Session, payload: MeetingCreateRequest, organizer_id: int | None = None):
@@ -890,7 +898,8 @@ class MeetingService:
                 )
             room = db.query(Room).filter(
                 Room.id == room_id,
-                Room.is_active == True
+                Room.is_active.is_(True),
+                Room.room_status == "active",
             ).first()
             if not room:
                 raise HTTPException(

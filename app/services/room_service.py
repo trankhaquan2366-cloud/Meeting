@@ -30,7 +30,8 @@ def get_available_rooms(
     available_rooms = (
         db.query(Room)
         .filter(
-            Room.is_active == True,
+            Room.is_active.is_(True),
+            Room.room_status == "active",
             Room.capacity >= min_capacity,
             ~Room.id.in_(occupied_room_ids),
         )

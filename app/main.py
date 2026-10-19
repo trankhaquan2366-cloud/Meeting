@@ -87,6 +87,29 @@ def _auto_migrate_schema():
                     conn.execute(text("ALTER TABLE rooms ADD COLUMN amenities TEXT DEFAULT NULL AFTER description"))
                     print("✅ Đã tự động thêm cột 'amenities' vào bảng rooms.")
 
+            if "rooms" in inspect(conn).get_table_names():
+                room_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("rooms")
+                }
+                if "room_status" not in room_columns:
+                    conn.execute(text(
+                        "ALTER TABLE rooms ADD COLUMN room_status "
+                        "VARCHAR(20) NOT NULL DEFAULT 'active'"
+                    ))
+                    conn.execute(text(
+                        "UPDATE rooms SET room_status = 'maintenance' "
+                        "WHERE is_active = FALSE"
+                    ))
+                if "room_image" not in room_columns:
+                    conn.execute(text(
+                        "ALTER TABLE rooms ADD COLUMN room_image VARCHAR(2048) NULL"
+                    ))
+                if "layout_type" not in room_columns:
+                    conn.execute(text(
+                        "ALTER TABLE rooms ADD COLUMN layout_type VARCHAR(30) NULL"
+                    ))
+
             if "meeting_participants" in inspect(conn).get_table_names():
                 participant_columns = {
                     column["name"]
@@ -418,6 +441,24 @@ def read_root():
 @app.get("/api/health", tags=["Health"])
 def health_check():
     return {"status": "success", "message": "Meeting Management System API is running"}
+
+
+@app.get("/manifest.json", include_in_schema=False)
+def pwa_manifest():
+    return FileResponse(
+        FRONTEND_DIR / "manifest.json",
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/sw.js", include_in_schema=False)
+def pwa_service_worker():
+    return FileResponse(
+        FRONTEND_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"},
+    )
+
 
 @app.get("/dashboard", tags=["Web UI"])
 def render_dashboard_page():

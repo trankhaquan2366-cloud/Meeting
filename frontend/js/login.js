@@ -1,14 +1,13 @@
-const loginApiOrigin = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-    && window.location.port !== '8000'
-    ? `${window.location.protocol}//${window.location.hostname}:8000`
-    : window.location.origin;
-const API_URL = window.API_URL || `${loginApiOrigin}/api`;
+const API_URL = (window.API_URL || 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '');
 
-document.addEventListener('DOMContentLoaded', () => {
+function attachLoginFormHandler() {
     const loginForm = document.getElementById('loginForm');
     const errorAlert = document.getElementById('errorAlert');
 
-    if (!loginForm) return;
+    if (!(loginForm instanceof HTMLFormElement)) {
+        console.error('Không tìm thấy form đăng nhập (#loginForm).');
+        return;
+    }
 
     loginForm.addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -85,4 +84,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachLoginFormHandler, { once: true });
+} else {
+    attachLoginFormHandler();
+}

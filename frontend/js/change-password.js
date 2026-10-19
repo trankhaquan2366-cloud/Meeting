@@ -1,3 +1,6 @@
+const CHANGE_PASSWORD_API_BASE = (window.API_URL || 'https://roomsync-app.onrender.com/api')
+    .replace(/\/+$/, '');
+
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('changePasswordForm');
     const errorMessage = document.getElementById('changePasswordError');
@@ -31,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const response = await fetch('/api/v1/auth/change-password', {
+            const response = await fetch(`${CHANGE_PASSWORD_API_BASE}/v1/auth/change-password`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -53,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             form.reset();
             window.setTimeout(() => {
-                window.location.assign('/static/login.html');
+                window.location.assign('login.html');
             }, 1500);
         } catch (error) {
             if (errorMessage) {

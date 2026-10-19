@@ -35,7 +35,7 @@ def test_gemini_service_passes_trimmed_api_key_to_sdk(monkeypatch):
     service = GeminiService()
 
     assert captured["api_key"] == "test-api-key"
-    assert captured["http_options"].timeout == 8_000
+    assert captured["http_options"].timeout == 20_000
     assert service.client is not None
     assert service.model == "gemini-3.8-flash"
 

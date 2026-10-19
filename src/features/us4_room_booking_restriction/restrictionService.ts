@@ -11,14 +11,9 @@ export interface RestrictionServiceOptions {
 }
 
 function getDefaultApiBaseUrl(): string {
-  if (typeof window === 'undefined') return '/api';
+  if (typeof window === 'undefined') return 'https://roomsync-app.onrender.com/api';
   const configuredApiUrl = (window as Window & { API_URL?: string }).API_URL;
-  const isLocalFrontend = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-    && window.location.port !== '8000';
-  const apiOrigin = isLocalFrontend
-    ? `${window.location.protocol}//${window.location.hostname}:8000`
-    : window.location.origin;
-  return configuredApiUrl ?? `${apiOrigin}/api`;
+  return configuredApiUrl ?? 'https://roomsync-app.onrender.com/api';
 }
 
 const MOCK_ROOMS: RoomOption[] = [

@@ -10,6 +10,13 @@ import { AssignPermissionModal, PermissionService } from '../us3_assign_permissi
 import { RestrictionService, RoomRestrictionModal } from '../us4_room_booking_restriction';
 import { BulkUserEditModal } from './BulkUserEditModal';
 
+function getUserListApiBase(): string {
+  const configuredApiUrl = typeof window === 'undefined'
+    ? undefined
+    : (window as Window & { API_URL?: string }).API_URL;
+  return (configuredApiUrl ?? 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '');
+}
+
 export interface UserListTableOptions {
   containerId?: string;
   service?: UserListService;
@@ -623,9 +630,9 @@ export class UserListTable {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       };
       const [userResponse, departmentsResponse, groupsResponse] = await Promise.all([
-        fetch(`/api/v1/users/${encodeURIComponent(userId)}`, { headers }),
-        fetch('/api/v1/directories/departments', { headers }),
-        fetch('/api/v1/directories/project-groups', { headers }),
+        fetch(`${getUserListApiBase()}/v1/users/${encodeURIComponent(userId)}`, { headers }),
+        fetch(`${getUserListApiBase()}/v1/directories/departments`, { headers }),
+        fetch(`${getUserListApiBase()}/v1/directories/project-groups`, { headers }),
       ]);
       const parseResponse = async <T,>(response: Response, label: string): Promise<T> => {
         const data: unknown = await response.json().catch(() => ({}));
@@ -817,7 +824,7 @@ export class UserListTable {
 
     try {
       const token = localStorage.getItem('token') ?? localStorage.getItem('access_token') ?? '';
-      const response = await fetch(`/api/v1/users/${encodeURIComponent(userId)}`, {
+      const response = await fetch(`${getUserListApiBase()}/v1/users/${encodeURIComponent(userId)}`, {
         method: 'PUT',
         headers: {
           Accept: 'application/json',
@@ -850,7 +857,7 @@ export class UserListTable {
 
   private async updateUserStatus(user: UserListItem): Promise<void> {
     await this.performAdminRequest(
-      `/api/v1/users/${encodeURIComponent(user.id)}`,
+      `${getUserListApiBase()}/v1/users/${encodeURIComponent(user.id)}`,
       'PATCH',
       { status: user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' },
     );
@@ -858,7 +865,7 @@ export class UserListTable {
 
   private async resendInvitation(user: UserListItem): Promise<void> {
     await this.performAdminRequest(
-      `/api/v1/users/${encodeURIComponent(user.id)}/resend-invite`,
+      `${getUserListApiBase()}/v1/users/${encodeURIComponent(user.id)}/resend-invite`,
       'POST',
     );
   }

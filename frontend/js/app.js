@@ -1,11 +1,8 @@
 /* ==========================================================================
    GLOBAL CONFIGURATION & STATE MANAGEMENT
    ========================================================================== */
-const appApiOrigin = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-    && window.location.port !== '8000'
-    ? `${window.location.protocol}//${window.location.hostname}:8000`
-    : window.location.origin;
-const API_BASE = window.API_URL || `${appApiOrigin}/api`;
+const API_BASE = (window.API_URL || 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '');
+const API_ORIGIN = new URL(API_BASE).origin;
 const ROOM_THUMBNAILS = [
     'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80',
     'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=800&q=80',
@@ -17,6 +14,8 @@ const ROOM_THUMBNAILS = [
     'https://images.unsplash.com/photo-1568992687947-868a62a9f521?auto=format&fit=crop&w=800&q=80',
 ];
 let allRooms = [];
+let roomEquipmentCatalog = [];
+let roomEquipmentLoaded = false;
 let myBookings = [];
 let allMeetings = [];
 let overviewRoomsLoaded = false;
@@ -84,7 +83,10 @@ async function fetchAPI(...args) {
     if (token && !headers.has('Authorization')) {
         headers.set('Authorization', `Bearer ${token}`);
     }
-    const response = await window.fetch(input, { ...init, headers });
+    const requestInput = typeof input === 'string' && input.startsWith('/')
+        ? new URL(input, `${API_ORIGIN}/`).href
+        : input;
+    const response = await window.fetch(requestInput, { ...init, headers });
     if (response.status === 401 && getAuthToken()) {
         localStorage.removeItem('token');
         localStorage.removeItem('access_token');
@@ -94,7 +96,7 @@ async function fetchAPI(...args) {
             ? pathname.replace(/dashboard\.html$/, 'index.html')
             : pathname === '/dashboard'
                 ? '/app'
-                : '/static/index.html';
+                : 'index.html';
         window.location.replace(loginPath);
     }
     return response;
@@ -1552,14 +1554,18 @@ function emptyRoomsMessage() {
 }
 
 function getRoomCardState(room) {
-    const roomStatus = String(room.status || room.room_status || '').trim().toUpperCase();
-    const maintenanceStatuses = new Set([
-        'MAINTENANCE', 'UNDER_MAINTENANCE', 'OUT_OF_SERVICE', 'INACTIVE', 'LOCKED',
-    ]);
-    if (room.is_active === false || maintenanceStatuses.has(roomStatus)) {
-        return { available: false, statusClass: 'status-amber', statusText: 'Bảo trì' };
+    const operationalStatus = String(room.room_status || '').trim().toLowerCase();
+    if (operationalStatus === 'maintenance') {
+        return { available: false, statusClass: 'status-amber', statusText: 'Đang bảo trì' };
+    }
+    if (operationalStatus === 'locked') {
+        return { available: false, statusClass: 'status-red', statusText: 'Tạm khóa' };
+    }
+    if (room.is_active === false) {
+        return { available: false, statusClass: 'status-amber', statusText: 'Ngưng hoạt động' };
     }
 
+    const roomStatus = String(room.status || '').trim().toUpperCase();
     const now = Date.now();
     const isMeetingInProgress = Array.isArray(allMeetings) && allMeetings.some(meeting => {
         if (String(meeting.room_id) !== String(room.id)) return false;
@@ -1588,7 +1594,7 @@ function getRoomCardState(room) {
 function buildRoomCards(rooms, isAdmin) {
     const htmlContent = rooms.map((room, index) => {
         const roomState = getRoomCardState(room);
-        const roomImg = room.image_url || ROOM_THUMBNAILS[(Number(room.id) || index) % ROOM_THUMBNAILS.length];
+        const roomImg = room.room_image || room.image_url || ROOM_THUMBNAILS[(Number(room.id) || index) % ROOM_THUMBNAILS.length];
 
         let amenitiesHTML = '';
         const amenities = parseRoomAmenities(room.amenities);
@@ -2197,7 +2203,7 @@ async function handleAdminCreateUser(event) {
     }
 
     try {
-        const response = await fetchAPI('/api/v1/users/', {
+        const response = await fetchAPI(`${API_BASE}/v1/users/`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${getAuthToken()}`,
@@ -2862,7 +2868,9 @@ function openRoomModal() {
     if (modalTitle) modalTitle.innerText = 'Thêm Phòng Họp Mới';
     document.getElementById('editRoomId').value = '';
     document.getElementById('roomForm').reset();
+    previewRoomImage('');
     document.getElementById('roomModal').style.display = 'flex';
+    loadRoomEquipmentOptions();
 }
 
 function openEditModal(roomId) {
@@ -2874,20 +2882,56 @@ function openEditModal(roomId) {
     document.getElementById('roomName').value = room.name;
     document.getElementById('roomLocation').value = room.location || '';
     document.getElementById('roomCapacity').value = room.capacity || '';
-
-    let amenitiesStr = '';
-    if (room.amenities) {
-        if (typeof room.amenities === 'string') {
-            try {
-                let parsed = JSON.parse(room.amenities);
-                amenitiesStr = Array.isArray(parsed) ? parsed.join(', ') : room.amenities;
-            } catch (e) { amenitiesStr = room.amenities; }
-        } else if (Array.isArray(room.amenities)) {
-            amenitiesStr = room.amenities.join(', ');
-        }
-    }
-    document.getElementById('roomAmenities').value = amenitiesStr;
+    document.getElementById('roomStatus').value = room.room_status || (room.is_active === false ? 'maintenance' : 'active');
+    document.getElementById('roomLayoutType').value = room.layout_type || '';
+    document.getElementById('roomImageUrl').value = room.room_image || room.image_url || '';
+    previewRoomImage(document.getElementById('roomImageUrl').value);
     document.getElementById('roomModal').style.display = 'flex';
+    loadRoomEquipmentOptions(room.equipment_ids || []);
+}
+
+async function loadRoomEquipmentOptions(selectedIds = []) {
+    const container = document.getElementById('roomEquipmentOptions');
+    if (!container) return;
+    roomEquipmentLoaded = false;
+    container.innerHTML = '<span class="room-equipment-message">Đang tải danh mục thiết bị...</span>';
+    try {
+        const response = await fetchAPI(`${API_BASE}/equipments/`, {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        if (!response.ok) throw new Error(`Không thể tải danh mục thiết bị (HTTP ${response.status}).`);
+        const equipment = await response.json();
+        if (!Array.isArray(equipment)) throw new Error('Dữ liệu danh mục thiết bị không hợp lệ.');
+        roomEquipmentCatalog = equipment.filter(item => item.is_active !== false);
+        const selected = new Set(selectedIds.map(Number));
+        container.innerHTML = roomEquipmentCatalog.length
+            ? roomEquipmentCatalog.map(item => `
+                <label class="room-equipment-option">
+                    <input type="checkbox" name="roomEquipmentIds" value="${Number(item.id)}"
+                        ${selected.has(Number(item.id)) ? 'checked' : ''}>
+                    <span>${escapeHtml(item.name)}</span>
+                </label>
+            `).join('')
+            : '<span class="room-equipment-message">Chưa có thiết bị đang hoạt động.</span>';
+        roomEquipmentLoaded = true;
+    } catch (error) {
+        console.error('Lỗi tải danh mục thiết bị cho phòng:', error);
+        container.innerHTML = '<span class="room-equipment-message room-equipment-error" role="alert">Không thể tải danh mục thiết bị. Vui lòng đóng và mở lại biểu mẫu.</span>';
+    }
+}
+
+function previewRoomImage(value) {
+    const preview = document.getElementById('roomImagePreview');
+    if (!preview) return;
+    try {
+        const imageUrl = new URL(String(value || '').trim());
+        if (!['http:', 'https:'].includes(imageUrl.protocol)) throw new Error('Unsupported image URL scheme.');
+        preview.src = imageUrl.href;
+        preview.hidden = false;
+    } catch {
+        preview.removeAttribute('src');
+        preview.hidden = true;
+    }
 }
 
 function closeRoomModal() {
@@ -2899,12 +2943,20 @@ async function handleFormSubmit(e) {
     const token = getAuthToken();
     const editId = document.getElementById('editRoomId').value;
 
+    if (!roomEquipmentLoaded) {
+        alert('Danh mục thiết bị chưa sẵn sàng. Vui lòng thử lại.');
+        return;
+    }
+
     const payload = {
         name: document.getElementById('roomName').value,
         location: document.getElementById('roomLocation').value,
         capacity: parseInt(document.getElementById('roomCapacity').value) || 0,
-        amenities: document.getElementById('roomAmenities').value.split(',').map(s => s.trim()).filter(Boolean),
-        is_active: true
+        room_status: document.getElementById('roomStatus').value,
+        equipment_ids: [...document.querySelectorAll('input[name="roomEquipmentIds"]:checked')]
+            .map(input => Number(input.value)),
+        room_image: document.getElementById('roomImageUrl').value.trim() || null,
+        layout_type: document.getElementById('roomLayoutType').value || null
     };
 
     const method = editId ? 'PUT' : 'POST';
@@ -3817,6 +3869,7 @@ window.applyFilters = applyFilters;
 window.setFilter = setFilter;
 window.openRoomModal = openRoomModal;
 window.openEditModal = openEditModal;
+window.previewRoomImage = previewRoomImage;
 window.closeRoomModal = closeRoomModal;
 window.handleFormSubmit = handleFormSubmit;
 window.deleteRoom = deleteRoom;
@@ -3845,6 +3898,7 @@ let activeChatSessionId = null;
 let chatSessions = [];
 let chatHistoryRequestId = 0;
 let chatMessageRequestPending = false;
+let chatMinimizeTimer = null;
 
 document.addEventListener('DOMContentLoaded', initializeAiChat);
 
@@ -3856,8 +3910,17 @@ function initializeAiChat() {
 
     launcher.addEventListener('click', openAiChatDrawer);
     document.getElementById('ai-chat-close')?.addEventListener('click', closeAiChatDrawer);
+    document.getElementById('ai-chat-minimize')?.addEventListener('click', closeAiChatDrawer);
     document.getElementById('ai-chat-new-session')?.addEventListener('click', createAiChatSession);
     document.getElementById('ai-chat-history-refresh')?.addEventListener('click', loadAiChatSessions);
+    document.addEventListener('click', event => {
+        if (!drawer.hidden && !drawer.contains(event.target) && !launcher.contains(event.target)) {
+            closeAiChatDrawer(false);
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !drawer.hidden) closeAiChatDrawer();
+    });
     drawer.querySelectorAll('[data-ai-chat-prompt]').forEach(button => {
         button.addEventListener('click', () => {
             const input = document.getElementById('ai-chat-input');
@@ -3874,6 +3937,8 @@ async function openAiChatDrawer() {
     const launcher = document.getElementById('ai-chat-launcher');
     if (!drawer || !launcher) return;
 
+    clearTimeout(chatMinimizeTimer);
+    drawer.classList.remove('is-minimizing');
     drawer.hidden = false;
     drawer.setAttribute('aria-hidden', 'false');
     launcher.setAttribute('aria-expanded', 'true');
@@ -3881,15 +3946,22 @@ async function openAiChatDrawer() {
     await loadAiChatSessions();
 }
 
-function closeAiChatDrawer() {
+function closeAiChatDrawer(restoreFocus = true) {
     const drawer = document.getElementById('ai-chat-drawer');
     const launcher = document.getElementById('ai-chat-launcher');
     if (!drawer || !launcher) return;
 
-    drawer.hidden = true;
-    drawer.setAttribute('aria-hidden', 'true');
+    drawer.classList.add('is-minimizing');
     launcher.setAttribute('aria-expanded', 'false');
-    launcher.focus();
+    clearTimeout(chatMinimizeTimer);
+    chatMinimizeTimer = setTimeout(() => {
+        if (drawer.classList.contains('is-minimizing')) {
+            drawer.hidden = true;
+            drawer.setAttribute('aria-hidden', 'true');
+            drawer.classList.remove('is-minimizing');
+            if (restoreFocus) launcher.focus();
+        }
+    }, 180);
 }
 
 function chatAuthHeaders(json = false) {
@@ -4013,22 +4085,34 @@ async function sendAiChatMessage(event) {
     const content = input?.value.trim();
     if (!input || !content || chatMessageRequestPending) return;
 
+    let botMessage = null;
+    chatMessageRequestPending = true;
+    if (sendButton) sendButton.disabled = true;
+    document.querySelectorAll('[data-ai-chat-prompt]').forEach(button => {
+        button.disabled = true;
+    });
+    input.disabled = true;
+    input.value = '';
+    setAiChatStatus('');
+    appendAiChatMessage({ sender: 'user', content });
+    botMessage = appendAiChatMessage({ sender: 'bot', content: 'AI đang đọc yêu cầu' });
+    botMessage.row.classList.add('is-thinking');
+    botMessage.text.setAttribute('aria-live', 'polite');
     try {
         if (!activeChatSessionId) {
             await createAiChatSession();
         }
-        if (!activeChatSessionId) return;
+        if (!activeChatSessionId) {
+            throw new Error('Không thể tạo phiên trò chuyện. Vui lòng thử lại.');
+        }
+        if (!botMessage.row.isConnected) {
+            appendAiChatMessage({ sender: 'user', content });
+            botMessage = appendAiChatMessage({ sender: 'bot', content: 'AI đang đọc yêu cầu' });
+            botMessage.row.classList.add('is-thinking');
+            botMessage.text.setAttribute('aria-live', 'polite');
+        }
 
         const sessionId = activeChatSessionId;
-        chatMessageRequestPending = true;
-        if (sendButton) sendButton.disabled = true;
-        document.querySelectorAll('[data-ai-chat-prompt]').forEach(button => {
-            button.disabled = true;
-        });
-        input.disabled = true;
-        input.value = '';
-        setAiChatStatus('');
-        appendAiChatMessage({ sender: 'user', content });
         const response = await fetchAPI(
             `${CHATBOT_API_BASE}/sessions/${encodeURIComponent(sessionId)}/message/stream`,
             {
@@ -4055,7 +4139,6 @@ async function sendAiChatMessage(event) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        let botMessage = null;
         let completedResponse = null;
         const handleSseEvent = (block) => {
             if (!block.trim()) return;
@@ -4073,17 +4156,20 @@ async function sendAiChatMessage(event) {
             if (eventType === 'chunk') {
                 if (sessionId !== activeChatSessionId) return;
                 if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                botMessage.row.classList.remove('is-thinking');
                 botMessage.text.textContent += payload.text || '';
                 scrollAiChatToLatest();
             } else if (eventType === 'preview_card') {
                 if (sessionId !== activeChatSessionId) return;
                 if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                botMessage.row.classList.remove('is-thinking');
                 botMessage.interactivePreview = createAiChatInvitePreview(payload);
                 botMessage.bubble.appendChild(botMessage.interactivePreview);
                 scrollAiChatToLatest();
             } else if (eventType === 'room_widget') {
                 if (sessionId !== activeChatSessionId) return;
                 if (!botMessage) botMessage = appendAiChatMessage({ sender: 'bot', content: '' });
+                botMessage.row.classList.remove('is-thinking');
                 botMessage.interactivePreview = createAiChatRoomWidget(payload);
                 botMessage.bubble.appendChild(botMessage.interactivePreview);
                 scrollAiChatToLatest();
@@ -4113,6 +4199,10 @@ async function sendAiChatMessage(event) {
         if (!completedResponse) throw new Error('Luồng phản hồi đã kết thúc bất thường.');
         await refreshAiChatSessionsAfterMessage(sessionId);
     } catch (error) {
+        if (botMessage) {
+            botMessage.row.classList.remove('is-thinking');
+            botMessage.text.textContent = error.message || 'Không thể gửi tin nhắn. Vui lòng thử lại.';
+        }
         setAiChatStatus(error.message || 'Không thể gửi tin nhắn. Vui lòng thử lại.');
     } finally {
         chatMessageRequestPending = false;
@@ -4121,7 +4211,7 @@ async function sendAiChatMessage(event) {
             button.disabled = false;
         });
         input.disabled = false;
-        input.focus();
+        if (!document.getElementById('ai-chat-drawer')?.hidden) input.focus();
     }
 }
 
@@ -4185,6 +4275,7 @@ function appendAiChatMessage(message) {
 
 function completeAiChatMessage(messageElement, response) {
     const message = response || {};
+    messageElement.row.classList.remove('is-thinking');
     messageElement.text.textContent = message.message || message.bot_message || messageElement.text.textContent;
     const slots = message.preview_card || message.slots;
     const completeBooking = message.intent === 'BOOK_ROOM'

@@ -4,16 +4,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2563EB">
     <title>RoomSync - Quản lý đặt phòng họp</title>
+    <link rel="manifest" href="/manifest.json">
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
     <link rel="icon" type="image/svg+xml"
         href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' fill='none' stroke='%232563EB' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='6' y='9' width='28' height='25' rx='3'/%3E%3Cpath d='M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20">
-    <link rel="stylesheet" href="/static/css/booking.css?v=4">
-    <link rel="stylesheet" href="/static/css/create-meeting.css?v=9">
-    <link rel="stylesheet" href="/static/css/chatbot.css?v=6">
-    <link rel="stylesheet" href="/static/css/dashboard-theme.css?v=5">
+    <link rel="stylesheet" href="css/style.css?v=20">
+    <link rel="stylesheet" href="css/booking.css?v=4">
+    <link rel="stylesheet" href="css/create-meeting.css?v=9">
+    <link rel="stylesheet" href="css/chatbot.css?v=7">
+    <link rel="stylesheet" href="css/dashboard-theme.css?v=5">
+    <link rel="stylesheet" href="css/pwa.css">
     <style>.d-none { display: none !important; }</style>
 </head>
 
@@ -1173,23 +1176,49 @@
             <form id="roomForm" onsubmit="handleFormSubmit(event)">
                 <input type="hidden" id="editRoomId">
                 <div class="form-group">
-                    <label>Tên phòng họp</label>
+                    <label for="roomName">Tên phòng họp</label>
                     <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
-                        required>
+                        maxlength="100" required>
                 </div>
                 <div class="form-group">
-                    <label>Vị trí (Tầng)</label>
+                    <label for="roomLocation">Vị trí (Tầng)</label>
                     <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
                 </div>
                 <div class="form-group">
-                    <label>Sức chứa</label>
-                    <input type="text" id="roomCapacity" class="form-control" placeholder="Ví dụ: 8-10 người" required>
+                    <label for="roomCapacity">Sức chứa (người)</label>
+                    <input type="number" id="roomCapacity" class="form-control" min="1" step="1"
+                        placeholder="Ví dụ: 10" required>
                 </div>
                 <div class="form-group">
-                    <label>Tiện ích (phân cách bằng dấu phẩy)</label>
-                    <input type="text" id="roomAmenities" class="form-control"
-                        placeholder="Màn hình, Wifi, Video, Đồ uống">
+                    <label for="roomStatus">Trạng thái phòng</label>
+                    <select id="roomStatus" class="form-control" required>
+                        <option value="active">Đang hoạt động</option>
+                        <option value="maintenance">Đang bảo trì</option>
+                        <option value="locked">Tạm khóa</option>
+                    </select>
                 </div>
+                <div class="form-group">
+                    <label for="roomLayoutType">Kiểu bố trí</label>
+                    <select id="roomLayoutType" class="form-control">
+                        <option value="">Chưa chọn</option>
+                        <option value="boardroom">Boardroom</option>
+                        <option value="classroom">Classroom</option>
+                        <option value="open_space">Open Space</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="roomImageUrl">URL hình ảnh phòng</label>
+                    <input type="url" id="roomImageUrl" class="form-control"
+                        placeholder="https://example.com/meeting-room.jpg" maxlength="2048"
+                        oninput="previewRoomImage(this.value)">
+                    <img id="roomImagePreview" class="room-image-preview" alt="Xem trước hình ảnh phòng" hidden>
+                </div>
+                <fieldset class="form-group room-equipment-fieldset">
+                    <legend>Thiết bị cố định trong phòng</legend>
+                    <div id="roomEquipmentOptions" class="room-equipment-options" aria-live="polite">
+                        <span class="room-equipment-message">Đang tải danh mục thiết bị...</span>
+                    </div>
+                </fieldset>
                 <div class="modal-actions">
                     <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
                     <button type="submit" class="btn-save">Lưu thông tin</button>
@@ -1536,6 +1565,12 @@
                         <path d="M12 5v14M5 12h14"></path>
                     </svg>
                 </button>
+                <button id="ai-chat-minimize" class="ai-chat-icon-button" type="button"
+                    title="Thu nhỏ trợ lý" aria-label="Thu nhỏ trợ lý">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M5 12h14"></path>
+                    </svg>
+                </button>
                 <button id="ai-chat-close" class="ai-chat-icon-button" type="button"
                     title="Đóng trợ lý" aria-label="Đóng trợ lý">
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1575,12 +1610,14 @@
                 <p id="ai-chat-status" class="ai-chat-status" role="status" aria-live="polite"></p>
                 <div class="ai-chat-quick-chips" role="group" aria-label="Thao tác nhanh">
                     <button type="button" class="ai-chat-quick-chip"
-                        data-ai-chat-prompt="Tìm phòng họp cho 6 người">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            aria-hidden="true" focusable="false">
-                            <path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="8"></circle>
-                        </svg>
-                        <span>Tìm phòng 6 người</span>
+                        data-ai-chat-flow="department"
+                        data-ai-chat-prompt="Tạo cuộc họp phòng ban">
+                        <span>Tạo cuộc họp phòng ban</span>
+                    </button>
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-flow="project"
+                        data-ai-chat-prompt="Tạo cuộc họp nhóm dự án">
+                        <span>Tạo cuộc họp nhóm dự án</span>
                     </button>
                     <button type="button" class="ai-chat-quick-chip"
                         data-ai-chat-prompt="Cho tôi xem lịch họp hôm nay">
@@ -1592,7 +1629,7 @@
                         <span>Lịch họp hôm nay</span>
                     </button>
                     <button type="button" class="ai-chat-quick-chip"
-                        data-ai-chat-prompt="Tôi muốn hủy cuộc họp gần nhất">
+                        data-ai-chat-prompt="Hủy cuộc họp gần nhất">
                         <svg class="ai-chat-quick-chip-icon-danger" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
                             <circle cx="12" cy="12" r="10"></circle>
@@ -1619,10 +1656,12 @@
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="/static/js/user-list.bundle.js?v=2"></script>
-    <script src="/static/js/app.js?v=32"></script>
-    <script src="/static/js/create-meeting.js?v=8"></script>
+    <script src="js/user-list.bundle.js?v=3"></script>
+    <script src="js/app.js?v=34"></script>
+    <script src="js/chatbot-meeting-flow.js?v=1"></script>
+    <script src="js/create-meeting.js?v=9"></script>
     <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
+    <script src="js/pwa.js?v=1"></script>
 </body>
 
 </html>

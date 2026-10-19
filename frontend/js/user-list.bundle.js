@@ -28,11 +28,9 @@ var RoomSyncUserList = (() => {
 
   // src/features/us2_user_list/userListService.ts
   function getDefaultApiUrl() {
-    if (typeof window === "undefined") return "/api/v1/users/";
+    if (typeof window === "undefined") return "https://roomsync-app.onrender.com/api/v1/users/";
     const configuredApiUrl = window.API_URL;
-    const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port !== "8000";
-    const apiOrigin = isLocalFrontend ? `${window.location.protocol}//${window.location.hostname}:8000` : window.location.origin;
-    return `${(configuredApiUrl ?? `${apiOrigin}/api`).replace(/\/+$/, "")}/v1/users/`;
+    return `${(configuredApiUrl ?? "https://roomsync-app.onrender.com/api").replace(/\/+$/, "")}/v1/users/`;
   }
   var MOCK_USERS = [
     { id: "USR-001", fullName: "Nguy\u1EC5n Minh Tu\u1EA5n", email: "tuan.nguyen@example.com", role: "ADMIN", status: "ACTIVE", createdAt: "2025-01-08T09:15:00.000Z" },
@@ -165,7 +163,7 @@ var RoomSyncUserList = (() => {
       if (this.useMock) return this.getMockUsers({ ...normalizedQuery, page, limit });
       const url = new URL(
         this.baseUrl,
-        typeof window === "undefined" ? "http://localhost" : window.location.origin
+        typeof window === "undefined" ? "https://roomsync-app.onrender.com" : window.location.origin
       );
       url.searchParams.set("page", String(page));
       url.searchParams.set("limit", String(limit));
@@ -209,7 +207,10 @@ var RoomSyncUserList = (() => {
   var defaultService = new UserListService();
 
   // src/features/us3_assign_permissions/permissionService.ts
-  var DEFAULT_API_BASE_URL = "/api/v1";
+  function getDefaultApiBaseUrl() {
+    const configuredApiUrl = typeof window === "undefined" ? void 0 : window.API_URL;
+    return `${(configuredApiUrl ?? "https://roomsync-app.onrender.com/api").replace(/\/+$/, "")}/v1`;
+  }
   var MOCK_PERMISSIONS = /* @__PURE__ */ new Map();
   function requireUserId(userId) {
     const normalized = userId.trim();
@@ -238,7 +239,7 @@ var RoomSyncUserList = (() => {
       __publicField(this, "baseUrl");
       __publicField(this, "useMock");
       __publicField(this, "fetcher");
-      this.baseUrl = (options.baseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+      this.baseUrl = (options.baseUrl ?? getDefaultApiBaseUrl()).replace(/\/+$/, "");
       this.useMock = options.useMock ?? false;
       this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     }
@@ -291,7 +292,7 @@ var RoomSyncUserList = (() => {
     apiUrl(path) {
       return new URL(
         `${this.baseUrl}${path}`,
-        typeof window === "undefined" ? "http://localhost" : window.location.origin
+        typeof window === "undefined" ? "https://roomsync-app.onrender.com" : window.location.origin
       ).toString();
     }
     headers() {
@@ -507,12 +508,10 @@ var RoomSyncUserList = (() => {
   };
 
   // src/features/us4_room_booking_restriction/restrictionService.ts
-  function getDefaultApiBaseUrl() {
-    if (typeof window === "undefined") return "/api";
+  function getDefaultApiBaseUrl2() {
+    if (typeof window === "undefined") return "https://roomsync-app.onrender.com/api";
     const configuredApiUrl = window.API_URL;
-    const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port !== "8000";
-    const apiOrigin = isLocalFrontend ? `${window.location.protocol}//${window.location.hostname}:8000` : window.location.origin;
-    return configuredApiUrl ?? `${apiOrigin}/api`;
+    return configuredApiUrl ?? "https://roomsync-app.onrender.com/api";
   }
   var MOCK_ROOMS = [
     { id: "room-a1", name: "Ph\xF2ng h\u1ECDp A1", location: "T\u1EA7ng 1" },
@@ -578,7 +577,7 @@ var RoomSyncUserList = (() => {
       __publicField(this, "baseUrl");
       __publicField(this, "useMock");
       __publicField(this, "fetcher");
-      this.baseUrl = (options.baseUrl ?? getDefaultApiBaseUrl()).replace(/\/+$/, "");
+      this.baseUrl = (options.baseUrl ?? getDefaultApiBaseUrl2()).replace(/\/+$/, "");
       this.useMock = options.useMock ?? true;
       this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     }
@@ -1134,6 +1133,10 @@ ${failures.join("\n")}`;
   };
 
   // src/features/us2_user_list/UserListTable.ts
+  function getUserListApiBase() {
+    const configuredApiUrl = typeof window === "undefined" ? void 0 : window.API_URL;
+    return (configuredApiUrl ?? "https://roomsync-app.onrender.com/api").replace(/\/+$/, "");
+  }
   var TABLE_STYLES = `
   .us2-user-list { color: #172033; font: 14px/1.5 system-ui, sans-serif; }
   .us2-user-list * { box-sizing: border-box; }
@@ -1656,9 +1659,9 @@ ${failures.join("\n")}`;
           ...token ? { Authorization: `Bearer ${token}` } : {}
         };
         const [userResponse, departmentsResponse, groupsResponse] = await Promise.all([
-          fetch(`/api/v1/users/${encodeURIComponent(userId)}`, { headers }),
-          fetch("/api/v1/directories/departments", { headers }),
-          fetch("/api/v1/directories/project-groups", { headers })
+          fetch(`${getUserListApiBase()}/v1/users/${encodeURIComponent(userId)}`, { headers }),
+          fetch(`${getUserListApiBase()}/v1/directories/departments`, { headers }),
+          fetch(`${getUserListApiBase()}/v1/directories/project-groups`, { headers })
         ]);
         const parseResponse = async (response, label) => {
           const data = await response.json().catch(() => ({}));
@@ -1830,7 +1833,7 @@ ${failures.join("\n")}`;
       }
       try {
         const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
-        const response = await fetch(`/api/v1/users/${encodeURIComponent(userId)}`, {
+        const response = await fetch(`${getUserListApiBase()}/v1/users/${encodeURIComponent(userId)}`, {
           method: "PUT",
           headers: {
             Accept: "application/json",
@@ -1857,14 +1860,14 @@ ${failures.join("\n")}`;
     }
     async updateUserStatus(user) {
       await this.performAdminRequest(
-        `/api/v1/users/${encodeURIComponent(user.id)}`,
+        `${getUserListApiBase()}/v1/users/${encodeURIComponent(user.id)}`,
         "PATCH",
         { status: user.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" }
       );
     }
     async resendInvitation(user) {
       await this.performAdminRequest(
-        `/api/v1/users/${encodeURIComponent(user.id)}/resend-invite`,
+        `${getUserListApiBase()}/v1/users/${encodeURIComponent(user.id)}/resend-invite`,
         "POST"
       );
     }

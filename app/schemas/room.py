@@ -1,7 +1,8 @@
 import json
-from typing import Optional, List, Union
+from typing import Literal, Optional, List, Union
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
+from urllib.parse import urlsplit
 
 # 1. Class cơ sở định nghĩa tất cả thuộc tính chung của Phòng
 class RoomBase(BaseModel):
@@ -11,6 +12,10 @@ class RoomBase(BaseModel):
     description: Optional[str] = Field(None, description="Mô tả/Trang thiết bị phòng họp")
     amenities: Optional[Union[List[str], str]] = Field(default_factory=list, description="Danh sách tiện ích")
     is_active: bool = Field(True, description="Trạng thái: True (Hoạt động) / False (Bảo trì/Khóa)")
+    room_status: Literal["active", "maintenance", "locked"] = "active"
+    equipment_ids: List[int] = Field(default_factory=list)
+    room_image: Optional[str] = Field(None, max_length=2048)
+    layout_type: Optional[Literal["boardroom", "classroom", "open_space"]] = None
 
     @field_validator('amenities', mode='before')
     @classmethod
@@ -32,6 +37,19 @@ class RoomBase(BaseModel):
             return [s.strip() for s in v_str.split(',') if s.strip()]
         return []
 
+    @field_validator("room_image", mode="before")
+    @classmethod
+    def validate_room_image(cls, value):
+        if value is None:
+            return None
+        value = str(value).strip()
+        if not value:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("room_image must be an http or https URL")
+        return value
+
 # 2. Schema nhận dữ liệu khi Tạo phòng mới (POST)
 class RoomCreate(RoomBase):
     pass
@@ -44,11 +62,29 @@ class RoomUpdate(BaseModel):
     description: Optional[str] = None
     amenities: Optional[Union[List[str], str]] = None
     is_active: Optional[bool] = None
+    room_status: Optional[Literal["active", "maintenance", "locked"]] = None
+    equipment_ids: Optional[List[int]] = None
+    room_image: Optional[str] = Field(None, max_length=2048)
+    layout_type: Optional[Literal["boardroom", "classroom", "open_space"]] = None
+
+    @field_validator("room_image", mode="before")
+    @classmethod
+    def validate_room_image(cls, value):
+        if value is None:
+            return None
+        value = str(value).strip()
+        if not value:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("room_image must be an http or https URL")
+        return value
 
 # 4. Schema trả dữ liệu về cho Client (Response)
 class RoomResponse(RoomBase):
     id: int
     amenities: Optional[List[str]] = []
+    equipment_ids: List[int] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

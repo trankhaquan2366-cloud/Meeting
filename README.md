@@ -35,13 +35,21 @@ Apply the Alembic migration with `alembic upgrade head` to add room QR tokens an
 
 ## RoomSync AI room booking
 
-Set `GEMINI_API_KEY` in `.env` and apply the database migrations with `alembic upgrade head`; the migration creates the `chat_sessions` and `chat_messages` tables. The chatbot uses `GEMINI_MODEL` when configured and defaults to `gemini-3.8-flash`. It collects missing booking details and creates a meeting only after the user confirms the preview.
+Set `GEMINI_API_KEY` in `.env` and apply the database migrations with `alembic upgrade head`; the migration creates the `chat_sessions` and `chat_messages` tables. The chatbot uses `GEMINI_MODEL` when configured and defaults to `gemini-3.8-flash`. Department and project meeting actions open an in-chat booking form, prefill recognizable date/time/equipment details, invite active group members, and use the regular meeting invitation notifications. Room or attendee conflicts return nearby alternatives. Online bookings use a unique Jitsi meeting link, shown in the success card and sent with invitations.
+
+## Room management
+
+Apply `migrations/010_add_room_management_fields.sql` when upgrading an existing database. The admin room form supports active, maintenance, and locked states; only active rooms can be booked. Fixed room equipment is selected from the active equipment inventory, and room images are stored as HTTP(S) URLs. Layout types are boardroom, classroom, and open space.
 
 ## 🔐 Google OAuth 2.0
 
 The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).
 
 Users can connect or disconnect their own Google Calendar from the dashboard Settings page. Once connected, newly created meetings are added to the organizer's calendar and Google sends invitations to meeting invitees; connecting also syncs the user's existing meetings. Invitees may still receive a Calendar consent email so their own calendar can be synchronized. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` to send those emails. Generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`; refresh tokens are encrypted at rest. Apply `migrations/007_google_calendar_invitees.sql` and `migrations/008_add_meeting_participant_response_status.sql` before deploying. Set `FRONTEND_DASHBOARD_URL` to the dashboard's public URL (defaults to `/static/dashboard.html`). For production, use HTTPS and the exact public callback/frontend URLs.
+
+## RoomSync Progressive Web App
+
+The browser frontend includes a web app manifest, install prompt, and service worker. Serve it over HTTPS (or localhost during development) for installation support. The service worker caches the app shell and static GET requests; API requests are always sent to the backend and are not cached. The custom **Install RoomSync** button appears only when the browser supports and offers the install prompt.
 
 ---
 

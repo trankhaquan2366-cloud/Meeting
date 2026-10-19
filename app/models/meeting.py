@@ -55,6 +55,10 @@ class Meeting(Base):
     def __repr__(self) -> str:
         return f"<Meeting id={self.id} title={self.title!r}>"
 
+    @property
+    def room_name(self) -> str | None:
+        return self.room.name if self.room is not None else None
+
 
 class MeetingParticipant(Base):
     __tablename__ = "meeting_participants"

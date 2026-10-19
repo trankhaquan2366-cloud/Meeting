@@ -17,10 +17,17 @@ class Room(Base):
     capacity = Column(Integer, nullable=False, default=1, comment="Sức chứa")
     description = Column(Text, nullable=True, comment="Mô tả")
     amenities = Column(Text, nullable=True, comment="Tiện ích phòng họp (JSON list)")
+    room_status = Column(String(20), nullable=False, default="active", server_default="active")
+    room_image = Column(String(2048), nullable=True)
+    layout_type = Column(String(30), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, comment="Trạng thái phòng")
     qr_token = Column(String(64), nullable=True, unique=True, index=True, default=lambda: str(uuid4()))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+
+    @property
+    def equipment_ids(self) -> list[int]:
+        return [item.equipment_id for item in self.default_equipments]
 
     def generate_qr_token(self) -> str:
         """Generate a stable QR token for this room when it does not have one."""

@@ -10,7 +10,12 @@ export interface PermissionServiceOptions {
   fetcher?: typeof fetch;
 }
 
-const DEFAULT_API_BASE_URL = '/api/v1';
+function getDefaultApiBaseUrl(): string {
+  const configuredApiUrl = typeof window === 'undefined'
+    ? undefined
+    : (window as Window & { API_URL?: string }).API_URL;
+  return `${(configuredApiUrl ?? 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '')}/v1`;
+}
 const MOCK_PERMISSIONS = new Map<string, UserPermissions>();
 
 function requireUserId(userId: string): string {
@@ -45,7 +50,7 @@ export class PermissionService {
   private readonly fetcher: typeof fetch;
 
   constructor(options: PermissionServiceOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, '');
+    this.baseUrl = (options.baseUrl ?? getDefaultApiBaseUrl()).replace(/\/+$/, '');
     this.useMock = options.useMock ?? false;
     this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   }
@@ -112,7 +117,7 @@ export class PermissionService {
   private apiUrl(path: string): string {
     return new URL(
       `${this.baseUrl}${path}`,
-      typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+      typeof window === 'undefined' ? 'https://roomsync-app.onrender.com' : window.location.origin,
     ).toString();
   }
 

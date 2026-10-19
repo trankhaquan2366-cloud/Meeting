@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoomSync - Quản lý đặt phòng họp</title>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <link rel="icon" type="image/svg+xml"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' fill='none' stroke='%232563EB' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='6' y='9' width='28' height='25' rx='3'/%3E%3Cpath d='M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4'/%3E%3C/svg%3E">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/style.css?v=20">
+    <link rel="stylesheet" href="/static/css/booking.css?v=4">
+    <link rel="stylesheet" href="/static/css/create-meeting.css?v=9">
+    <link rel="stylesheet" href="/static/css/chatbot.css?v=6">
+    <link rel="stylesheet" href="/static/css/dashboard-theme.css?v=5">
+    <style>.d-none { display: none !important; }</style>
+</head>
+
+<body class="dashboard-page">
+    <div class="app-layout" id="appLayout">
+        <!-- SIDEBAR -->
+        <aside class="sidebar -translate-x-full lg:translate-x-0" id="sidebar">
+            <button class="sidebar-brand" type="button" onclick="switchToOverview()" title="Quay về Trang chủ"
+                aria-label="RoomSync - Quay về tổng quan">
+                <span class="logo-icon w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <rect x="6" y="9" width="28" height="25" rx="3" />
+                        <path d="M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4" />
+                    </svg>
+                </span>
+                <span class="brand-name">RoomSync</span>
+            </button>
+
+            <nav class="nav-menu" aria-label="Điều hướng chính">
+                <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    <span class="nav-text">Tổng quan</span>
+                </a>
+                <a href="#" class="nav-item" id="navRooms" onclick="switchMainTab('rooms', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 21h18M3 7v14M21 7v14M6 3h12a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"></path>
+                    </svg>
+                    <span class="nav-text">Phòng họp</span>
+                </a>
+                <a href="#" class="nav-item" id="navEquipments" onclick="switchMainTab('equipments', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                        <path d="M9 9h6v6H9zM9 2v2m6-2v2M9 20v2m6-2v2M2 9h2m-2 6h2m16-6h2m-2 6h2"></path>
+                    </svg>
+                    <span class="nav-text">Thiết bị</span>
+                </a>
+                <a href="#" class="nav-item" id="navMyBookings" onclick="switchMainTab('my-bookings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    <span class="nav-text">Đặt lịch của tôi</span>
+                </a>
+                <!-- TAB BÁO CÁO TRÊN NAVBAR -->
+                <a href="#" class="nav-item" id="navReport" onclick="switchMainTab('report', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 20V10M12 20V4M6 20v-6"></path>
+                    </svg>
+                    <span class="nav-text">Báo cáo &amp; Thống kê</span>
+                </a>
+                <a href="#" class="nav-item" id="navUserManagement"
+                    onclick="switchMainTab('users', this)" style="display: none;">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="10" cy="7" r="4"></circle>
+                        <path d="M20 8v6m3-3h-6"></path>
+                    </svg>
+                    <span class="nav-text">Quản lý người dùng</span>
+                </a>
+                <a href="#" class="nav-item" id="navSettings" onclick="switchMainTab('settings', this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
+                    <span class="nav-text">Cài đặt</span>
+                </a>
+            </nav>
+
+            <button class="sidebar-user" type="button" onclick="navigateToSettings()" title="Cài đặt tài khoản"
+                aria-label="Cài đặt tài khoản">
+                <div class="user-avatar" id="avatarText">N</div>
+                <span class="user-info">
+                    <span class="user-name" id="userNameDisplay">Nguyễn Minh Tuấn</span>
+                    <span class="user-role" id="userRoleBadge">Quản trị viên</span>
+                </span>
+            </button>
+        </aside>
+        <div id="mobileMenuBackdrop" class="mobile-menu-backdrop hidden lg:hidden"
+            onclick="closeMobileMenu()" aria-hidden="true"></div>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content" id="mainContent">
+            <!-- TOPBAR -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="btn-toggle-menu" type="button" onclick="toggleMobileMenu()"
+                        aria-controls="sidebar" aria-expanded="false" title="Mở menu">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
+
+                    <label class="search-box" id="topbarSearchContainer">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <span class="sr-only">Tìm kiếm phòng họp, tầng, tiện ích</span>
+                        <input type="text" id="searchInput" placeholder="Tìm kiếm phòng họp, tầng, tiện ích..."
+                            oninput="handleSearch()">
+                    </label>
+                </div>
+
+                <div class="topbar-right">
+                    <button id="btnHeaderQrScan" type="button" onclick="openQuickQrScanner()"
+                        class="p-2.5 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200 flex items-center justify-center"
+                        title="Quét mã QR Check-in/Check-out nhanh"
+                        aria-label="Quét mã QR Check-in/Check-out nhanh">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 3h6v6H3V3zm12 0h6v6h-6V3zM3 15h6v6H3v-6zm12 6h3v-3h-3v3zm0-6h3v3h-3v-3zm3 3h3v3h-3v-3z" />
+                        </svg>
+                    </button>
+                    <button type="button" class="cm-top-create" onclick="openCreateMeeting()">Tạo cuộc họp</button>
+                    <div class="notification-wrapper">
+                        <button class="icon-btn" id="notificationBellBtn" onclick="toggleNotificationPopup()"
+                            title="Thông báo" aria-label="Thông báo" aria-expanded="false"
+                            aria-controls="notificationPopup">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
+                            <span id="notificationDot" class="notification-dot" style="display: none;"
+                                aria-live="polite"></span>
+                        </button>
+                        <div id="notificationPopup" class="notification-popup" style="display: none;"
+                            role="region" aria-label="Danh sách thông báo">
+                            <div class="notification-empty">Đang tải thông báo...</div>
+                        </div>
+                    </div>
+
+                    <div class="user-profile-header" onclick="navigateToSettings()" title="Bấm để vào Cài đặt">
+                        <div class="header-avatar" id="headerAvatarText">N</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content-body p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
+                <!-- VIEW 1: TỔNG QUAN -->
+                <div id="viewOverview" class="tab-view">
+                    <header class="overview-header" aria-labelledby="overviewWelcomeTitle">
+                        <div class="overview-heading-copy">
+                            <h1 id="overviewWelcomeTitle">Tổng quan</h1>
+                            <p id="currentDateText" class="overview-date">Đang tải...</p>
+                        </div>
+                        <div class="overview-hero-plan" aria-hidden="true">
+                            <svg viewBox="0 0 220 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="7.5" y="8.5" width="94" height="44" rx="5.5" />
+                                <path d="M7.5 25.5h34v27m16-44v17h44" />
+                                <rect x="49.5" y="62.5" width="51" height="41" rx="5.5" />
+                                <path d="M70 62.5v18h30.5M19 39.5h12m-12 7h12m30 29h12m-12 7h12" />
+                                <rect x="119.5" y="8.5" width="93" height="94" rx="5.5" />
+                                <path d="M119.5 36.5h35v66m18-94v28h40m-75 21h20m-20 8h20m-20 8h20" />
+                                <circle cx="188" cy="77" r="10" />
+                                <path d="M184 77h8m-4-4v8" />
+                            </svg>
+                        </div>
+                        <button type="button" class="overview-primary-action" onclick="openCreateMeeting()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 5v14M5 12h14"></path>
+                            </svg>
+                            Tạo cuộc họp
+                        </button>
+                    </header>
+
+                    <section class="page-header overview-room-heading" id="roomsSection">
+                        <div>
+                            <h2>Phòng họp</h2>
+                            <p class="subtitle">Chọn không gian phù hợp cho lịch làm việc của bạn.</p>
+                        </div>
+                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </section>
+
+                    <section class="stats-grid overview-stats-grid" aria-label="Thống kê phòng họp">
+                        <article class="stat-card overview-stat-card">
+                            <div class="overview-stat-heading">
+                                <span class="stat-title">Tổng phòng họp</span>
+                                <span class="overview-stat-icon overview-stat-icon--blue" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 21h18M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16M9 7h2m2 0h2M9 11h2m2 0h2m-6 4h2m2 0h2" />
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="stat-value overview-stat-value" id="statTotal"><span id="statTotalRooms">-</span></div>
+                            <span class="stat-sub text-gray" id="statTotalRoomsSub">-</span>
+                        </article>
+                        <article class="stat-card overview-stat-card">
+                            <div class="overview-stat-heading">
+                                <span class="stat-title">Đang sử dụng</span>
+                                <span class="overview-stat-icon overview-stat-icon--amber" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="9" />
+                                        <path d="M12 7v5l3 2" />
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="stat-value overview-stat-value text-orange" id="statInUse"><span id="statInUseRooms">-</span></div>
+                            <span class="stat-sub text-orange" id="statCapacityText"><span id="statOccupancyRate">-</span></span>
+                        </article>
+                        <article class="stat-card overview-stat-card">
+                            <div class="overview-stat-heading">
+                                <span class="stat-title">Còn trống hôm nay</span>
+                                <span class="overview-stat-icon overview-stat-icon--green" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="9" />
+                                        <path d="m8 12 2.5 2.5L16 9" />
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="stat-value overview-stat-value text-green" id="statAvailable"><span id="statAvailableRooms">-</span></div>
+                            <span class="stat-sub text-gray" id="statRatioText"><span id="statAvailableRoomsSub">-</span></span>
+                        </article>
+                        <article class="stat-card overview-stat-card">
+                            <div class="overview-stat-heading">
+                                <span class="stat-title">Lượt đặt trong tuần</span>
+                                <span class="overview-stat-icon overview-stat-icon--indigo" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="3" y="5" width="18" height="16" rx="2" />
+                                        <path d="M16 3v4M8 3v4M3 10h18m-13 5 2 2 4-4" />
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="stat-value overview-stat-value" id="statBookings"><span id="statWeeklyBookings">-</span></div>
+                            <span class="stat-sub text-gray" id="statWeeklyBookingsSub">-</span>
+                        </article>
+                    </section>
+
+                    <div class="filter-wrapper">
+                        <div class="filter-left">
+                            <button class="btn-filter-date" type="button" onclick="filterToday()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+                                    <path d="M16 3v4M8 3v4M3 10h18"></path>
+                                </svg>
+                                <span>Hôm nay</span>
+                                <span class="overview-filter-date" id="filterDateLabel">26/09/2026</span>
+                            </button>
+                            <select class="select-capacity" id="capacitySelect" aria-label="Lọc phòng theo sức chứa"
+                                onchange="applyFilters()">
+                                <option value="all">Tất cả sức chứa</option>
+                                <option value="small">Nhỏ (1 - 5 người)</option>
+                                <option value="medium">Vừa (6 - 12 người)</option>
+                                <option value="large">Lớn (15+ người)</option>
+                            </select>
+                            <div class="filter-chips">
+                                <button class="chip active" onclick="setFilter('all', this)">Tất cả</button>
+                                <button class="chip" onclick="setFilter('Màn hình', this)">Màn hình</button>
+                                <button class="chip" onclick="setFilter('Wifi', this)">Wifi</button>
+                                <button class="chip" onclick="setFilter('Video', this)">Video</button>
+                                <button class="chip" onclick="setFilter('Đồ uống', this)">Đồ uống</button>
+                            </div>
+                        </div>
+                        <div class="filter-right">
+                            <span class="status-summary"><strong id="summaryAvailable">0</strong> còn trống</span>
+                            <span class="status-summary"><strong id="summaryInUse">0</strong> đã đặt</span>
+                        </div>
+                    </div>
+
+                    <div class="room-grid" id="roomGridOverview"></div>
+                </div>
+
+                <!-- VIEW 2: PHÒNG HỌP -->
+                <div id="viewRooms" class="tab-view" style="display: none;">
+                    <div class="hero-banner-rooms">
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <span class="hero-badge">Không gian làm việc</span>
+                            <h2>Danh Mục & Không Gian Phòng Họp</h2>
+                            <p>Khám phá hệ thống phòng họp được trang bị đầy đủ thiết bị công nghệ hiện đại.</p>
+                        </div>
+                    </div>
+
+                    <div class="page-header">
+                        <h2>Tất cả phòng họp</h2>
+                        <button id="addRoomBtnRooms" class="btn-add-room" onclick="openRoomModal()"
+                            style="display: none;">
+                            + Thêm phòng họp
+                        </button>
+                    </div>
+
+                    <div class="room-grid" id="roomGridRooms"></div>
+                </div>
+
+                <!-- VIEW 3: TRẠNG THÁI THIẾT BỊ -->
+                <div id="viewEquipments" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <div>
+                            <h2>Trạng thái và khả dụng thiết bị</h2>
+                            <p class="subtitle">Số lượng khả dụng được tính theo khung thời gian đã chọn.</p>
+                        </div>
+                        <button id="addEquipmentBtn" class="btn-add-room" onclick="openEquipmentModal()"
+                            style="display: none;">
+                            + Thêm thiết bị mới
+                        </button>
+                    </div>
+                    <div class="equipment-availability-filters">
+                        <label class="equipment-filter-field">
+                            <span>Bắt đầu</span>
+                            <input id="equipmentStartTime" type="datetime-local"
+                                onchange="fetchEquipmentAvailability()">
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Kết thúc</span>
+                            <input id="equipmentEndTime" type="datetime-local" onchange="fetchEquipmentAvailability()">
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Phân loại</span>
+                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Tìm thiết bị</span>
+                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị"
+                                oninput="scheduleEquipmentAvailabilityFetch()">
+                        </label>
+                    </div>
+                    <div class="table-card equipment-availability-table-wrap">
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table equipment-availability-table">
+                                <thead>
+                                    <tr>
+                                        <th>Mã</th>
+                                        <th>Tên</th>
+                                        <th>Phân loại</th>
+                                        <th>Tổng số</th>
+                                        <th>Đã đặt</th>
+                                        <th>Khả dụng</th>
+                                        <th>Trạng thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="equipmentAvailabilityTableBody">
+                                    <tr>
+                                        <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- BẢNG DỮ LIỆU ADMIN (ADMIN TABLE) -->
+                    <div id="adminEquipmentSection" class="admin-equipment-section" style="display: none;">
+                        <div class="page-header">
+                            <div>
+                                <h3 class="section-heading">Bảng Quản Lý Thiết Bị
+                                    (Admin Table)</h3>
+                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle
+                                    Bật/Tắt và Chỉnh sửa / Xóa.</p>
+                            </div>
+                        </div>
+                        <div class="table-card equipment-availability-table-wrap">
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table equipment-availability-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Mã thiết bị</th>
+                                            <th>Tên</th>
+                                            <th>Phân loại</th>
+                                            <th>Số lượng tổng</th>
+                                            <th>Trạng thái (Bật/Tắt)</th>
+                                            <th>Hành động</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="adminEquipmentTableBody">
+                                        <tr>
+                                            <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 4: ĐẶT LỊCH CỦA TÔI -->
+                <div id="viewMyBookings" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>Lịch họp đã đặt của tôi</h2>
+                    </div>
+                    <div class="booking-tabs" role="tablist" aria-label="Các lịch họp của tôi">
+                        <button class="booking-tab active" id="bookingTabCalendar" type="button" role="tab"
+                            aria-selected="true" aria-controls="bookingPanelCalendar"
+                            onclick="switchBookingTab('calendar')">Lịch họp</button>
+                        <button class="booking-tab" id="bookingTabMine" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelMine"
+                            onclick="switchBookingTab('mine')">Của tôi</button>
+                        <button class="booking-tab" id="bookingTabInvited" type="button" role="tab"
+                            aria-selected="false" aria-controls="bookingPanelInvited"
+                            onclick="switchBookingTab('invited')">Được mời</button>
+                    </div>
+
+                    <section id="bookingPanelCalendar" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabCalendar">
+                        <div class="booking-calendar-toolbar">
+                            <div class="booking-calendar-nav">
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(-1)"
+                                    aria-label="Khoảng thời gian trước">‹</button>
+                                <button type="button" class="booking-calendar-button" onclick="goToBookingCalendarToday()">Hôm nay</button>
+                                <button type="button" class="booking-calendar-button" onclick="shiftBookingCalendar(1)"
+                                    aria-label="Khoảng thời gian sau">›</button>
+                                <h3 id="bookingCalendarTitle" class="booking-calendar-title"></h3>
+                            </div>
+                            <div class="booking-calendar-views" role="group" aria-label="Chế độ xem lịch">
+                                <button type="button" data-calendar-view="month" class="active"
+                                    onclick="setBookingCalendarView('month')">Tháng</button>
+                                <button type="button" data-calendar-view="week"
+                                    onclick="setBookingCalendarView('week')">Tuần</button>
+                                <button type="button" data-calendar-view="day"
+                                    onclick="setBookingCalendarView('day')">Ngày</button>
+                            </div>
+                        </div>
+                        <div id="bookingCalendarGrid" class="booking-calendar-grid"></div>
+                        <div class="booking-day-agenda">
+                            <h3 id="bookingAgendaTitle">Lịch trong ngày</h3>
+                            <div id="bookingDayAgenda"></div>
+                        </div>
+                    </section>
+
+                    <section id="bookingPanelMine" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabMine" hidden>
+                        <div id="myBookingsTableBody" class="booking-list"></div>
+                    </section>
+
+                    <section id="bookingPanelInvited" class="booking-panel" role="tabpanel"
+                        aria-labelledby="bookingTabInvited" hidden>
+                        <div id="invitedBookingsList" class="booking-list"></div>
+                    </section>
+                </div>
+
+                <!-- VIEW 5: BÁO CÁO SỬ DỤNG PHÒNG HỌP (TAB BÁO CÁO CHÍNH THỨC) -->
+                <div id="viewReport" class="tab-view" style="display: none;">
+                    <div class="page-header">
+                        <h2>
+                            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                                <line x1="3" y1="20" x2="21" y2="20"></line>
+                            </svg>
+                            Báo cáo &amp; Thống kê
+                        </h2>
+                        <button type="button" id="btn-open-executive-modal"
+                            class="btn btn-primary executive-report-open-button">
+                            📈 Báo cáo Quản trị Lãnh đạo
+                        </button>
+                    </div>
+
+                    <div class="report-tabs" role="tablist" aria-label="Loại báo cáo">
+                        <button id="report-tab-usage" type="button" class="active" role="tab" aria-selected="true"
+                            aria-controls="reportUsagePanel" onclick="switchReportTab('usage', this)">Báo cáo sử dụng</button>
+                        <button id="report-tab-cancel" type="button" role="tab" aria-selected="false"
+                            aria-controls="reportCancellationPanel" onclick="switchReportTab('cancellations', this)">Thống kê Hủy phòng</button>
+                    </div>
+                    <p id="roomUsageReportMessage" class="report-message" role="alert" hidden></p>
+
+                    <section id="reportUsagePanel" class="report-panel active" role="tabpanel" aria-labelledby="report-tab-usage">
+
+                    <!-- Bộ lọc báo cáo -->
+                    <div class="report-filter-card">
+                        <div class="report-filter-field">
+                            <label class="report-filter-label" for="reportStartDate">Từ ngày</label>
+                            <input type="date" id="reportStartDate" class="report-filter-control">
+                        </div>
+                        <div class="report-filter-field">
+                            <label class="report-filter-label" for="reportEndDate">Đến ngày</label>
+                            <input type="date" id="reportEndDate" class="report-filter-control">
+                        </div>
+                        <div class="report-filter-field">
+                            <label class="report-filter-label" for="reportRoomIdSelect">Phòng họp</label>
+                            <select id="reportRoomIdSelect" class="report-filter-control">
+                                <option value="">Tất cả các phòng</option>
+                            </select>
+                        </div>
+                        <button type="button" id="btnRunUsageReport" class="report-submit-button">
+                            <svg class="report-refresh-icon" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <path d="M20 7v5h-5"></path>
+                                <path d="M19 12a7 7 0 1 1-2.05-4.95L20 12"></path>
+                            </svg>
+                            <span class="report-submit-label">Cập nhật</span>
+                        </button>
+                    </div>
+
+                    <!-- Khối Tổng quan (Summary Cards) -->
+                    <div class="stats-grid report-summary-grid">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số phòng</span>
+                            <div class="stat-value" id="kpiTotalRooms">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số cuộc họp</span>
+                            <div class="stat-value text-green" id="kpiTotalMeetings">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng số giờ họp</span>
+                            <div class="stat-value text-orange" id="kpiTotalHours">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ lấp đầy TB</span>
+                            <div class="stat-value text-purple" id="kpiOccupancyRate">-</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 my-6">
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Tổng số giờ họp theo từng phòng họp</h3>
+                            <div id="chartUsageBar" class="report-chart" role="img"
+                                aria-label="Biểu đồ cột tổng số giờ họp theo từng phòng họp">
+                            </div>
+                        </section>
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Tỷ lệ lấp đầy giữa các phòng</h3>
+                            <div id="chartUsageDonut" class="report-chart" role="img"
+                                aria-label="Biểu đồ donut tỷ lệ lấp đầy giữa các phòng">
+                            </div>
+                        </section>
+                    </div>
+
+                    <!-- Bảng chi tiết -->
+                    <div class="table-card">
+                        <div class="table-card-heading">
+                            Chi tiết theo từng phòng họp</div>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Tên phòng</th>
+                                        <th>Số cuộc họp</th>
+                                        <th>Tổng số giờ</th>
+                                        <th>Tỷ lệ lấp đầy (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="roomDetailsTableBody">
+                                    <tr>
+                                        <td colspan="5" class="table-empty-state">Chưa
+                                            có dữ liệu. Bấm "Cập nhật" để tải.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    </section>
+
+                <section id="reportCancellationPanel" class="report-panel d-none" role="tabpanel"
+                    aria-labelledby="report-tab-cancel" hidden>
+                    <div class="page-header">
+                        <div>
+                            <h2>Thống kê Hủy phòng</h2>
+                            <p class="subtitle">Tổng hợp lịch hủy thủ công và cuộc họp không check-in.</p>
+                        </div>
+                    </div>
+                    <div class="cancellation-analytics-filters">
+                        <label>Từ ngày <input type="date" id="cancellationStartDate"></label>
+                        <label>Đến ngày <input type="date" id="cancellationEndDate"></label>
+                        <label>Phòng họp
+                            <select id="cancellationRoomId">
+                                <option value="">Tất cả phòng</option>
+                            </select>
+                        </label>
+                        <button type="button" id="btnFilterCancellation" class="report-submit-button">
+                            <svg class="report-refresh-icon" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <path d="M20 7v5h-5"></path>
+                                <path d="M19 12a7 7 0 1 1-2.05-4.95L20 12"></path>
+                            </svg>
+                            <span class="report-submit-label">Cập nhật</span>
+                        </button>
+                        <button type="button" onclick="exportCancellationAnalytics('excel')"
+                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất Excel</button>
+                        <button type="button" onclick="exportCancellationAnalytics('pdf')"
+                            class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-medium flex items-center gap-2">Xuất PDF</button>
+                    </div>
+                    <div id="cancellationAnalyticsMessage"
+                        class="hidden mb-4 p-3 rounded-lg bg-red-50 text-red-600 text-sm font-medium"
+                        role="alert" aria-live="assertive"></div>
+                    <div class="stats-grid cancellation-analytics-stats">
+                        <div class="stat-card">
+                            <span class="stat-title">Tổng cuộc họp bị hủy</span>
+                            <div class="stat-value text-orange" id="kpiTotalCancels">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Tỷ lệ hủy</span>
+                            <div class="stat-value text-purple" id="kpiCancelRate">0%</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Lý do hủy phổ biến</span>
+                            <div class="stat-value cancellation-top-reason" id="cancellationPopularReason">—</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-title">Số giờ lãng phí</span>
+                            <div class="stat-value text-orange" id="cancelledWastedHours">0 giờ</div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 my-6">
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Phân bổ lý do hủy phòng</h3>
+                            <div id="chartCancelReasons" class="report-chart" role="img"
+                                aria-label="Biểu đồ donut phân bổ lý do hủy phòng">
+                            </div>
+                        </section>
+                        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h3 class="mb-4 text-lg font-bold text-slate-800">Cuộc họp thành công và bị hủy</h3>
+                            <div id="chartCancelvsSuccess" class="report-chart" role="img"
+                                aria-label="Biểu đồ cột chồng so sánh cuộc họp thành công và bị hủy">
+                            </div>
+                        </section>
+                    </div>
+                    <div class="cancellation-analytics-columns">
+                        <div class="table-card">
+                            <h3>Phòng có nhiều lịch hủy</h3>
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table">
+                                    <thead><tr><th>Phòng</th><th>Số lần hủy</th></tr></thead>
+                                    <tbody id="cancellationRoomsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="table-card">
+                            <h3>Lý do hủy phổ biến</h3>
+                            <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                                <table class="data-table">
+                                    <thead><tr><th>Lý do</th><th>Số lượng</th></tr></thead>
+                                    <tbody id="cancellationReasonsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-card cancellation-offenders-card">
+                        <h3>Người đặt có lịch hủy nhiều</h3>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Người đặt</th><th>Số lần hủy / no-show</th></tr></thead>
+                                <tbody id="cancellationOffendersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="table-card cancellation-offenders-card">
+                        <h3>Chi tiết cuộc họp bị hủy</h3>
+                        <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Mã</th><th>Cuộc họp</th><th>Phòng</th><th>Người đặt</th><th>Thời gian</th><th>Lý do</th></tr></thead>
+                                <tbody id="cancellationMeetingsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+                </div>
+
+                <!-- VIEW 7: CÀI ĐẶT -->
+                <div id="viewSettings" class="tab-view max-w-4xl mx-auto py-6 px-4" style="display: none;">
+                    <!-- Tiêu đề trang -->
+                    <div class="mb-6">
+                        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Cài đặt tài khoản</h1>
+                        <p class="text-sm text-gray-500 mt-1">Quản lý thông tin cá nhân và bảo mật tài khoản của bạn.
+                        </p>
+                    </div>
+
+                    <div class="space-y-6">
+                        <!-- Thẻ 1: Thông tin hồ sơ -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <div class="flex items-center gap-4 pb-6 border-b border-gray-100">
+                                <div id="settingsAvatar"
+                                    class="w-16 h-16 rounded-full bg-[#004CFF] text-white flex items-center justify-center text-2xl font-bold shadow-inner">
+                                    Q
+                                </div>
+                                <div>
+                                    <h3 id="settingsName" class="text-lg font-semibold text-gray-900">Quản trị viên</h3>
+                                    <p id="settingsRole" class="text-sm text-gray-500">Quản trị viên</p>
+                                </div>
+                            </div>
+
+                            <!-- Form cập nhật thông tin -->
+                            <div class="mt-6 space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Họ và tên</label>
+                                    <input type="text" id="settingsInputName"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Email liên hệ</label>
+                                    <input type="email" id="settingsInputEmail"
+                                        class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all" />
+                                </div>
+
+                                <div class="pt-2">
+                                    <button type="button" onclick="updateUserSettings()"
+                                        class="px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-all shadow-sm focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                                        Lưu thay đổi
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Google Calendar</h3>
+                            <p class="text-sm text-gray-500 mb-4">
+                                Kết nối tài khoản Google để tự động đồng bộ cuộc họp và gửi lời mời cho người tham dự.
+                            </p>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span id="googleCalendarStatus" class="text-sm text-gray-600" role="status"
+                                    aria-live="polite">Đang kiểm tra kết nối...</span>
+                                <button id="googleCalendarAction" type="button"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#004CFF] hover:bg-[#0038CC] transition-colors"
+                                    onclick="handleGoogleCalendarAction()" disabled>
+                                    Kết nối ngay
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Thẻ 2: Phiên đăng nhập & Bảo mật -->
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Phiên đăng nhập</h3>
+                            <p class="text-sm text-gray-500 mb-4">Quản lý trạng thái kết nối của bạn trên hệ thống
+                                RoomSync.</p>
+
+                            <div class="pt-4 border-t border-gray-100 flex items-center justify-between">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900 block">Đăng xuất tài khoản</span>
+                                    <span class="text-xs text-gray-500">Kết thúc phiên làm việc hiện tại trên thiết bị
+                                        này.</span>
+                                </div>
+                                <button type="button" onclick="logout()"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors">
+                                    Đăng xuất
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- VIEW: ADMIN USER MANAGEMENT -->
+                <div id="viewUserManagement" class="tab-view max-w-7xl mx-auto py-6 px-4" style="display: none;">
+                    <div class="mb-6">
+                        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Quản lý người dùng</h1>
+                        <p class="text-sm text-gray-500 mt-1">Tra cứu danh sách và quản lý tài khoản người dùng.</p>
+                    </div>
+
+                    <div class="mb-5 flex flex-wrap gap-2 border-b border-slate-200" role="tablist"
+                        aria-label="Chế độ quản lý người dùng">
+                        <button id="userListModeTab" type="button" role="tab" aria-selected="true"
+                            aria-controls="userListModePanel" onclick="showUserManagementSection('list')"
+                            class="border-b-2 border-blue-600 px-4 py-3 text-sm font-semibold text-blue-700">
+                            Danh sách người dùng
+                        </button>
+                        <button id="userCreateModeTab" type="button" role="tab" aria-selected="false"
+                            aria-controls="userCreateModePanel" onclick="showUserManagementSection('create')"
+                            class="border-b-2 border-transparent px-4 py-3 text-sm font-semibold text-slate-500 hover:text-slate-800">
+                            Tạo tài khoản mới
+                        </button>
+                        <button id="userDirectoriesModeTab" type="button" role="tab" aria-selected="false"
+                            aria-controls="userDirectoriesModePanel" onclick="showUserManagementSection('directories')"
+                            class="border-b-2 border-transparent px-4 py-3 text-sm font-semibold text-slate-500 hover:text-slate-800">
+                            Quản lý phòng ban &amp; nhóm dự án
+                        </button>
+                    </div>
+
+                    <section id="userListModePanel" role="tabpanel" aria-labelledby="userListModeTab">
+                        <div id="userListTableContainer" class="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-6"
+                            aria-live="polite">
+                            <p class="text-sm text-slate-500">Đang tải danh sách người dùng...</p>
+                        </div>
+                    </section>
+
+                    <section id="userCreateModePanel" role="tabpanel" aria-labelledby="userCreateModeTab"
+                        hidden>
+                        <div class="max-w-2xl rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                            <h2 class="mb-1 text-base font-semibold text-gray-900">Tạo tài khoản mới</h2>
+                            <p class="mb-5 text-sm text-gray-500">
+                                Mật khẩu tạm sẽ được hệ thống sinh tự động và gửi qua Gmail. Người dùng cần đổi mật khẩu
+                                để kích hoạt tài khoản.
+                            </p>
+                            <form id="adminCreateUserForm" onsubmit="handleAdminCreateUser(event)" class="space-y-4">
+                            <div>
+                                <label for="adminUserFullName" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Họ và tên <span class="text-red-500">*</span>
+                                </label>
+                                <input id="adminUserFullName" name="full_name" type="text" minlength="2" maxlength="150"
+                                    autocomplete="name" required
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all"
+                                    placeholder="Ví dụ: Nguyễn Văn A">
+                            </div>
+
+                            <div>
+                                <label for="adminUserEmail" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Email <span class="text-red-500">*</span>
+                                </label>
+                                <input id="adminUserEmail" name="email" type="email" maxlength="150"
+                                    autocomplete="email" required
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all"
+                                    placeholder="name@example.com">
+                            </div>
+
+                            <div>
+                                <label for="adminUserUsername" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Tên đăng nhập <span class="text-gray-400">(không bắt buộc)</span>
+                                </label>
+                                <input id="adminUserUsername" name="username" type="text" maxlength="50"
+                                    autocomplete="username"
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all"
+                                    placeholder="Tự chuẩn hóa không dấu nếu nhập tiếng Việt">
+                            </div>
+
+                            <div>
+                                <label for="adminUserRole" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Vai trò <span class="text-red-500">*</span>
+                                </label>
+                                <select id="adminUserRole" name="role" required
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all">
+                                    <option value="employee">Nhân viên</option>
+                                    <option value="admin">Quản trị viên</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="adminUserDepartment" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Phòng ban
+                                </label>
+                                <select id="adminUserDepartment" name="department_id"
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all">
+                                    <option value="" selected>-- Chọn phòng ban (không bắt buộc) --</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="adminUserProjectGroups" class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Nhóm dự án
+                                </label>
+                                <select id="adminUserProjectGroups" name="project_group_ids" multiple size="4"
+                                    aria-describedby="adminUserProjectGroupsHelp"
+                                    class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:border-[#004CFF] focus:ring-2 focus:ring-[#004CFF]/20 outline-none transition-all">
+                                    <option value="" selected>-- Chọn nhóm dự án (không bắt buộc) --</option>
+                                </select>
+                                <p id="adminUserProjectGroupsHelp" class="mt-1 text-xs text-gray-500">
+                                    Có thể chọn nhiều nhóm dự án.
+                                </p>
+                            </div>
+
+                            <div class="pt-2">
+                                <button id="adminCreateUserSubmit" type="submit"
+                                    class="px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#004CFF] hover:bg-[#0038CC] transition-all shadow-sm focus:outline-none focus:ring-4 focus:ring-[#004CFF]/25">
+                                    Tạo tài khoản
+                                </button>
+                            </div>
+                            </form>
+                        </div>
+                    </section>
+
+                    <section id="userDirectoriesModePanel" role="tabpanel"
+                        aria-labelledby="userDirectoriesModeTab" hidden>
+                        <div class="grid gap-5 lg:grid-cols-2">
+                            <section class="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm"
+                                aria-labelledby="departmentsHeading">
+                                <h2 id="departmentsHeading" class="mb-1 text-base font-semibold text-slate-900">
+                                    Phòng ban
+                                </h2>
+                                <p class="mb-4 text-sm text-slate-500">Thêm, đổi tên hoặc xóa phòng ban.</p>
+                                <form id="createDepartmentForm" data-directory-type="department"
+                                    class="mb-4 flex flex-col gap-2 sm:flex-row">
+                                    <label class="sr-only" for="newDepartmentName">Tên phòng ban mới</label>
+                                    <input id="newDepartmentName" name="name" type="text" maxlength="120" required
+                                        class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                        placeholder="Ví dụ: Phòng Marketing">
+                                    <button type="submit"
+                                        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                                        Thêm mới
+                                    </button>
+                                </form>
+                                <p id="departmentsMessage" class="mb-3 text-sm" role="status" aria-live="polite"></p>
+                                <ul id="departmentsList" class="divide-y divide-slate-100"
+                                    aria-label="Danh sách phòng ban">
+                                    <li class="py-3 text-sm text-slate-500">Đang tải phòng ban...</li>
+                                </ul>
+                            </section>
+
+                            <section class="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm"
+                                aria-labelledby="projectGroupsHeading">
+                                <h2 id="projectGroupsHeading" class="mb-1 text-base font-semibold text-slate-900">
+                                    Nhóm dự án
+                                </h2>
+                                <p class="mb-4 text-sm text-slate-500">Thêm, đổi tên hoặc xóa nhóm dự án.</p>
+                                <form id="createProjectGroupForm" data-directory-type="project-group"
+                                    class="mb-4 flex flex-col gap-2 sm:flex-row">
+                                    <label class="sr-only" for="newProjectGroupName">Tên nhóm dự án mới</label>
+                                    <input id="newProjectGroupName" name="name" type="text" maxlength="120" required
+                                        class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                        placeholder="Ví dụ: Dự án Mobile">
+                                    <button type="submit"
+                                        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                                        Thêm mới
+                                    </button>
+                                </form>
+                                <p id="projectGroupsMessage" class="mb-3 text-sm" role="status" aria-live="polite"></p>
+                                <ul id="projectGroupsList" class="divide-y divide-slate-100"
+                                    aria-label="Danh sách nhóm dự án">
+                                    <li class="py-3 text-sm text-slate-500">Đang tải nhóm dự án...</li>
+                                </ul>
+                            </section>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </main>
+
+        <nav id="mobileBottomNav" class="mobile-bottom-nav fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 lg:hidden flex justify-around items-center h-16 shadow-lg"
+            aria-label="Điều hướng nhanh">
+            <button type="button" class="mobile-nav-item" data-tab="overview" data-nav-target="overview"
+                onclick="switchMainTab('overview', document.getElementById('navOverview'))" aria-label="Tổng quan"
+                aria-current="page">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+                <span>Tổng quan</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-tab="my-bookings" data-nav-target="my-bookings"
+                onclick="switchMainTab('my-bookings', document.getElementById('navMyBookings'))"
+                aria-label="Lịch của tôi">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <rect width="18" height="18" x="3" y="4" rx="2" />
+                    <path d="M16 2v4M8 2v4M3 10h18" />
+                </svg>
+                <span>Lịch của tôi</span>
+            </button>
+            <button id="qrScanBtnMobile" type="button" class="mobile-nav-item mobile-nav-scan"
+                onclick="openQuickQrScanner()"
+                aria-label="Quét QR">
+                <span class="mobile-nav-scan-icon" aria-hidden="true">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        aria-hidden="true" focusable="false">
+                        <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3z" />
+                        <path d="M14 14h3v3h-3zM19 14v2m2 2v3h-3m-4 0h2" />
+                    </svg>
+                </span>
+                <span>Quét QR</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-tab="rooms" data-nav-target="rooms"
+                onclick="switchMainTab('rooms', document.getElementById('navRooms'))" aria-label="Phòng họp">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <rect x="4" y="2" width="16" height="20" rx="2" />
+                    <path d="M9 22v-4h6v4" />
+                </svg>
+                <span>Phòng họp</span>
+            </button>
+            <button type="button" class="mobile-nav-item" data-nav-target="menu"
+                onclick="toggleMobileMenu()" aria-label="Mở menu">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true" focusable="false">
+                    <rect width="7" height="7" x="3" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="3" rx="1" />
+                    <rect width="7" height="7" x="14" y="14" rx="1" />
+                    <rect width="7" height="7" x="3" y="14" rx="1" />
+                </svg>
+                <span>Menu</span>
+            </button>
+        </nav>
+    </div>
+
+    <div id="executiveReportModal" class="modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="executiveReportTitle" aria-hidden="true">
+        <section class="modal-content" aria-describedby="executiveReportDescription">
+            <h3 id="executiveReportTitle" class="text-xl font-bold text-slate-800">
+                Xuất Báo cáo Quản trị Lãnh đạo (Executive Report)
+            </h3>
+            <p id="executiveReportDescription" class="subtitle mb-5">
+                Chọn khoảng thời gian và phòng ban cho báo cáo.
+            </p>
+            <div class="grid gap-4">
+                <label class="grid gap-1 text-sm font-medium text-slate-600" for="executiveStartDate">
+                    Từ ngày
+                    <input type="date" id="executiveStartDate"
+                        class="rounded-lg border border-slate-300 px-3 py-2">
+                </label>
+                <label class="grid gap-1 text-sm font-medium text-slate-600" for="executiveEndDate">
+                    Đến ngày
+                    <input type="date" id="executiveEndDate"
+                        class="rounded-lg border border-slate-300 px-3 py-2">
+                </label>
+                <label class="grid gap-1 text-sm font-medium text-slate-600" for="executiveDepartmentId">
+                    Phòng ban
+                    <select id="executiveDepartmentId" class="rounded-lg border border-slate-300 px-3 py-2">
+                        <option value="">Tất cả phòng ban</option>
+                    </select>
+                </label>
+            </div>
+            <p id="executiveReportMessage" class="mt-4 text-sm text-red-600" role="alert" hidden></p>
+            <div class="modal-actions mt-6 flex flex-wrap justify-end gap-2">
+                <button type="button" id="btn-export-executive-excel"
+                    class="executive-export-button executive-export-excel">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <path d="M14 2v6h6M8 13l4 5m0-5-4 5m8-4h-3"></path>
+                    </svg>
+                    <span class="executive-export-label">Xuất Excel (.xlsx)</span>
+                </button>
+                <button type="button" id="btn-export-executive-pdf"
+                    class="executive-export-button executive-export-pdf">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <path d="M14 2v6h6M8 13h2a1.5 1.5 0 0 1 0 3H8v3m5-6h1.5a3 3 0 0 1 0 6H13zm6 6v-6h3m-3 3h2"></path>
+                    </svg>
+                    <span class="executive-export-label">Xuất PDF (.pdf)</span>
+                </button>
+                <button type="button" id="btn-close-executive-modal"
+                    class="executive-export-button executive-export-close">
+                    Đóng
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <!-- MODAL XEM LỊCH TRÌNH -->
+    <div id="scheduleModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="scheduleRoomTitle">Lịch trình phòng họp</h3>
+            <p class="subtitle" style="margin-bottom: 16px;">Danh sách khung giờ hoạt động trong ngày</p>
+            <div id="timelineContainer" class="timeline-list"></div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" onclick="closeScheduleModal()" class="btn-cancel">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="cancelMeetingModal" class="modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="cancelMeetingTitle">
+        <div class="modal-content cancellation-modal-content">
+            <h3 id="cancelMeetingTitle">Hủy cuộc họp</h3>
+            <p class="subtitle">Bạn có thể ghi lại lý do để quản trị viên tổng hợp thống kê.</p>
+            <label for="cancellationReasonInput">Lý do hủy (không bắt buộc)</label>
+            <textarea id="cancellationReasonInput" rows="4" maxlength="1000"
+                placeholder="Nhập lý do hủy cuộc họp..."></textarea>
+            <div class="modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeCancelMeetingModal()">Quay lại</button>
+                <button type="button" class="btn-save cancellation-confirm-button"
+                    onclick="submitCancelBooking()">Xác nhận hủy</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="qrCheckModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="qrCheckTitle">
+        <div class="modal-content">
+            <h3 id="qrCheckTitle">Quét mã QR phòng họp</h3>
+            <p id="qrCheckDescription" class="subtitle">Đưa mã QR phòng họp vào khung quét.</p>
+            <div id="qrReader" class="qr-reader"></div>
+            <label class="qr-manual-label" for="qrTokenInput">Hoặc nhập mã QR</label>
+            <input id="qrTokenInput" class="form-control" type="text" autocomplete="off"
+                placeholder="Mã QR phòng họp">
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQrCheckModal()">Đóng</button>
+                <button type="button" class="btn-primary" onclick="submitQrCheck()">Xác nhận</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrScannerModal" class="modal qr-check-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="quickQrTitle">
+        <div class="modal-content">
+            <h3 id="quickQrTitle">Quét QR nhanh</h3>
+            <p class="subtitle">Quét mã QR phòng họp hoặc cuộc họp để tự động check-in/check-out.</p>
+            <div id="quickQrReader" class="qr-reader"></div>
+            <p id="quickQrFeedback" class="quick-qr-feedback" role="alert" aria-live="assertive"></p>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button type="button" class="btn-cancel" onclick="closeQuickQrScanner()">Đóng</button>
+            </div>
+        </div>
+    </div>
+    <div id="qrToast" class="qr-toast" role="status" aria-live="polite"></div>
+
+    <div id="roomQrModal" class="modal qr-display-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="roomQrName">
+        <div class="modal-content qr-display-card">
+            <div class="qr-display-heading">
+                <div>
+                    <p class="qr-display-eyebrow">MÃ QR PHÒNG HỌP</p>
+                    <h3 id="roomQrName">Phòng họp</h3>
+                    <p id="roomQrLocation" class="qr-display-subtitle"></p>
+                </div>
+                <div class="qr-header-actions">
+                    <button class="qr-icon-button" type="button" onclick="copyRoomQrToken()" title="Sao chép Token"
+                        aria-label="Sao chép Token">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="8" y="8" width="12" height="12" rx="2"></rect>
+                            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-icon-button" type="button" onclick="downloadRoomQrImage()" title="Tải ảnh QR"
+                        aria-label="Tải ảnh QR">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M12 3v12m0 0 4-4m-4 4-4-4"></path>
+                            <path d="M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"></path>
+                        </svg>
+                    </button>
+                    <button class="qr-close-button" type="button" onclick="closeRoomQrModal()" title="Đóng"
+                        aria-label="Đóng">×</button>
+                </div>
+            </div>
+            <div id="roomQrImage" class="qr-image-frame qr-image-room"></div>
+        </div>
+    </div>
+
+    <div id="presenterQRModal" class="modal qr-presenter-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-labelledby="presenterQRTitle">
+        <div class="qr-presenter-card">
+            <button class="qr-close-button qr-presenter-close" type="button" onclick="closePresenterQrModal()"
+                aria-label="Đóng">×</button>
+            <div class="qr-presenter-info">
+                <p class="qr-display-eyebrow">CHECK-IN CUỘC HỌP</p>
+                <h2 id="presenterQRTitle">Cuộc họp</h2>
+                <p id="presenterQRRoom" class="qr-presenter-room"></p>
+                <p id="presenterQRTime" class="qr-presenter-time"></p>
+            </div>
+            <div id="presenterQRImage" class="qr-image-frame qr-image-presenter"></div>
+            <p class="qr-presenter-hint">Mở camera điện thoại và quét mã để check-in</p>
+            <div class="qr-display-actions qr-presenter-actions">
+                <button id="presenterQRFullscreenButton" type="button" class="qr-secondary-button"
+                    onclick="togglePresenterQrFullscreen()">Phóng to / Fullscreen</button>
+                <button type="button" class="qr-primary-button" onclick="copyPresenterQrToken()">Sao chép Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
+    <div id="roomModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
+            <form id="roomForm" onsubmit="handleFormSubmit(event)">
+                <input type="hidden" id="editRoomId">
+                <div class="form-group">
+                    <label>Tên phòng họp</label>
+                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
+                        required>
+                </div>
+                <div class="form-group">
+                    <label>Vị trí (Tầng)</label>
+                    <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
+                </div>
+                <div class="form-group">
+                    <label>Sức chứa</label>
+                    <input type="text" id="roomCapacity" class="form-control" placeholder="Ví dụ: 8-10 người" required>
+                </div>
+                <div class="form-group">
+                    <label>Tiện ích (phân cách bằng dấu phẩy)</label>
+                    <input type="text" id="roomAmenities" class="form-control"
+                        placeholder="Màn hình, Wifi, Video, Đồ uống">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL QUẢN LÝ THIẾT BỊ (ADMIN - CRUD FORM) -->
+    <div id="equipmentModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="equipmentModalTitle">Thêm Thiết Bị Mới</h3>
+            <form id="equipmentForm" onsubmit="handleEquipmentFormSubmit(event)">
+                <input type="hidden" id="editEquipmentId">
+                <div class="form-group">
+                    <label>Tên thiết bị <span style="color:red;">*</span></label>
+                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony"
+                        required>
+                </div>
+                <div class="form-group">
+                    <label>Mã thiết bị</label>
+                    <input type="text" id="equipmentCode" class="form-control" placeholder="Ví dụ: MIC-001">
+                </div>
+                <div class="form-group">
+                    <label>Phân loại</label>
+                    <input type="text" id="equipmentCategory" class="form-control"
+                        placeholder="Ví dụ: Audio, Visual, Cable">
+                </div>
+                <div class="form-group">
+                    <label>Số lượng tổng (total_qty) <span style="color:red;">*</span></label>
+                    <input type="number" id="equipmentTotalQty" class="form-control" min="1" value="1" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeEquipmentModal()" class="btn-cancel">Hủy</button>
+                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL TẠO CUỘC HỌP -->
+    <div id="createMeetingModal" class="cm-overlay" aria-hidden="true">
+        <section id="cmDialog" class="cm-dialog cm-dialog--mobile-scroll cm-modal-body" role="dialog" aria-modal="true"
+            aria-labelledby="cmHeading">
+            <div id="cmFormView" class="cm-form-view">
+                <header class="cm-header">
+                    <div>
+                        <p class="cm-kicker">Cuộc họp</p>
+                        <h1 id="cmHeading">Tạo cuộc họp</h1>
+                    </div>
+                    <button class="cm-icon-btn" type="button" aria-label="Đóng"
+                        onclick="closeCreateMeeting()">
+                        <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false">
+                            <path d="m18 6-12 12M6 6l12 12" />
+                        </svg>
+                    </button>
+                </header>
+
+                <form id="createMeetingForm" class="cm-layout">
+                    <div class="cm-form-pane">
+                        <section class="cm-section">
+                            <div class="cm-section-head">
+                                <p class="cm-section-title">Thông tin cơ bản</p>
+                                <p class="cm-help">Xác định cuộc họp và nội dung trước khi lựa chọn vị trí hoặc phòng.</p>
+                            </div>
+                            <label class="cm-label" for="cmTitle">Tên cuộc họp</label>
+                            <input id="cmTitle" class="cm-title-input" name="title" maxlength="120"
+                                aria-describedby="cmTitleError"
+                                placeholder="Ví dụ: Họp kế hoạch dự án tháng 10" autocomplete="off" />
+                            <p id="cmTitleError" class="cm-field-error" data-validation-error>Nhập tên cuộc họp trước khi tạo.</p>
+                        </section>
+
+                        <section class="cm-section">
+                            <label class="cm-label" for="cmDescription">Mô tả ngắn</label>
+                            <textarea id="cmDescription" class="cm-textarea" rows="3"
+                                placeholder="Nội dung hoặc mục tiêu cuộc họp (không bắt buộc)"></textarea>
+                        </section>
+
+                        <section class="cm-section">
+                            <div class="cm-section-head">
+                                <p class="cm-section-title">Thời gian &amp; tần suất</p>
+                                <p class="cm-help">Chọn ngày và khung giờ diễn ra để xác định thời điểm cuộc họp.</p>
+                            </div>
+                            <div class="cm-time-grid">
+                                <div>
+                                    <label class="cm-mini-label" for="cmDate">Ngày</label>
+                                    <input id="cmDate" class="cm-input" type="date" aria-describedby="cmDateError" />
+                                    <p id="cmDateError" class="cm-field-error" data-validation-error>Chọn ngày hợp lệ.</p>
+                                </div>
+                                <div>
+                                    <label class="cm-mini-label" for="start_time">Giờ bắt đầu</label>
+                                    <input id="start_time" name="start_time" class="cm-input" type="time" required aria-describedby="cmStartError" />
+                                    <p id="cmStartError" class="cm-field-error" data-validation-error>Chọn giờ bắt đầu hợp lệ.</p>
+                                </div>
+                                <div>
+                                    <label class="cm-mini-label" for="end_time">Giờ kết thúc</label>
+                                    <input id="end_time" name="end_time" class="cm-input" type="time" required aria-describedby="cmEndError" />
+                                    <p id="cmEndError" class="cm-field-error" data-validation-error>Chọn giờ kết thúc hợp lệ.</p>
+                                </div>
+                            </div>
+                            <div class="cm-seg" role="group" aria-label="Lặp lại">
+                                <button type="button" id="cmRecNone" aria-pressed="true"
+                                    onclick="setRecurrence('none')">Không lặp</button>
+                                <button type="button" id="cmRecWeekly" aria-pressed="false"
+                                    onclick="setRecurrence('weekly')">Hàng tuần</button>
+                                <button type="button" id="cmRecMonthly" aria-pressed="false"
+                                    onclick="setRecurrence('monthly')">Hàng tháng</button>
+                            </div>
+                            <select id="cmRecurrence" class="cm-select" hidden>
+                                <option value="none">Không lặp</option>
+                                <option value="weekly">Hàng tuần</option>
+                                <option value="monthly">Hàng tháng</option>
+                            </select>
+                            <div id="cmRecurringExtra" class="cm-recurring-extra">
+                                <p id="cmRecurrenceNote" class="cm-help">Lặp vào thứ Hai hàng tuần</p>
+                                <label>
+                                    <span class="cm-mini-label">Kết thúc vào ngày</span>
+                                    <input id="cmRecurrenceUntil" class="cm-input" type="date" />
+                                </label>
+                            </div>
+                        </section>
+
+                        <section class="cm-section cm-attendees-section">
+                            <div class="cm-section-head">
+                                <p class="cm-section-title">Thành phần tham dự</p>
+                                <p class="cm-help">Tìm thành viên, chọn người tham dự và xóa họ khỏi danh sách khi cần.</p>
+                            </div>
+                            <div class="cm-inline-actions">
+                                <label class="cm-label" for="cmAttendeeSearch">Người tham dự</label>
+                                <span id="cmAttendeeCount" class="cm-help">0 người tham dự</span>
+                            </div>
+                            <label class="cm-external-guests">
+                                <span class="cm-mini-label">Khách ngoài (số lượng)</span>
+                                <input id="cmExternalGuestCount" class="cm-input" type="number"
+                                    min="0" step="1" value="0" inputmode="numeric" />
+                            </label>
+                            <div class="cm-attendee-filters">
+                                <label>
+                                    <span class="cm-mini-label">Phòng ban</span>
+                                    <select id="cmDepartmentFilter" class="cm-select">
+                                        <option value="">Tất cả phòng ban</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span class="cm-mini-label">Nhóm dự án</span>
+                                    <select id="cmProjectGroupFilter" class="cm-select">
+                                        <option value="">Tất cả nhóm dự án</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span class="cm-mini-label">Chức vụ</span>
+                                    <select id="cmPositionFilter" class="cm-select">
+                                        <option value="">Tất cả chức vụ</option>
+                                        <option value="manager">Cấp quản lý</option>
+                                        <option value="specialist">Chuyên viên</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <p id="cmDirectoryError" class="cm-alert cm-alert-error" role="alert" hidden></p>
+                            <div id="cmQuickInviteChips" class="cm-quick-invite-chips"
+                                role="group" aria-label="Mời nhanh theo phòng ban hoặc nhóm dự án" hidden></div>
+                            <div class="cm-attendee-search">
+                                <input id="cmAttendeeSearch" class="cm-search" type="search"
+                                    placeholder="Tìm họ tên, email hoặc mã nhân viên..." autocomplete="off"
+                                    aria-controls="cmAttendeeSuggest" />
+                            </div>
+                            <div class="cm-attendee-results-header">
+                                <span id="cmAttendeeSearchStatus" class="cm-help" role="status" aria-live="polite"></span>
+                                <button id="cmSelectAllAttendees" type="button" class="cm-link-btn"
+                                    onclick="selectAllFilteredAttendees()">Chọn tất cả</button>
+                            </div>
+                            <ul id="cmAttendeeSuggest" class="cm-suggest cm-attendee-results"></ul>
+                            <p id="cmCapacityWarning" class="cm-alert cm-alert-error" role="alert" hidden></p>
+                            <div id="cmAttendeeChips" class="cm-chips"></div>
+                        </section>
+
+                        <section class="cm-section">
+                            <p class="cm-section-title">Chọn hình thức &amp; phòng họp</p>
+                            <div class="cm-mode" role="group" aria-label="Hình thức cuộc họp"
+                                aria-controls="cmOnlineBox cmResources">
+                                <button type="button" id="cmModeOnline" aria-pressed="false"
+                                    onclick="setCreateMeetingMode('online')">
+                                    <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                                        aria-hidden="true" focusable="false">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
+                                    </svg>
+                                    Online
+                                </button>
+                                <button type="button" id="cmModeOffline" aria-pressed="true"
+                                    onclick="setCreateMeetingMode('offline')">
+                                    <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                                        aria-hidden="true" focusable="false">
+                                        <rect x="4" y="2" width="16" height="20" rx="2" />
+                                        <path d="M9 22v-4h6v4" />
+                                    </svg>
+                                    Offline
+                                </button>
+                            </div>
+                            <div id="cmOnlineBox" class="cm-online-box" aria-hidden="true">
+                                <label class="cm-label" for="cmMeetingLink">Link cuộc họp</label>
+                                <input id="cmMeetingLink" class="cm-input" type="url"
+                                    aria-describedby="cmMeetingLinkError"
+                                    name="meeting_link" placeholder="https://meet.google.com/..." autocomplete="url" />
+                                <p id="cmMeetingLinkError" class="cm-field-error" data-validation-error>Nhập URL cuộc họp hợp lệ.</p>
+                                <button type="button" class="cm-btn cm-btn-secondary" onclick="generateMeetingLink()">Tạo
+                                    link</button>
+                            </div>
+
+                            <div id="cmResources" class="cm-resources is-open" aria-hidden="false">
+                                <p class="cm-section-title">Yêu cầu phòng</p>
+                                <div class="cm-fixed-requirements">
+                                    <span class="cm-label">Thiết bị cố định bắt buộc</span>
+                                    <p class="cm-help">Chọn các thiết bị/tiện nghi bắt buộc phòng họp phải có.</p>
+                                    <div id="cmFixedAmenityOptions" class="cm-amenity-options">
+                                        <p class="cm-help">Đang tải tiện nghi phòng...</p>
+                                    </div>
+                                </div>
+
+                                <div class="cm-capacity cm-search-card">
+                                    <div>
+                                        <span class="cm-help">Sức chứa cần thiết</span>
+                                        <strong id="cmCapacityValue">1 người</strong>
+                                        <span id="cmCapacityMin" class="cm-help">Phòng tối thiểu: 1 chỗ</span>
+                                    </div>
+                                    <button id="cmSearchRoomsBtn" type="button" class="cm-btn cm-btn-ghost"
+                                        aria-describedby="cmRoomError"
+                                        onclick="searchMatchingRooms()">
+                                        <svg class="cm-inline-icon" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                            stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                            <circle cx="11" cy="11" r="8" />
+                                            <path d="m21 21-4.35-4.35" />
+                                        </svg>
+                                        Tìm phòng phù hợp
+                                    </button>
+                                </div>
+                                <div id="cmRoomConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                                <div id="cmRoomResults" class="cm-room-list">
+                                    <div class="cm-empty">Chọn điều kiện phòng rồi bấm “Tìm phòng phù hợp”.</div>
+                                </div>
+                                <p id="cmRoomError" class="cm-field-error" data-validation-error>Chọn một phòng phù hợp trước khi tạo cuộc họp.</p>
+                            </div>
+                        </section>
+
+                        <section id="cmEquipmentSection" class="cm-section" hidden>
+                            <p class="cm-section-title">Thiết bị cần mượn thêm</p>
+                            <p class="cm-help">Thiết bị di động được đặt riêng sau khi chọn phòng.</p>
+                            <div id="cmBorrowEquipment" class="cm-borrow-eq" aria-describedby="cmEquipmentError"></div>
+                            <p id="cmEquipmentError" class="cm-field-error" data-validation-error>Điều chỉnh số lượng thiết bị cần mượn.</p>
+                            <div id="cmEquipConflict" class="cm-alert cm-alert-warn" role="status"></div>
+                        </section>
+
+                        <div id="cmFormError" class="cm-alert cm-alert-error" role="alert"></div>
+                        <div id="cmApiError" class="cm-alert cm-alert-error" role="alert"></div>
+                    </div>
+
+                    <aside class="cm-summary-pane">
+                        <div class="cm-summary-card">
+                            <h2>Kiểm tra cuộc họp</h2>
+                            <div class="cm-organizer-summary">
+                                <span>Người tổ chức: <strong id="cmOrganizerName">Chưa xác định</strong></span>
+                                <label>
+                                    <input id="cmOrganizerParticipates" type="checkbox" checked />
+                                    Tôi tham gia cuộc họp
+                                </label>
+                            </div>
+                            <p class="cm-attendee-total">Tổng tham dự:
+                                <strong id="cmTotalAttendees">1 người</strong>
+                            </p>
+                            <ul id="cmSummaryList" class="cm-summary-list"></ul>
+                            <div class="cm-equipment-summary">
+                                <strong>Thiết bị đăng ký</strong>
+                                <ul id="cmEquipmentSummary" class="cm-equipment-summary-list">
+                                    <li class="cm-help">Chưa đăng ký thiết bị.</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div id="cmSummaryStatus" class="cm-status is-warn">Đang kiểm tra thông tin...</div>
+                        <div class="cm-summary-actions">
+                            <button id="cmSubmit" class="cm-btn cm-btn-primary" type="submit">TẠO CUỘC HỌP</button>
+                            <button class="cm-btn cm-btn-secondary" type="button"
+                                onclick="closeCreateMeeting()">Hủy</button>
+                        </div>
+                    </aside>
+                </form>
+            </div>
+
+            <div id="cmSuccessView" class="cm-success hidden" role="status">
+                <div class="cm-success-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" focusable="false">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                </div>
+                <h2>Đã tạo cuộc họp</h2>
+                <p class="cm-help">Cuộc họp đã được lưu. Người tham dự sẽ nhận thông tin theo cấu hình hệ thống.</p>
+                <button type="button" class="cm-btn cm-btn-primary" onclick="openCreateMeeting()">Tạo cuộc họp
+                    khác</button>
+                <button type="button" class="cm-btn cm-btn-secondary" onclick="closeCreateMeeting()">Đóng</button>
+            </div>
+        </section>
+    </div>
+
+    <dialog id="cmWarningDialog" class="cm-warning-dialog"
+        aria-labelledby="cmWarningHeading" aria-describedby="cmWarningDescription">
+        <form method="dialog">
+            <p class="cm-kicker">Kiểm tra khả dụng</p>
+            <h2 id="cmWarningHeading">Có cảnh báo cho cuộc họp</h2>
+            <p id="cmWarningDescription">Bạn có thể điều chỉnh thông tin hoặc xác nhận vẫn đặt phòng.</p>
+            <ul id="cmWarningList" class="cm-warning-list"></ul>
+            <div class="cm-warning-actions">
+                <button class="cm-btn cm-btn-secondary" type="submit" value="adjust">
+                    Điều chỉnh lại
+                </button>
+                <button class="cm-btn cm-btn-primary" type="submit" value="force">
+                    Xác nhận vẫn đặt phòng
+                </button>
+            </div>
+        </form>
+    </dialog>
+
+    <button id="ai-chat-launcher" class="ai-chat-launcher" type="button"
+        aria-label="Mở trợ lý RoomSync" title="Mở trợ lý RoomSync"
+        aria-controls="ai-chat-drawer" aria-expanded="false">
+        <svg viewBox="0 0 24 24" class="ai-chat-launcher-icon" aria-hidden="true" focusable="false">
+            <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"></path>
+        </svg>
+    </button>
+    <section id="ai-chat-drawer" class="ai-chat-drawer" role="dialog"
+        aria-modal="false" aria-labelledby="ai-chat-title" aria-hidden="true" hidden>
+        <header class="ai-chat-header">
+            <div>
+                <h2 id="ai-chat-title">Trợ lý RoomSync AI</h2>
+            </div>
+            <div class="ai-chat-header-actions">
+                <button id="ai-chat-new-session" class="ai-chat-icon-button" type="button"
+                    title="Tạo cuộc trò chuyện mới" aria-label="Tạo cuộc trò chuyện mới">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 5v14M5 12h14"></path>
+                    </svg>
+                </button>
+                <button id="ai-chat-close" class="ai-chat-icon-button" type="button"
+                    title="Đóng trợ lý" aria-label="Đóng trợ lý">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="m18 6-12 12M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+        <div class="ai-chat-layout">
+            <aside id="ai-chat-history-panel" class="ai-chat-history-panel" aria-label="Lịch sử chat">
+                <div class="ai-chat-history-heading">
+                    <span>Lịch sử trò chuyện</span>
+                    <button id="ai-chat-history-refresh" type="button" title="Tải lại lịch sử"
+                        aria-label="Tải lại lịch sử">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M20 7v5h-5"></path>
+                            <path d="M19 12a7 7 0 1 1-2.05-4.95L20 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div id="ai-chat-history-list" class="ai-chat-history-list" aria-live="polite">
+                    <p class="ai-chat-muted">Đang tải lịch sử...</p>
+                </div>
+            </aside>
+            <div class="ai-chat-main">
+                <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"
+                    aria-relevant="additions text">
+                    <div class="ai-chat-welcome">
+                        <svg class="ai-chat-welcome-icon" viewBox="0 0 24 24" aria-hidden="true"
+                            focusable="false">
+                            <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"></path>
+                        </svg>
+                        <strong>Xin chào! Tôi có thể giúp bạn đặt phòng họp.</strong>
+                        <p>Hãy cho tôi biết ngày, giờ, thời lượng và số người tham dự.</p>
+                    </div>
+                </div>
+                <p id="ai-chat-status" class="ai-chat-status" role="status" aria-live="polite"></p>
+                <div class="ai-chat-quick-chips" role="group" aria-label="Thao tác nhanh">
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-prompt="Tìm phòng họp cho 6 người">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            aria-hidden="true" focusable="false">
+                            <path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="8"></circle>
+                        </svg>
+                        <span>Tìm phòng 6 người</span>
+                    </button>
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-prompt="Cho tôi xem lịch họp hôm nay">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            aria-hidden="true" focusable="false">
+                            <rect width="18" height="18" x="3" y="4" rx="2"></rect>
+                            <path d="M16 2v4M8 2v4M3 10h18"></path>
+                        </svg>
+                        <span>Lịch họp hôm nay</span>
+                    </button>
+                    <button type="button" class="ai-chat-quick-chip"
+                        data-ai-chat-prompt="Tôi muốn hủy cuộc họp gần nhất">
+                        <svg class="ai-chat-quick-chip-icon-danger" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="m15 9-6 6M9 9l6 6"></path>
+                        </svg>
+                        <span>Hủy cuộc họp gần nhất</span>
+                    </button>
+                </div>
+                <form id="ai-chat-form" class="ai-chat-compose">
+                    <label class="ai-chat-sr-only" for="ai-chat-input">Tin nhắn của bạn</label>
+                    <textarea id="ai-chat-input" rows="2" maxlength="4000"
+                        placeholder="Nhập tin nhắn..." required></textarea>
+                    <button id="ai-chat-send" type="submit" aria-label="Gửi tin nhắn">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="m22 2-7 20-4-9-9-4Z"></path>
+                            <path d="M22 2 11 13"></path>
+                        </svg>
+                    </button>
+                </form>
+                <p class="ai-chat-disclaimer">AI có thể nhầm lẫn. Vui lòng kiểm tra thông tin trước khi xác nhận.</p>
+            </div>
+        </div>
+    </section>
+
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="/static/js/user-list.bundle.js?v=2"></script>
+    <script src="/static/js/app.js?v=32"></script>
+    <script src="/static/js/create-meeting.js?v=8"></script>
+    <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
+</body>
+
+</html>

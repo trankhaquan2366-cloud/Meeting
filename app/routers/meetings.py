@@ -26,9 +26,9 @@ from app.schemas.meeting import (
     SuggestTimeResponse,
 )
 from app.schemas.room import RoomResponse
-from app.services.meeting_service import MeetingService
-from app.services.notification_service import create_notification, send_meeting_invitation_notifications
 from app.services.calendar_email_service import request_calendar_access_for_invitees
+from app.services.meeting_service import MeetingService
+from app.services.notification_service import create_notification
 from app.services.email_service import (
     send_meeting_cancellation_email,
     send_meeting_invitation_email,
@@ -39,6 +39,7 @@ from app.services.google_calendar_service import (
     delete_google_events_for_meeting,
     sync_user_meetings_to_google,
 )
+from app.services.meeting_invitation_service import schedule_meeting_invitations
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -119,52 +120,17 @@ def create_meeting(
         organizer_id=current_user.id,
     )
 
-    if current_user.google_refresh_token and created_meetings:
-        background_tasks.add_task(sync_user_meetings_to_google, current_user.id)
-
-    # 2. Gửi thông báo ngầm cho những người được mời tham dự
-    # Filter organizer khỏi danh sách — organizer không nhận invitation notification
-    if payload.participant_ids and created_meetings:
-        first_meeting = created_meetings[0] if isinstance(created_meetings, list) else created_meetings
-        start_str = first_meeting.start_time.strftime("%H:%M %d/%m/%Y")
-        notify_ids = [pid for pid in payload.participant_ids if pid != current_user.id]
-        if notify_ids:
-            background_tasks.add_task(
-                send_meeting_invitation_notifications,
-                db=db,
-                participant_ids=notify_ids,
-                meeting_title=first_meeting.title,
-                start_time_str=start_str,
-                meeting_id=first_meeting.id,
-            )
-            background_tasks.add_task(
-                request_calendar_access_for_invitees,
-                user_ids=notify_ids,
-                meeting_ids=[meeting.id for meeting in created_meetings],
-            )
-            location = _meeting_location(first_meeting)
-            invitees = db.query(User).filter(User.id.in_(notify_ids)).all()
-            for invitee in invitees:
-                if not invitee.email:
-                    logger.warning(
-                        "Meeting invitation email skipped: user_id=%s has no email",
-                        invitee.id,
-                    )
-                    continue
-                background_tasks.add_task(
-                    send_meeting_invitation_email,
-                    to_email=invitee.email,
-                    user_name=invitee.full_name or invitee.username,
-                    meeting_title=first_meeting.title,
-                    start_time_str=start_str,
-                    location_str=location,
-                    meeting_link=first_meeting.meeting_link,
-                    meeting_id=first_meeting.id,
-                    start_time=first_meeting.start_time,
-                    end_time=first_meeting.end_time,
-                    organizer_email=current_user.email,
-                    organizer_name=current_user.full_name or current_user.username,
-                )
+    # Use the same invitation, calendar, and email pipeline for all meeting entry points.
+    schedule_meeting_invitations(
+        background_tasks=background_tasks,
+        db=db,
+        meetings=created_meetings,
+        participant_ids=payload.participant_ids or [],
+        organizer=current_user,
+        calendar_sync=sync_user_meetings_to_google,
+        calendar_access_request=request_calendar_access_for_invitees,
+        email_sender=send_meeting_invitation_email,
+    )
 
     return created_meetings
 
