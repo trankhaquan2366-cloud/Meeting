@@ -1,20 +1,30 @@
-const installButton = document.createElement('button');
-installButton.className = 'pwa-install-button';
-installButton.type = 'button';
-installButton.textContent = 'Install RoomSync';
-installButton.setAttribute('aria-label', 'Install RoomSync app');
-installButton.hidden = true;
-document.body.append(installButton);
+const installSlot = document.getElementById('pwaInstallSlot');
+const installButton = installSlot ? document.createElement('button') : null;
+
+if (installButton) {
+    installButton.className = 'pwa-install-button';
+    installButton.type = 'button';
+    installButton.innerHTML = `
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v4h14v-4" />
+        </svg>
+        <span>Tải ứng dụng</span>
+    `;
+    installButton.setAttribute('aria-label', 'Tải ứng dụng RoomSync');
+    installButton.title = 'Tải ứng dụng RoomSync';
+    installButton.hidden = true;
+    installSlot.append(installButton);
+}
 
 let pendingInstallPrompt = null;
 
 window.addEventListener('beforeinstallprompt', event => {
     event.preventDefault();
     pendingInstallPrompt = event;
-    installButton.hidden = false;
+    if (installButton) installButton.hidden = false;
 });
 
-installButton.addEventListener('click', async () => {
+installButton?.addEventListener('click', async () => {
     if (!pendingInstallPrompt) return;
 
     const prompt = pendingInstallPrompt;
@@ -35,7 +45,7 @@ installButton.addEventListener('click', async () => {
 
 window.addEventListener('appinstalled', () => {
     pendingInstallPrompt = null;
-    installButton.hidden = true;
+    if (installButton) installButton.hidden = true;
 });
 
 if ('serviceWorker' in navigator && window.isSecureContext) {

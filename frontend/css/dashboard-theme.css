@@ -62,14 +62,35 @@
 }
 
 .dashboard-page #appLayout .sidebar-brand {
-    width: 100%;
+    width: auto;
+    min-width: 0;
+    flex: 1;
     gap: 11px;
-    padding: 0 8px 20px;
+    padding: 0 8px;
     color: inherit;
     text-align: left;
     background: transparent;
     border: 0;
+}
+
+.dashboard-page #appLayout .sidebar-brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
     border-bottom: 1px solid var(--rs-border);
+}
+
+.dashboard-page #appLayout .sidebar-brand-row .pwa-install-button {
+    min-height: 34px;
+}
+
+@media (max-width: 1023.98px) {
+    .dashboard-page #appLayout .sidebar-brand-row .pwa-install-button span {
+        display: none;
+    }
 }
 
 .dashboard-page #appLayout .logo-icon {
@@ -1089,7 +1110,7 @@
     color: #94a3b8;
 }
 
-.dashboard-page #appLayout :is(.equipment-filter-field input, .cancellation-analytics-filters input, .cancellation-analytics-filters select) {
+.dashboard-page #appLayout :is(.equipment-filter-field input, .equipment-filter-field select, .cancellation-analytics-filters input, .cancellation-analytics-filters select) {
     min-height: 42px;
     padding: 8px 12px;
     background: var(--rs-card);

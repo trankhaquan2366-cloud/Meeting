@@ -16,4 +16,4 @@ def test_equipment_availability_booked_out():
 def test_equipment_availability_maintenance():
     result = get_equipment_availability(None, "2026-10-02T10:00:00", "2026-10-02T12:00:00", search="Microphone")
     assert len(result) == 1
-    assert result[0]["status_label"] == "Ngừng hoạt động / Bảo trì"
+    assert result[0]["status_label"] == "Đang bảo trì"

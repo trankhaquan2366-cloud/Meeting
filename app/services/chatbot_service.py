@@ -154,6 +154,17 @@ def _room_equipment_count(room: Room) -> int:
     return sum(int(item.quantity or 0) for item in room.default_equipments)
 
 
+def _equipment_search_terms(name: Any, search_keywords: Any = None) -> list[str]:
+    values = [str(name or "").casefold()]
+    if search_keywords:
+        values.extend(
+            keyword.strip().casefold()
+            for keyword in str(search_keywords).split(",")
+            if keyword.strip()
+        )
+    return values
+
+
 class ChatbotService:
     @staticmethod
     async def stream_message(
@@ -568,9 +579,13 @@ class ChatbotService:
                 db, start_time, end_time, active_only=True
             )
             available_equipment_names = [
-                str(equipment["name"]).casefold()
+                term
                 for equipment in equipment_options
                 if equipment["available_qty"] > 0
+                for term in _equipment_search_terms(
+                    equipment["name"],
+                    equipment.get("search_keywords"),
+                )
             ]
             draft_candidates = get_available_rooms(
                 db, start_time, end_time, capacity
@@ -578,9 +593,13 @@ class ChatbotService:
 
             def room_equipment_names(room: Room) -> list[str]:
                 return [
-                    str(item.equipment.name).casefold()
+                    term
                     for item in room.default_equipments
                     if item.equipment is not None
+                    for term in _equipment_search_terms(
+                        item.equipment.name,
+                        item.equipment.search_keywords,
+                    )
                 ]
 
             draft_candidates = [

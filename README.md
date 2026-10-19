@@ -41,6 +41,8 @@ Set `GEMINI_API_KEY` in `.env` and apply the database migrations with `alembic u
 
 Apply `migrations/010_add_room_management_fields.sql` when upgrading an existing database. The admin room form supports active, maintenance, and locked states; only active rooms can be booked. Fixed room equipment is selected from the active equipment inventory, and room images are stored as HTTP(S) URLs. Layout types are boardroom, classroom, and open space.
 
+Equipment records support Visual, Audio, Cable, Network, and Accessory categories, operational states, and comma-separated search keywords used by inventory search and AI room matching. Apply `migrations/011_add_equipment_search_and_operational_status.sql` when upgrading an existing database.
+
 ## 🔐 Google OAuth 2.0
 
 The project uses the existing `httpx` dependency for Google OAuth and Calendar API requests. Create a Google OAuth 2.0 Web client, enable Google Calendar API, and register `http://localhost:8000/api/auth/google/callback` as an authorized redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_LOGIN_URL`, and `BACKEND_PUBLIC_URL` in `.env` (see `.env.example`).

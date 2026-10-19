@@ -110,6 +110,25 @@ def _auto_migrate_schema():
                         "ALTER TABLE rooms ADD COLUMN layout_type VARCHAR(30) NULL"
                     ))
 
+            if "equipments" in inspect(conn).get_table_names():
+                equipment_columns = {
+                    column["name"]
+                    for column in inspect(conn).get_columns("equipments")
+                }
+                if "search_keywords" not in equipment_columns:
+                    conn.execute(text(
+                        "ALTER TABLE equipments ADD COLUMN search_keywords TEXT NULL"
+                    ))
+                if "operational_status" not in equipment_columns:
+                    conn.execute(text(
+                        "ALTER TABLE equipments ADD COLUMN operational_status "
+                        "VARCHAR(20) NOT NULL DEFAULT 'active'"
+                    ))
+                    conn.execute(text(
+                        "UPDATE equipments SET operational_status = 'retired' "
+                        "WHERE is_active = FALSE"
+                    ))
+
             if "meeting_participants" in inspect(conn).get_table_names():
                 participant_columns = {
                     column["name"]

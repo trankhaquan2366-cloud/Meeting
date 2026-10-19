@@ -729,6 +729,6 @@
         width: 3rem !important;
         height: 3rem !important;
         box-shadow: 0 10px 25px -5px rgba(79, 70, 229, 0.4);
-        z-index: 40;
+        z-index: 1200;
     }
 }

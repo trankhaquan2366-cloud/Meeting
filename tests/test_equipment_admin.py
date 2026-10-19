@@ -126,3 +126,62 @@ def test_update_total_qty_does_not_corrupt_meeting_equipments(client: TestClient
     assert me_db is not None
     assert me_db.quantity == 2
     assert me_db.equipment.total_qty == 12
+
+
+def test_equipment_keywords_and_operational_status_are_searchable(
+    client: TestClient,
+    db_session: Session,
+):
+    admin = _create_user(db_session, username="equipment_search_admin", role="admin")
+    headers = _auth_header(_make_token(admin))
+    create_response = client.post(
+        "/api/equipments/",
+        json={
+            "name": "Display panel",
+            "code": "DSP-010",
+            "category": "Visual",
+            "search_keywords": "tivi, tv, màn hình",
+            "operational_status": "maintenance",
+            "total_qty": 2,
+        },
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    equipment_id = create_response.json()["id"]
+    item = create_response.json()
+    assert item["search_keywords"] == "tivi, tv, màn hình"
+    assert item["operational_status"] == "maintenance"
+    assert item["is_active"] is False
+
+    keyword_search = client.get(
+        "/api/equipments/?include_inactive=true&search=tivi",
+        headers=headers,
+    )
+    category_search = client.get(
+        "/api/equipments/?include_inactive=true&category=Visual",
+        headers=headers,
+    )
+    status_filter = client.get(
+        "/api/equipments/?include_inactive=true&operational_status=maintenance",
+        headers=headers,
+    )
+    availability_search = client.get(
+        "/api/equipments/availability"
+        "?start_time=2035-01-01T09:00:00&end_time=2035-01-01T10:00:00&search=tv",
+        headers=headers,
+    )
+
+    assert [entry["id"] for entry in keyword_search.json()] == [equipment_id]
+    assert [entry["id"] for entry in category_search.json()] == [equipment_id]
+    assert [entry["id"] for entry in status_filter.json()] == [equipment_id]
+    assert [entry["id"] for entry in availability_search.json()] == [equipment_id]
+    assert availability_search.json()[0]["status_label"] == "Đang bảo trì"
+
+    active_response = client.put(
+        f"/api/equipments/{equipment_id}",
+        json={"operational_status": "active"},
+        headers=headers,
+    )
+    assert active_response.status_code == 200
+    assert active_response.json()["is_active"] is True

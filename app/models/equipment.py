@@ -10,6 +10,8 @@ class Equipment(Base):
     name = Column(String(150), nullable=False)
     code = Column(String(50), unique=True, nullable=True)
     category = Column(String(50), nullable=True)
+    search_keywords = Column(Text, nullable=True)
+    operational_status = Column(String(20), nullable=False, default="active", server_default="active")
     total_qty = Column(Integer, nullable=False, default=1)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)

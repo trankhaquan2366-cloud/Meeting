@@ -25,9 +25,9 @@ def _coerce_datetime(value: Any) -> datetime:
 
 def _mock_equipment_catalog():
     return [
-        {"id": 1, "code": "EQ001", "name": "Projector", "category": "AV", "total_qty": 5, "is_active": True},
-        {"id": 2, "code": "EQ002", "name": "Whiteboard", "category": "Office", "total_qty": 2, "is_active": True},
-        {"id": 3, "code": "EQ003", "name": "Microphone", "category": "AV", "total_qty": 10, "is_active": False},
+        {"id": 1, "code": "EQ001", "name": "Projector", "category": "Visual", "search_keywords": "projector, máy chiếu", "operational_status": "active", "total_qty": 5, "is_active": True},
+        {"id": 2, "code": "EQ002", "name": "Whiteboard", "category": "Accessory", "search_keywords": "whiteboard, bảng trắng", "operational_status": "active", "total_qty": 2, "is_active": True},
+        {"id": 3, "code": "EQ003", "name": "Microphone", "category": "Audio", "search_keywords": "mic, microphone", "operational_status": "maintenance", "total_qty": 10, "is_active": False},
     ]
 
 
@@ -106,7 +106,13 @@ def _booked_equipment_quantity(db, equipment_id: int, start_time: datetime, end_
 
 
 def get_equipment_availability(
-    db, start_time, end_time, category=None, search=None, active_only=False
+    db,
+    start_time,
+    end_time,
+    category=None,
+    search=None,
+    active_only=False,
+    operational_status_filter=None,
 ):
     if db is None:
         equipments = _mock_equipment_catalog()
@@ -116,10 +122,23 @@ def get_equipment_availability(
         query = db.query(Equipment)
         if active_only:
             query = query.filter(Equipment.is_active.is_(True))
-        if category:
-            query = query.filter(Equipment.category.ilike(f"%{category}%"))
+        if category and category != "other":
+            query = query.filter(Equipment.category == category)
+        elif category == "other":
+            query = query.filter(
+                Equipment.category.notin_(["Visual", "Audio", "Cable", "Network", "Accessory"])
+                | Equipment.category.is_(None)
+            )
+        if operational_status_filter:
+            query = query.filter(Equipment.operational_status == operational_status_filter)
         if search:
-            query = query.filter(Equipment.name.ilike(f"%{search}%"))
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                Equipment.name.ilike(term)
+                | Equipment.code.ilike(term)
+                | Equipment.category.ilike(term)
+                | Equipment.search_keywords.ilike(term)
+            )
         equipments = query.all()
 
     result = []
@@ -129,6 +148,8 @@ def get_equipment_availability(
             code = eq.get("code")
             name = eq.get("name")
             category_name = eq.get("category")
+            search_keywords = eq.get("search_keywords")
+            operational_status = eq.get("operational_status", "active" if eq.get("is_active", True) else "retired")
             total_qty = int(eq.get("total_qty") or 0)
             is_active = bool(eq.get("is_active", True))
         else:
@@ -136,12 +157,22 @@ def get_equipment_availability(
             code = eq.code
             name = eq.name
             category_name = eq.category
+            search_keywords = eq.search_keywords
+            operational_status = eq.operational_status
             total_qty = int(eq.total_qty or 0)
             is_active = bool(eq.is_active)
 
-        if category and category_name and category.lower() not in str(category_name).lower():
+        if category and category != "other" and category != category_name:
             continue
-        if search and search.lower() not in name.lower():
+        if category == "other" and category_name in {"Visual", "Audio", "Cable", "Network", "Accessory"}:
+            continue
+        if operational_status_filter and operational_status_filter != operational_status:
+            continue
+        searchable_text = " ".join(
+            str(value or "")
+            for value in (name, code, category_name, search_keywords)
+        ).casefold()
+        if search and search.strip().casefold() not in searchable_text:
             continue
 
         if db is None:
@@ -150,8 +181,10 @@ def get_equipment_availability(
             booked_qty = _booked_equipment_quantity(db, eq.id, _coerce_datetime(start_time), _coerce_datetime(end_time))
         available_qty = max(total_qty - booked_qty, 0)
 
-        if not is_active:
-            status_label = "Ngừng hoạt động / Bảo trì"
+        if operational_status == "maintenance":
+            status_label = "Đang bảo trì"
+        elif operational_status == "retired" or not is_active:
+            status_label = "Ngưng sử dụng"
         elif available_qty <= 0:
             status_label = "Đã đặt hết"
         else:
@@ -162,6 +195,8 @@ def get_equipment_availability(
             "code": code,
             "name": name,
             "category": category_name,
+            "search_keywords": search_keywords,
+            "operational_status": operational_status,
             "total_qty": total_qty,
             "booked_qty": booked_qty,
             "available_qty": available_qty,

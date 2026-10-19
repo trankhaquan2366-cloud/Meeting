@@ -11,12 +11,12 @@
     <link rel="icon" type="image/svg+xml"
         href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' fill='none' stroke='%232563EB' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='6' y='9' width='28' height='25' rx='3'/%3E%3Cpath d='M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="css/style.css?v=20">
+    <link rel="stylesheet" href="css/style.css?v=21">
     <link rel="stylesheet" href="css/booking.css?v=4">
     <link rel="stylesheet" href="css/create-meeting.css?v=9">
-    <link rel="stylesheet" href="css/chatbot.css?v=7">
-    <link rel="stylesheet" href="css/dashboard-theme.css?v=5">
-    <link rel="stylesheet" href="css/pwa.css">
+    <link rel="stylesheet" href="css/chatbot.css?v=8">
+    <link rel="stylesheet" href="css/dashboard-theme.css?v=6">
+    <link rel="stylesheet" href="css/pwa.css?v=2">
     <style>.d-none { display: none !important; }</style>
 </head>
 
@@ -24,17 +24,20 @@
     <div class="app-layout" id="appLayout">
         <!-- SIDEBAR -->
         <aside class="sidebar -translate-x-full lg:translate-x-0" id="sidebar">
-            <button class="sidebar-brand" type="button" onclick="switchToOverview()" title="Quay về Trang chủ"
-                aria-label="RoomSync - Quay về tổng quan">
-                <span class="logo-icon w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8"
-                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                        <rect x="6" y="9" width="28" height="25" rx="3" />
-                        <path d="M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4" />
-                    </svg>
-                </span>
-                <span class="brand-name">RoomSync</span>
-            </button>
+            <div class="sidebar-brand-row">
+                <button class="sidebar-brand" type="button" onclick="switchToOverview()" title="Quay về Trang chủ"
+                    aria-label="RoomSync - Quay về tổng quan">
+                    <span class="logo-icon w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8"
+                            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                            <rect x="6" y="9" width="28" height="25" rx="3" />
+                            <path d="M13 6v6m14-6v6M6 16h28M12 21h4m4 0h4m-12 5h3m5 0h3m3-1 2 2 4-4" />
+                        </svg>
+                    </span>
+                    <span class="brand-name">RoomSync</span>
+                </button>
+                <span id="pwaInstallSlot" class="pwa-install-slot"></span>
+            </div>
 
             <nav class="nav-menu" aria-label="Điều hướng chính">
                 <a href="#" class="nav-item active" id="navOverview" onclick="switchMainTab('overview', this)">
@@ -348,12 +351,28 @@
                         </label>
                         <label class="equipment-filter-field">
                             <span>Phân loại</span>
-                            <input id="equipmentCategoryFilter" type="search" placeholder="Tất cả phân loại"
-                                oninput="scheduleEquipmentAvailabilityFetch()">
+                            <select id="equipmentCategoryFilter" onchange="scheduleEquipmentAvailabilityFetch()">
+                                <option value="">Tất cả phân loại</option>
+                                <option value="Visual">Visual</option>
+                                <option value="Audio">Audio</option>
+                                <option value="Cable">Cable</option>
+                                <option value="Network">Network</option>
+                                <option value="Accessory">Accessory</option>
+                                <option value="other">Khác / chưa phân loại</option>
+                            </select>
+                        </label>
+                        <label class="equipment-filter-field">
+                            <span>Trạng thái vận hành</span>
+                            <select id="equipmentOperationalStatusFilter" onchange="scheduleEquipmentAvailabilityFetch()">
+                                <option value="">Mọi trạng thái</option>
+                                <option value="active">Hoạt động tốt</option>
+                                <option value="maintenance">Đang bảo trì</option>
+                                <option value="retired">Ngưng sử dụng</option>
+                            </select>
                         </label>
                         <label class="equipment-filter-field">
                             <span>Tìm thiết bị</span>
-                            <input id="equipmentSearchFilter" type="search" placeholder="Tên hoặc mã thiết bị"
+                            <input id="equipmentSearchFilter" type="search" placeholder="Tên, mã hoặc từ khóa"
                                 oninput="scheduleEquipmentAvailabilityFetch()">
                         </label>
                     </div>
@@ -365,6 +384,7 @@
                                         <th>Mã</th>
                                         <th>Tên</th>
                                         <th>Phân loại</th>
+                                        <th>Từ khóa</th>
                                         <th>Tổng số</th>
                                         <th>Đã đặt</th>
                                         <th>Khả dụng</th>
@@ -373,7 +393,7 @@
                                 </thead>
                                 <tbody id="equipmentAvailabilityTableBody">
                                     <tr>
-                                        <td colspan="7" class="equipment-table-message">Đang tải thiết bị...</td>
+                                        <td colspan="8" class="equipment-table-message">Đang tải thiết bị...</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -386,9 +406,37 @@
                             <div>
                                 <h3 class="section-heading">Bảng Quản Lý Thiết Bị
                                     (Admin Table)</h3>
-                                <p class="subtitle">Hiển thị toàn bộ thiết bị (gồm active và inactive), hỗ trợ toggle
-                                    Bật/Tắt và Chỉnh sửa / Xóa.</p>
+                                <p class="subtitle">Lọc theo phân loại, trạng thái hoặc tên, mã và từ khóa tìm kiếm.</p>
                             </div>
+                        </div>
+                        <div class="equipment-availability-filters admin-equipment-filters">
+                            <label class="equipment-filter-field">
+                                <span>Phân loại</span>
+                                <select id="adminEquipmentCategoryFilter" onchange="applyAdminEquipmentFilters()">
+                                    <option value="">Tất cả phân loại</option>
+                                    <option value="Visual">Visual</option>
+                                    <option value="Audio">Audio</option>
+                                    <option value="Cable">Cable</option>
+                                    <option value="Network">Network</option>
+                                    <option value="Accessory">Accessory</option>
+                                    <option value="other">Khác / chưa phân loại</option>
+                                </select>
+                            </label>
+                            <label class="equipment-filter-field">
+                                <span>Trạng thái vận hành</span>
+                                <select id="adminEquipmentStatusFilter" onchange="applyAdminEquipmentFilters()">
+                                    <option value="">Mọi trạng thái</option>
+                                    <option value="active">Hoạt động tốt</option>
+                                    <option value="maintenance">Đang bảo trì</option>
+                                    <option value="retired">Ngưng sử dụng</option>
+                                </select>
+                            </label>
+                            <label class="equipment-filter-field">
+                                <span>Tìm thiết bị</span>
+                                <input id="adminEquipmentSearchFilter" type="search"
+                                    placeholder="Tên, mã, phân loại hoặc từ khóa"
+                                    oninput="applyAdminEquipmentFilters()">
+                            </label>
                         </div>
                         <div class="table-card equipment-availability-table-wrap">
                             <div class="w-full overflow-x-auto rounded-lg border border-slate-200 table-scroll">
@@ -398,14 +446,15 @@
                                             <th>Mã thiết bị</th>
                                             <th>Tên</th>
                                             <th>Phân loại</th>
+                                            <th>Từ khóa</th>
                                             <th>Số lượng tổng</th>
-                                            <th>Trạng thái (Bật/Tắt)</th>
+                                            <th>Trạng thái vận hành</th>
                                             <th>Hành động</th>
                                         </tr>
                                     </thead>
                                     <tbody id="adminEquipmentTableBody">
                                         <tr>
-                                            <td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td>
+                                            <td colspan="7" class="equipment-table-message">Đang tải danh sách Admin...</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -1234,21 +1283,40 @@
             <form id="equipmentForm" onsubmit="handleEquipmentFormSubmit(event)">
                 <input type="hidden" id="editEquipmentId">
                 <div class="form-group">
-                    <label>Tên thiết bị <span style="color:red;">*</span></label>
+                    <label for="equipmentName">Tên thiết bị <span style="color:red;">*</span></label>
                     <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony"
                         required>
                 </div>
                 <div class="form-group">
-                    <label>Mã thiết bị</label>
+                    <label for="equipmentCode">Mã thiết bị</label>
                     <input type="text" id="equipmentCode" class="form-control" placeholder="Ví dụ: MIC-001">
                 </div>
                 <div class="form-group">
-                    <label>Phân loại</label>
-                    <input type="text" id="equipmentCategory" class="form-control"
-                        placeholder="Ví dụ: Audio, Visual, Cable">
+                    <label for="equipmentCategory">Phân loại</label>
+                    <select id="equipmentCategory" class="form-control" required>
+                        <option value="Visual">Visual</option>
+                        <option value="Audio">Audio</option>
+                        <option value="Cable">Cable</option>
+                        <option value="Network">Network</option>
+                        <option value="Accessory">Accessory</option>
+                    </select>
                 </div>
                 <div class="form-group">
-                    <label>Số lượng tổng (total_qty) <span style="color:red;">*</span></label>
+                    <label for="equipmentSearchKeywords">Tags / Từ khóa tìm kiếm</label>
+                    <input type="text" id="equipmentSearchKeywords" class="form-control"
+                        placeholder="tivi, tv, màn hình" maxlength="1000">
+                    <small class="form-help">Phân cách từ khóa đồng nghĩa bằng dấu phẩy.</small>
+                </div>
+                <div class="form-group">
+                    <label for="equipmentOperationalStatus">Trạng thái thiết bị</label>
+                    <select id="equipmentOperationalStatus" class="form-control" required>
+                        <option value="active">Hoạt động tốt</option>
+                        <option value="maintenance">Đang bảo trì</option>
+                        <option value="retired">Ngưng sử dụng</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="equipmentTotalQty">Số lượng tổng <span style="color:red;">*</span></label>
                     <input type="number" id="equipmentTotalQty" class="form-control" min="1" value="1" required>
                 </div>
                 <div class="modal-actions">
@@ -1657,11 +1725,11 @@
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="js/user-list.bundle.js?v=3"></script>
-    <script src="js/app.js?v=34"></script>
+    <script src="js/app.js?v=35"></script>
     <script src="js/chatbot-meeting-flow.js?v=1"></script>
     <script src="js/create-meeting.js?v=9"></script>
     <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
-    <script src="js/pwa.js?v=1"></script>
+    <script src="js/pwa.js?v=2"></script>
 </body>
 
 </html>

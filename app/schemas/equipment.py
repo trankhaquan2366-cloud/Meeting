@@ -1,12 +1,14 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # 1. Base Schema cho thiết bị
 class EquipmentBase(BaseModel):
-    code: str
+    code: Optional[str] = None
     name: str
-    category: str
+    category: Optional[str] = None
+    search_keywords: Optional[str] = None
+    operational_status: Literal["active", "maintenance", "retired"] = "active"
     total_qty: int
     description: Optional[str] = None
     is_active: bool = True
@@ -20,6 +22,8 @@ class EquipmentUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
     category: Optional[str] = None
+    search_keywords: Optional[str] = None
+    operational_status: Optional[Literal["active", "maintenance", "retired"]] = None
     total_qty: Optional[int] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
@@ -35,9 +39,11 @@ class EquipmentResponse(EquipmentBase):
 # 5. Schema phản hồi trạng thái thiết bị
 class EquipmentStatusResponse(BaseModel):
     id: int
-    code: str
+    code: Optional[str] = None
     name: str
     category: Optional[str] = None
+    search_keywords: Optional[str] = None
+    operational_status: str = "active"
     total_qty: int
     booked_qty: int
     available_qty: int

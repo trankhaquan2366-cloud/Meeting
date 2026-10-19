@@ -3032,14 +3032,16 @@ async function fetchEquipmentAvailability() {
     const startTime = document.getElementById('equipmentStartTime')?.value;
     const endTime = document.getElementById('equipmentEndTime')?.value;
     const category = document.getElementById('equipmentCategoryFilter')?.value.trim();
+    const operationalStatus = document.getElementById('equipmentOperationalStatusFilter')?.value;
     const search = document.getElementById('equipmentSearchFilter')?.value.trim();
 
     if (startTime) params.set('start_time', `${startTime}:00`);
     if (endTime) params.set('end_time', `${endTime}:00`);
     if (category) params.set('category', category);
+    if (operationalStatus) params.set('operational_status', operationalStatus);
     if (search) params.set('search', search);
 
-    tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Đang cập nhật...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="equipment-table-message">Đang cập nhật...</td></tr>';
     try {
         const token = getAuthToken();
         const res = await fetchAPI(`${API_BASE}/equipments/availability?${params.toString()}`, {
@@ -3049,20 +3051,27 @@ async function fetchEquipmentAvailability() {
 
         const equipments = await res.json();
         if (!equipments.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Không tìm thấy thiết bị phù hợp.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="equipment-table-message">Không tìm thấy thiết bị phù hợp.</td></tr>';
             return;
         }
 
         tbody.innerHTML = equipments.map(item => {
-            const isInactive = item.is_active === false;
+            const operationalStatus = item.operational_status || (item.is_active === false ? 'retired' : 'active');
             const isAvailable = item.available_qty > 0;
-            const badgeClass = isInactive ? 'maintenance' : (isAvailable ? 'available' : 'booked-out');
-            const badgeText = isInactive ? 'Đang bảo trì' : (isAvailable ? 'Có sẵn' : 'Đã đặt hết');
+            const badgeClass = operationalStatus !== 'active'
+                ? operationalStatus === 'maintenance' ? 'maintenance' : 'retired'
+                : isAvailable ? 'available' : 'booked-out';
+            const badgeText = operationalStatus === 'maintenance'
+                ? 'Đang bảo trì'
+                : operationalStatus === 'retired'
+                    ? 'Ngưng sử dụng'
+                    : isAvailable ? 'Có sẵn' : 'Đã đặt hết';
             return `
                 <tr>
                     <td>${escapeHtml(item.code || '—')}</td>
                     <td>${escapeHtml(item.name)}</td>
                     <td>${escapeHtml(item.category || '—')}</td>
+                    <td>${escapeHtml(item.search_keywords || '—')}</td>
                     <td>${item.total_qty}</td>
                     <td>${item.booked_qty}</td>
                     <td>${item.available_qty}</td>
@@ -3071,7 +3080,7 @@ async function fetchEquipmentAvailability() {
             `;
         }).join('');
     } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message error">Không thể tải trạng thái thiết bị.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="equipment-table-message error">Không thể tải trạng thái thiết bị.</td></tr>';
     }
 }
 
@@ -3082,7 +3091,7 @@ async function fetchAdminEquipments() {
     if (!tbody) return;
 
     const token = getAuthToken();
-    tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Đang tải danh sách Admin...</td></tr>';
     try {
         const res = await fetchAPI(`${API_BASE}/equipments/?include_inactive=true`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -3093,23 +3102,55 @@ async function fetchAdminEquipments() {
         adminEquipmentsCache = equipments;
 
         if (!equipments.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message">Chưa có thiết bị nào.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Chưa có thiết bị nào.</td></tr>';
             return;
         }
 
-        tbody.innerHTML = equipments.map(item => {
-            const isChecked = item.is_active !== false;
-            return `
+        applyAdminEquipmentFilters();
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message error">Không thể tải dữ liệu Admin.</td></tr>';
+    }
+}
+
+function applyAdminEquipmentFilters() {
+    const tbody = document.getElementById('adminEquipmentTableBody');
+    if (!tbody) return;
+    const category = document.getElementById('adminEquipmentCategoryFilter')?.value || '';
+    const status = document.getElementById('adminEquipmentStatusFilter')?.value || '';
+    const search = (document.getElementById('adminEquipmentSearchFilter')?.value || '').trim().toLocaleLowerCase();
+    const knownCategories = new Set(['Visual', 'Audio', 'Cable', 'Network', 'Accessory']);
+    const filteredEquipments = adminEquipmentsCache.filter(item => {
+        const itemStatus = item.operational_status || (item.is_active === false ? 'retired' : 'active');
+        const categoryMatches = !category
+            || (category === 'other' ? !knownCategories.has(item.category) : item.category === category);
+        const statusMatches = !status || itemStatus === status;
+        const searchContent = [
+            item.name,
+            item.code,
+            item.category,
+            item.search_keywords,
+        ].join(' ').toLocaleLowerCase();
+        return categoryMatches && statusMatches && (!search || searchContent.includes(search));
+    });
+    if (!filteredEquipments.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="equipment-table-message">Không tìm thấy thiết bị phù hợp.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filteredEquipments.map(item => {
+        const operationalStatus = item.operational_status || (item.is_active === false ? 'retired' : 'active');
+        const statusLabel = operationalStatus === 'maintenance'
+            ? 'Đang bảo trì'
+            : operationalStatus === 'retired' ? 'Ngưng sử dụng' : 'Hoạt động tốt';
+        return `
                 <tr>
                     <td>${escapeHtml(item.code || '—')}</td>
                     <td>${escapeHtml(item.name)}</td>
                     <td>${escapeHtml(item.category || '—')}</td>
+                    <td>${escapeHtml(item.search_keywords || '—')}</td>
                     <td><strong>${item.total_qty}</strong></td>
                     <td>
-                        <label class="switch">
-                            <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleEquipmentActive(${item.id}, this.checked)">
-                            <span class="slider"></span>
-                        </label>
+                        <span class="equipment-status-badge ${escapeHtml(operationalStatus)}">${statusLabel}</span>
                     </td>
                     <td>
                         <div style="display: flex; gap: 8px;">
@@ -3119,9 +3160,22 @@ async function fetchAdminEquipments() {
                     </td>
                 </tr>
             `;
-        }).join('');
-    } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="6" class="equipment-table-message error">Không thể tải dữ liệu Admin.</td></tr>';
+    }).join('');
+}
+
+async function updateEquipmentOperationalStatus(equipmentId, operationalStatus) {
+    try {
+        const response = await fetchAPI(`${API_BASE}/equipments/${equipmentId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getAuthToken()}` },
+            body: JSON.stringify({ operational_status: operationalStatus })
+        });
+        if (!response.ok) throw new Error(`Không thể cập nhật trạng thái (HTTP ${response.status}).`);
+        fetchAdminEquipments();
+        fetchEquipmentAvailability();
+    } catch (error) {
+        console.error('Lỗi cập nhật trạng thái thiết bị:', error);
+        alert(`Lỗi: ${error.message}`);
     }
 }
 
@@ -3142,6 +3196,7 @@ function openEquipmentModal() {
     document.getElementById('editEquipmentId').value = '';
     document.getElementById('equipmentForm').reset();
     document.getElementById('equipmentModalTitle').innerText = 'Thêm Thiết Bị Mới';
+    document.getElementById('equipmentOperationalStatus').value = 'active';
     document.getElementById('equipmentModal').style.display = 'flex';
 }
 
@@ -3151,7 +3206,18 @@ function openEditEquipmentModal(id) {
     document.getElementById('editEquipmentId').value = equip.id;
     document.getElementById('equipmentName').value = equip.name || '';
     document.getElementById('equipmentCode').value = equip.code || '';
-    document.getElementById('equipmentCategory').value = equip.category || '';
+    const categorySelect = document.getElementById('equipmentCategory');
+    const categoryValue = equip.category || '';
+    categorySelect.querySelectorAll('[data-legacy-category]').forEach(option => option.remove());
+    if (categoryValue && ![...categorySelect.options].some(option => option.value === categoryValue)) {
+        const legacyOption = new Option(`${categoryValue} (hiện tại)`, categoryValue);
+        legacyOption.dataset.legacyCategory = 'true';
+        categorySelect.add(legacyOption);
+    }
+    categorySelect.value = categoryValue || 'Visual';
+    document.getElementById('equipmentSearchKeywords').value = equip.search_keywords || '';
+    document.getElementById('equipmentOperationalStatus').value =
+        equip.operational_status || (equip.is_active === false ? 'retired' : 'active');
     document.getElementById('equipmentTotalQty').value = equip.total_qty || 1;
     document.getElementById('equipmentModalTitle').innerText = 'Sửa Thông Tin Thiết Bị';
     document.getElementById('equipmentModal').style.display = 'flex';
@@ -3168,7 +3234,9 @@ async function handleEquipmentFormSubmit(event) {
     const payload = {
         name: document.getElementById('equipmentName')?.value.trim(),
         code: document.getElementById('equipmentCode')?.value.trim() || null,
-        category: document.getElementById('equipmentCategory')?.value.trim() || null,
+        category: document.getElementById('equipmentCategory')?.value || null,
+        search_keywords: document.getElementById('equipmentSearchKeywords')?.value.trim() || null,
+        operational_status: document.getElementById('equipmentOperationalStatus')?.value || 'active',
         total_qty: parseInt(document.getElementById('equipmentTotalQty')?.value || '1', 10)
     };
 
@@ -3878,6 +3946,8 @@ window.fetchEquipmentAvailability = fetchEquipmentAvailability;
 window.scheduleEquipmentAvailabilityFetch = scheduleEquipmentAvailabilityFetch;
 window.fetchAdminEquipments = fetchAdminEquipments;
 window.toggleEquipmentActive = toggleEquipmentActive;
+window.updateEquipmentOperationalStatus = updateEquipmentOperationalStatus;
+window.applyAdminEquipmentFilters = applyAdminEquipmentFilters;
 window.openEquipmentModal = openEquipmentModal;
 window.openEditEquipmentModal = openEditEquipmentModal;
 window.closeEquipmentModal = closeEquipmentModal;
