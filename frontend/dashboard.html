@@ -1220,54 +1220,68 @@
 
     <!-- MODAL QUẢN LÝ PHÒNG HỌP (ADMIN) -->
     <div id="roomModal" class="modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content modal-form-dialog">
             <h3 id="modalTitle">Thêm Phòng Họp Mới</h3>
             <form id="roomForm" onsubmit="handleFormSubmit(event)">
                 <input type="hidden" id="editRoomId">
-                <div class="form-group">
-                    <label for="roomName">Tên phòng họp</label>
-                    <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
-                        maxlength="100" required>
-                </div>
-                <div class="form-group">
-                    <label for="roomLocation">Vị trí (Tầng)</label>
-                    <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
-                </div>
-                <div class="form-group">
-                    <label for="roomCapacity">Sức chứa (người)</label>
-                    <input type="number" id="roomCapacity" class="form-control" min="1" step="1"
-                        placeholder="Ví dụ: 10" required>
-                </div>
-                <div class="form-group">
-                    <label for="roomStatus">Trạng thái phòng</label>
-                    <select id="roomStatus" class="form-control" required>
-                        <option value="active">Đang hoạt động</option>
-                        <option value="maintenance">Đang bảo trì</option>
-                        <option value="locked">Tạm khóa</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="roomLayoutType">Kiểu bố trí</label>
-                    <select id="roomLayoutType" class="form-control">
-                        <option value="">Chưa chọn</option>
-                        <option value="boardroom">Boardroom</option>
-                        <option value="classroom">Classroom</option>
-                        <option value="open_space">Open Space</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="roomImageUrl">URL hình ảnh phòng</label>
-                    <input type="url" id="roomImageUrl" class="form-control"
-                        placeholder="https://example.com/meeting-room.jpg" maxlength="2048"
-                        oninput="previewRoomImage(this.value)">
-                    <img id="roomImagePreview" class="room-image-preview" alt="Xem trước hình ảnh phòng" hidden>
-                </div>
-                <fieldset class="form-group room-equipment-fieldset">
-                    <legend>Thiết bị cố định trong phòng</legend>
-                    <div id="roomEquipmentOptions" class="room-equipment-options" aria-live="polite">
-                        <span class="room-equipment-message">Đang tải danh mục thiết bị...</span>
+                <section class="modal-form-section" aria-labelledby="roomBasicInfoHeading">
+                    <h4 id="roomBasicInfoHeading" class="modal-form-section-title">Thông tin cơ bản</h4>
+                    <div class="modal-form-grid">
+                        <div class="form-group modal-field--wide">
+                            <label for="roomName">Tên phòng họp <span class="required-marker" aria-hidden="true">*</span></label>
+                            <input type="text" id="roomName" class="form-control" placeholder="Ví dụ: Phòng Sáng Tạo B"
+                                maxlength="100" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="roomLocation">Vị trí (tầng) <span class="required-marker" aria-hidden="true">*</span></label>
+                            <input type="text" id="roomLocation" class="form-control" placeholder="Ví dụ: Tầng 3" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="roomCapacity">Sức chứa (người) <span class="required-marker" aria-hidden="true">*</span></label>
+                            <input type="number" id="roomCapacity" class="form-control" min="1" step="1"
+                                placeholder="Ví dụ: 10" required>
+                        </div>
                     </div>
-                </fieldset>
+                </section>
+                <section class="modal-form-section" aria-labelledby="roomOperationHeading">
+                    <h4 id="roomOperationHeading" class="modal-form-section-title">Vận hành & bố trí</h4>
+                    <div class="modal-form-grid">
+                        <div class="form-group">
+                            <label for="roomStatus">Trạng thái phòng <span class="required-marker" aria-hidden="true">*</span></label>
+                            <select id="roomStatus" class="form-control" required>
+                                <option value="active">Đang hoạt động</option>
+                                <option value="maintenance">Đang bảo trì</option>
+                                <option value="locked">Tạm khóa</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="roomLayoutType">Kiểu bố trí</label>
+                            <select id="roomLayoutType" class="form-control">
+                                <option value="">Chưa chọn</option>
+                                <option value="boardroom">Boardroom</option>
+                                <option value="classroom">Classroom</option>
+                                <option value="open_space">Open Space</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+                <section class="modal-form-section" aria-labelledby="roomVisualsHeading">
+                    <h4 id="roomVisualsHeading" class="modal-form-section-title">Hình ảnh & thiết bị</h4>
+                    <div class="form-group">
+                        <label for="roomImageUrl">URL hình ảnh phòng</label>
+                        <input type="url" id="roomImageUrl" class="form-control"
+                            placeholder="https://example.com/meeting-room.jpg" maxlength="2048"
+                            aria-describedby="roomImageHelp" oninput="previewRoomImage(this.value)">
+                        <small id="roomImageHelp" class="form-help">Dán liên kết ảnh công khai để xem trước phòng.</small>
+                        <img id="roomImagePreview" class="room-image-preview" alt="Xem trước hình ảnh phòng" hidden>
+                    </div>
+                    <fieldset class="form-group room-equipment-fieldset">
+                        <legend>Thiết bị cố định trong phòng</legend>
+                        <div id="roomEquipmentOptions" class="room-equipment-options" aria-live="polite">
+                            <span class="room-equipment-message">Đang tải danh mục thiết bị...</span>
+                        </div>
+                    </fieldset>
+                </section>
                 <div class="modal-actions">
                     <button type="button" onclick="closeRoomModal()" class="btn-cancel">Hủy</button>
                     <button type="submit" class="btn-save">Lưu thông tin</button>
@@ -1278,50 +1292,73 @@
 
     <!-- MODAL QUẢN LÝ THIẾT BỊ (ADMIN - CRUD FORM) -->
     <div id="equipmentModal" class="modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content modal-form-dialog">
             <h3 id="equipmentModalTitle">Thêm Thiết Bị Mới</h3>
             <form id="equipmentForm" onsubmit="handleEquipmentFormSubmit(event)">
                 <input type="hidden" id="editEquipmentId">
-                <div class="form-group">
-                    <label for="equipmentName">Tên thiết bị <span style="color:red;">*</span></label>
-                    <input type="text" id="equipmentName" class="form-control" placeholder="Ví dụ: Micro không dây Sony"
-                        required>
-                </div>
-                <div class="form-group">
-                    <label for="equipmentCode">Mã thiết bị</label>
-                    <input type="text" id="equipmentCode" class="form-control" placeholder="Ví dụ: MIC-001">
-                </div>
-                <div class="form-group">
-                    <label for="equipmentCategory">Phân loại</label>
-                    <select id="equipmentCategory" class="form-control" required>
-                        <option value="Visual">Visual</option>
-                        <option value="Audio">Audio</option>
-                        <option value="Cable">Cable</option>
-                        <option value="Network">Network</option>
-                        <option value="Accessory">Accessory</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="equipmentSearchKeywords">Tags / Từ khóa tìm kiếm</label>
-                    <input type="text" id="equipmentSearchKeywords" class="form-control"
-                        placeholder="tivi, tv, màn hình" maxlength="1000">
-                    <small class="form-help">Phân cách từ khóa đồng nghĩa bằng dấu phẩy.</small>
-                </div>
-                <div class="form-group">
-                    <label for="equipmentOperationalStatus">Trạng thái thiết bị</label>
-                    <select id="equipmentOperationalStatus" class="form-control" required>
-                        <option value="active">Hoạt động tốt</option>
-                        <option value="maintenance">Đang bảo trì</option>
-                        <option value="retired">Ngưng sử dụng</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="equipmentTotalQty">Số lượng tổng <span style="color:red;">*</span></label>
-                    <input type="number" id="equipmentTotalQty" class="form-control" min="1" value="1" required>
-                </div>
+                <section class="modal-form-section" aria-labelledby="equipmentIdentityHeading">
+                    <h4 id="equipmentIdentityHeading" class="modal-form-section-title">Thông tin thiết bị</h4>
+                    <div class="modal-form-grid">
+                        <div class="form-group modal-field--wide">
+                            <label for="equipmentName">Tên thiết bị <span class="required-marker" aria-hidden="true">*</span></label>
+                            <input type="text" id="equipmentName" class="form-control"
+                                placeholder="Ví dụ: Micro không dây Sony"
+                                aria-describedby="equipmentNameHelp equipmentNameError" required>
+                            <small id="equipmentNameHelp" class="form-help">Tên này sẽ hiển thị trong danh mục thiết bị.</small>
+                            <small id="equipmentNameError" class="form-validation-hint">Vui lòng nhập tên thiết bị.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="equipmentCode">Mã thiết bị <span class="required-marker" aria-hidden="true">*</span></label>
+                            <input type="text" id="equipmentCode" class="form-control"
+                                placeholder="Ví dụ: MIC-001"
+                                aria-describedby="equipmentCodeHelp equipmentCodeError" required>
+                            <small id="equipmentCodeHelp" class="form-help">Mã cần duy nhất để dễ kiểm kê.</small>
+                            <small id="equipmentCodeError" class="form-validation-hint">Vui lòng nhập mã thiết bị.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="equipmentCategory">Phân loại <span class="required-marker" aria-hidden="true">*</span></label>
+                            <select id="equipmentCategory" class="form-control" aria-describedby="equipmentCategoryHelp" required>
+                                <option value="Visual">Visual</option>
+                                <option value="Audio">Audio</option>
+                                <option value="Cable">Cable</option>
+                                <option value="Network">Network</option>
+                                <option value="Accessory">Accessory</option>
+                            </select>
+                            <small id="equipmentCategoryHelp" class="form-help">Chọn nhóm phù hợp với thiết bị.</small>
+                        </div>
+                    </div>
+                </section>
+                <section class="modal-form-section" aria-labelledby="equipmentInventoryHeading">
+                    <h4 id="equipmentInventoryHeading" class="modal-form-section-title">Tìm kiếm & tồn kho</h4>
+                    <div class="modal-form-grid">
+                        <div class="form-group modal-field--wide">
+                            <label for="equipmentSearchKeywords">Từ khóa tìm kiếm</label>
+                            <input type="text" id="equipmentSearchKeywords" class="form-control"
+                                placeholder="tivi, tv, màn hình" maxlength="1000"
+                                aria-describedby="equipmentKeywordsHelp">
+                            <small id="equipmentKeywordsHelp" class="form-help">Thêm từ đồng nghĩa, phân cách bằng dấu phẩy.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="equipmentOperationalStatus">Trạng thái thiết bị <span class="required-marker" aria-hidden="true">*</span></label>
+                            <select id="equipmentOperationalStatus" class="form-control" required>
+                                <option value="active">Hoạt động tốt</option>
+                                <option value="maintenance">Đang bảo trì</option>
+                                <option value="retired">Ngưng sử dụng</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="equipmentTotalQty">Số lượng tổng <span class="required-marker" aria-hidden="true">*</span></label>
+                            <input type="number" id="equipmentTotalQty" class="form-control"
+                                min="1" step="1" value="1"
+                                aria-describedby="equipmentQuantityHelp equipmentQuantityError" required>
+                            <small id="equipmentQuantityHelp" class="form-help">Nhập số lượng thiết bị hiện có.</small>
+                            <small id="equipmentQuantityError" class="form-validation-hint">Nhập số lượng từ 1 trở lên.</small>
+                        </div>
+                    </div>
+                </section>
                 <div class="modal-actions">
                     <button type="button" onclick="closeEquipmentModal()" class="btn-cancel">Hủy</button>
-                    <button type="submit" class="btn-save">Lưu thông tin</button>
+                    <button type="submit" class="btn-save">Lưu thiết bị</button>
                 </div>
             </form>
         </div>

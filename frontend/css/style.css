@@ -1155,59 +1155,161 @@ input:checked + .slider:before {
 #roomModal .modal-content,
 #equipmentModal .modal-content {
     background: #ffffff;
-    padding: 28px;
-    border-radius: 16px;
+    padding: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
     width: 100%;
-    max-width: 480px;
+    max-width: 620px;
     max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    max-height: min(90dvh, 760px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 56px rgb(15 23 42 / 18%);
 }
 
 #roomModal h3,
 #equipmentModal h3 {
-    font-size: 18px;
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 22px 28px 16px;
+    border-bottom: 1px solid #e8edf4;
+    font-size: 1.125rem;
     font-weight: 700;
     color: #0f172a;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid #f1f5f9;
+    line-height: 1.35;
 }
 
-.form-group {
+#roomForm,
+#equipmentForm {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 18px 28px 22px;
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
+}
+
+#roomForm::-webkit-scrollbar,
+#equipmentForm::-webkit-scrollbar {
+    width: 8px;
+}
+
+#roomForm::-webkit-scrollbar-thumb,
+#equipmentForm::-webkit-scrollbar-thumb {
+    border: 2px solid #ffffff;
+    border-radius: 8px;
+    background: #cbd5e1;
+}
+
+#roomForm::-webkit-scrollbar-thumb:hover,
+#equipmentForm::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+.modal-form-section + .modal-form-section {
+    margin-top: 20px;
+    padding-top: 17px;
+    border-top: 1px solid #e8edf4;
+}
+
+.modal-form-section-title {
+    margin: 0 0 13px;
+    color: #334155;
+    font-size: 0.875rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.modal-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+    row-gap: 0;
+}
+
+.modal-field--wide {
+    grid-column: 1 / -1;
+}
+
+#roomForm .form-group,
+#equipmentForm .form-group {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    margin-bottom: 16px;
+    min-width: 0;
+    margin-bottom: 14px;
 }
 
-.form-group label {
-    font-size: 13px;
+#roomForm .form-group label,
+#equipmentForm .form-group label {
+    font-size: 0.8125rem;
     font-weight: 600;
     color: #334155;
+    line-height: 1.4;
 }
 
-.form-control {
+#roomForm .required-marker,
+#equipmentForm .required-marker {
+    color: #b91c1c;
+}
+
+#roomForm .form-help,
+#equipmentForm .form-help {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.75rem;
+    line-height: 1.45;
+}
+
+#roomForm .form-validation-hint,
+#equipmentForm .form-validation-hint {
+    display: none;
+    margin: 0;
+    color: #b91c1c;
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+#roomForm .form-control:user-invalid ~ .form-validation-hint,
+#equipmentForm .form-control:user-invalid ~ .form-validation-hint {
+    display: block;
+}
+
+#roomForm .form-control,
+#equipmentForm .form-control {
     width: 100%;
-    height: 42px;
-    padding: 0 12px;
-    font-size: 13.5px;
+    min-height: 42px;
+    padding: 9px 12px;
+    font: inherit;
+    font-size: 0.875rem;
     color: #0f172a;
     background-color: #ffffff;
     border: 1px solid #cbd5e1;
-    border-radius: 8px;
+    border-radius: 9px;
     outline: none;
     box-sizing: border-box;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
-.form-control:focus {
+#roomForm .form-control:focus-visible,
+#equipmentForm .form-control:focus-visible {
     border-color: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    box-shadow: 0 0 0 3px rgb(37 99 235 / 16%);
 }
 
-.form-control::placeholder {
+#roomForm .form-control:user-invalid,
+#equipmentForm .form-control:user-invalid {
+    border-color: #dc2626;
+}
+
+#roomForm .form-control::placeholder,
+#equipmentForm .form-control::placeholder {
     color: #94a3b8;
+}
+
+.room-equipment-fieldset.form-group {
+    margin: 0;
 }
 
 .room-equipment-fieldset {
@@ -1217,41 +1319,53 @@ input:checked + .slider:before {
 }
 
 .room-equipment-fieldset legend {
-    margin-bottom: 8px;
-    font-size: 13px;
+    margin-bottom: 9px;
+    padding: 0;
+    font-size: 0.8125rem;
     font-weight: 600;
     color: #334155;
 }
 
 .room-equipment-options {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 8px;
-    padding: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 7px;
+    padding: 10px;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    border-radius: 10px;
     background: #f8fafc;
 }
 
 .room-equipment-option {
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-height: 32px;
+    gap: 9px;
+    min-height: 38px;
+    padding: 0 9px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
     color: #334155;
-    font-size: 13px;
+    font-size: 0.8125rem;
+    cursor: pointer;
 }
 
 .room-equipment-option input {
+    flex: 0 0 auto;
     width: 16px;
     height: 16px;
     accent-color: #2563eb;
 }
 
+.room-equipment-option:focus-within {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 3px rgb(37 99 235 / 10%);
+}
+
 .room-equipment-message {
     grid-column: 1 / -1;
     color: #64748b;
-    font-size: 13px;
+    font-size: 0.8125rem;
 }
 
 .room-equipment-error {
@@ -1263,6 +1377,84 @@ input:checked + .slider:before {
     max-height: 180px;
     margin-top: 8px;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    border-radius: 10px;
     object-fit: cover;
+}
+
+.modal-form-dialog .modal-actions {
+    position: sticky;
+    bottom: -22px;
+    z-index: 1;
+    margin: 4px -28px -22px;
+    padding: 14px 28px 22px;
+    border-top: 1px solid #e8edf4;
+    background: #ffffff;
+}
+
+.modal-form-dialog .modal-actions button {
+    min-width: 104px;
+    min-height: 42px;
+}
+
+.modal-form-dialog .modal-actions button:focus-visible {
+    outline: 3px solid rgb(37 99 235 / 32%);
+    outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+    #roomModal,
+    #equipmentModal {
+        align-items: center;
+        padding: 12px;
+    }
+
+    #roomModal .modal-content,
+    #equipmentModal .modal-content {
+        width: 100%;
+        max-width: 32rem;
+        max-height: 92vh;
+        max-height: 92dvh;
+        border-radius: 13px;
+    }
+
+    #roomModal h3,
+    #equipmentModal h3 {
+        padding: 18px 18px 14px;
+    }
+
+    #roomForm,
+    #equipmentForm {
+        padding: 16px 18px 18px;
+    }
+
+    .modal-form-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .modal-field--wide {
+        grid-column: auto;
+    }
+
+    .modal-form-dialog .modal-actions {
+        bottom: -18px;
+        margin: 4px -18px -18px;
+        padding: 12px 18px 18px;
+    }
+}
+
+@media (max-width: 380px) {
+    .modal-form-dialog .modal-actions {
+        flex-direction: column-reverse;
+    }
+
+    .modal-form-dialog .modal-actions button {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #roomModal .form-control,
+    #equipmentModal .form-control {
+        transition: none;
+    }
 }
