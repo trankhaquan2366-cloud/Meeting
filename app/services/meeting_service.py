@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 import re
+import uuid
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
@@ -18,6 +19,10 @@ from app.schemas.meeting import MeetingCreateRequest
 
 logger = logging.getLogger(__name__)
 VIETNAM_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def generate_jitsi_meeting_link() -> str:
+    return f"https://meet.jit.si/RoomSync-{uuid.uuid4().hex}"
 
 
 def _utc_now() -> datetime:
@@ -141,19 +146,6 @@ class MeetingService:
                 "message": "Thời gian kết thúc phải sau thời gian bắt đầu.",
             })
         if blocking_errors:
-            return {
-                "is_valid": False,
-                "warnings": warnings,
-                "blocking_errors": blocking_errors,
-            }
-
-        if meeting_type == "online" and not (
-            payload.meeting_link or payload.online_link
-        ):
-            blocking_errors.append({
-                "type": "MeetingLinkRequiredError",
-                "message": "Online meetings require a meeting_link.",
-            })
             return {
                 "is_valid": False,
                 "warnings": warnings,
@@ -888,6 +880,8 @@ class MeetingService:
             or getattr(payload, 'online_link', None)
             or ''
         ).strip() or None
+        if meeting_type == 'online' and not meeting_link:
+            meeting_link = generate_jitsi_meeting_link()
         room_id = payload.room_id
 
         if meeting_type == 'offline':
@@ -907,11 +901,6 @@ class MeetingService:
                     detail="Phòng họp không tồn tại hoặc đã ngưng hoạt động!"
                 )
         elif meeting_type == 'online':
-            if not meeting_link:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Online meetings require a meeting_link",
-                )
             room_id = None
             room = None
         else:

@@ -1,6 +1,5 @@
 import json
 import logging
-import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal, List, Optional
 
@@ -23,7 +22,7 @@ from app.schemas.chat import ChatMessageResponse, ChatSessionResponse
 from app.schemas.meeting import MeetingCreateRequest, MeetingResponse
 from app.services.chatbot_service import ChatbotService
 from app.services.gemini_service import BookingSlots
-from app.services.meeting_service import MeetingService
+from app.services.meeting_service import MeetingService, generate_jitsi_meeting_link
 from app.services.meeting_invitation_service import schedule_meeting_invitations
 from app.services.room_service import get_available_rooms
 
@@ -183,7 +182,7 @@ def _alternative_meeting_slots(
                         organizer_id=organizer_id,
                         room=room,
                         equipment_ids=equipment_ids,
-                        meeting_link="https://meet.jit.si/roomsync-alternative"
+                        meeting_link=generate_jitsi_meeting_link()
                         if online_meeting
                         else None,
                     ):
@@ -350,11 +349,7 @@ def create_assistant_meeting(
             detail="Chỉ có thể chọn TV, Projector, Mic hoặc Whiteboard đang hoạt động.",
         )
 
-    meeting_link = (
-        f"https://meet.jit.si/roomsync-{uuid.uuid4().hex}"
-        if payload.online_meeting
-        else None
-    )
+    meeting_link = generate_jitsi_meeting_link() if payload.online_meeting else None
     if payload.online_meeting:
         if not _meeting_candidate_is_valid(
             db,

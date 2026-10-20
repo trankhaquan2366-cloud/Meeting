@@ -483,7 +483,7 @@ def test_assistant_online_meeting_generates_a_join_link(
     meeting = db_session.query(Meeting).filter_by(title="Online project sync").one()
     assert meeting.meeting_type == "online"
     assert meeting.room_id is None
-    assert meeting.meeting_link.startswith("https://meet.jit.si/roomsync-")
+    assert meeting.meeting_link.startswith("https://meet.jit.si/RoomSync-")
 
 
 def test_assistant_meeting_uses_an_alternative_room_when_requested_room_conflicts(

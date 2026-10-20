@@ -1282,8 +1282,8 @@ function updateEquipmentConflict() {
 function generateMeetingLink() {
     const input = cmEl('cmMeetingLink');
     if (!input) return;
-    const slug = Math.random().toString(36).slice(2, 8);
-    input.value = `https://meet.roomsync.vn/${slug}`;
+    const roomCode = window.crypto.randomUUID().replace(/-/g, '');
+    input.value = `https://meet.jit.si/RoomSync-${roomCode}`;
     clearValidationError('cmMeetingLinkError');
     updateCreateMeetingSummary();
 }

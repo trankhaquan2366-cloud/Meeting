@@ -82,7 +82,7 @@ def test_create_online_meeting_with_link(client: TestClient, db_session: Session
     assert meeting["room_id"] is None
 
 
-def test_create_online_meeting_without_link_returns_400(
+def test_create_online_meeting_without_link_generates_jitsi_link(
     client: TestClient, db_session: Session
 ):
     organizer = _create_user(db_session, "create-online-no-link")
@@ -99,8 +99,11 @@ def test_create_online_meeting_without_link_returns_400(
         headers=_auth_header(_make_token(organizer)),
     )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Online meetings require a meeting_link"
+    assert response.status_code == 201
+    meeting = response.json()[0]
+    assert meeting["meeting_type"] == "online"
+    assert meeting["meeting_link"].startswith("https://meet.jit.si/RoomSync-")
+    assert meeting["room_id"] is None
 
 
 def test_create_meeting_with_available_equipment_and_availability_id(
