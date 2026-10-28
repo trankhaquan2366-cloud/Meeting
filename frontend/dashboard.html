@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="css/booking.css?v=4">
     <link rel="stylesheet" href="css/create-meeting.css?v=9">
     <link rel="stylesheet" href="css/chatbot.css?v=8">
-    <link rel="stylesheet" href="css/dashboard-theme.css?v=6">
+    <link rel="stylesheet" href="css/dashboard-theme.css?v=9">
     <link rel="stylesheet" href="css/pwa.css?v=2">
     <style>.d-none { display: none !important; }</style>
 </head>
@@ -69,6 +69,16 @@
                         <line x1="3" y1="10" x2="21" y2="10"></line>
                     </svg>
                     <span class="nav-text">Đặt lịch của tôi</span>
+                </a>
+                <a href="#notifications" class="nav-item" id="sidebarNotifLink"
+                    onclick="switchView('notifications', this)" aria-controls="viewNotifications">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M10 21a2 2 0 0 0 4 0"></path>
+                    </svg>
+                    <span class="nav-text">Thông báo</span>
+                    <span id="sidebarNotifBadge" class="sidebar-badge" aria-label="Thông báo chưa đọc" hidden>0</span>
                 </a>
                 <!-- TAB BÁO CÁO TRÊN NAVBAR -->
                 <a href="#" class="nav-item" id="navReport" onclick="switchMainTab('report', this)">
@@ -156,7 +166,7 @@
                                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                                 <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
                             </svg>
-                            <span id="notificationDot" class="notification-dot" style="display: none;"
+                            <span id="notifBadge" class="notification-dot" style="display: none;"
                                 aria-live="polite"></span>
                         </button>
                         <div id="notificationPopup" class="notification-popup" style="display: none;"
@@ -200,108 +210,130 @@
                         </button>
                     </header>
 
-                    <section class="page-header overview-room-heading" id="roomsSection">
-                        <div>
-                            <h2>Phòng họp</h2>
-                            <p class="subtitle">Chọn không gian phù hợp cho lịch làm việc của bạn.</p>
+                    <section class="db-grid" aria-label="Tổng quan lịch họp">
+                        <div class="db-col-main">
+                            <section id="dbNextMeeting" class="db-panel db-next-meeting db-hero-card" aria-labelledby="dbNextMeetingHeading" aria-busy="true">
+                                <div class="db-panel-heading">
+                                    <div>
+                                        <p class="db-eyebrow">LỊCH TIẾP THEO</p>
+                                        <h2 id="dbNextMeetingHeading">Cuộc họp sắp tới</h2>
+                                    </div>
+                                    <span id="dbNextMeetingType" class="db-meeting-type">Đang tải</span>
+                                </div>
+                                <div id="dbHeroSkeleton" class="db-hero-skeleton" aria-hidden="true">
+                                    <span class="db-skeleton db-skeleton-title"></span>
+                                    <span class="db-skeleton db-skeleton-line"></span>
+                                    <span class="db-skeleton db-skeleton-line db-skeleton-short"></span>
+                                </div>
+                                <div id="dbHeroContent" class="db-hero-content" hidden>
+                                    <div class="db-hero-copy">
+                                        <h3 id="dbNextMeetingTitle"></h3>
+                                        <span id="dbNextRsvpSummary" class="rsvp-summary-chip" hidden></span>
+                                        <p id="dbNextCountdown"></p>
+                                        <p id="dbNextMeetingTime"></p>
+                                        <p id="dbNextMeetingLocation"></p>
+                                    </div>
+                                    <div class="db-hero-actions" id="dbNextMeetingActions"></div>
+                                </div>
+                            </section>
+
+                            <section class="db-summary-section" aria-labelledby="dbSummaryHeading">
+                                <div class="db-section-heading">
+                                    <div>
+                                        <p class="db-eyebrow">NHỊP ĐỘ CỦA BẠN</p>
+                                        <h2 id="dbSummaryHeading">Lịch họp cá nhân</h2>
+                                    </div>
+                                    <label class="db-admin-toggle" id="dbAdminToggle" hidden>
+                                        <span>Cá nhân</span>
+                                        <input id="dbCompanyMode" type="checkbox" aria-label="Hiển thị thống kê toàn công ty">
+                                        <span class="db-toggle-track" aria-hidden="true"></span>
+                                        <span>Toàn công ty</span>
+                                    </label>
+                                </div>
+                                <div class="db-metrics db-stats-grid" id="dbMetrics" aria-busy="true">
+                                    <article class="db-metric db-stat-card">
+                                        <span class="db-metric-label" data-personal-label="Họp hôm nay" data-company-label="Tổng phòng họp">Họp hôm nay</span>
+                                        <strong id="dbTodayTotal" class="db-metric-value">--</strong>
+                                        <span id="dbTodaySub" class="db-metric-sub">cuộc họp</span>
+                                    </article>
+                                    <article class="db-metric db-stat-card">
+                                        <span class="db-metric-label" data-personal-label="Họp tuần này" data-company-label="Đang sử dụng">Họp tuần này</span>
+                                        <strong id="dbWeekTotal" class="db-metric-value">--</strong>
+                                        <span id="dbWeekSub" class="db-metric-sub">cuộc họp</span>
+                                    </article>
+                                    <article class="db-metric db-stat-card">
+                                        <span class="db-metric-label" data-personal-label="Giờ họp tháng này" data-company-label="Phòng trống hiện tại">Giờ họp tháng này</span>
+                                        <strong id="dbMonthHours" class="db-metric-value">--</strong>
+                                        <span id="dbMonthSub" class="db-metric-sub">giờ</span>
+                                    </article>
+                                    <article class="db-metric db-stat-card">
+                                        <span class="db-metric-label" data-personal-label="Lời mời chờ" data-company-label="Lượt đặt tuần này">Lời mời chờ</span>
+                                        <strong id="dbPendingInvites" class="db-metric-value">--</strong>
+                                        <span id="dbPendingSub" class="db-metric-sub">cần phản hồi</span>
+                                    </article>
+                                </div>
+                            </section>
+
+                            <section class="db-panel db-calendar-panel db-calendar-container" aria-labelledby="dbCalendarHeading">
+                                <div class="db-panel-heading">
+                                    <div>
+                                        <p class="db-eyebrow">LỊCH CỦA BẠN</p>
+                                        <h2 id="dbCalendarHeading">Lịch cá nhân</h2>
+                                    </div>
+                                    <button class="db-text-button" type="button" onclick="switchMainTab('my-bookings', document.getElementById('navMyBookings')); switchBookingTab('mine')">Danh sách lịch họp</button>
+                                </div>
+                                <div id="dbCalendarHost" class="db-calendar-host">
+                                    <div class="db-calendar-skeleton" aria-hidden="true">
+                                        <span class="db-skeleton"></span><span class="db-skeleton"></span><span class="db-skeleton"></span><span class="db-skeleton"></span><span class="db-skeleton"></span><span class="db-skeleton"></span><span class="db-skeleton"></span>
+                                    </div>
+                                </div>
+                            </section>
                         </div>
-                        <button id="addRoomBtnOverview" class="btn-add-room" onclick="openRoomModal()"
-                            style="display: none;">
-                            + Thêm phòng họp
-                        </button>
+
+                        <aside class="db-col-side" aria-label="Cần bạn xử lý">
+                            <section class="db-panel db-side-panel" aria-labelledby="dbInvitesHeading" aria-busy="true">
+                                <div class="db-panel-heading">
+                                    <div><p class="db-eyebrow">CẦN BẠN XỬ LÝ</p><h2 id="dbInvitesHeading">Lời mời chờ phản hồi</h2></div>
+                                    <span id="dbInviteCount" class="db-count">--</span>
+                                </div>
+                                <div id="dbInvitesList" class="db-side-list">
+                                    <span class="db-skeleton db-skeleton-line"></span>
+                                    <span class="db-skeleton db-skeleton-line"></span>
+                                </div>
+                            </section>
+
+                            <section class="db-panel db-side-panel" aria-labelledby="dbCheckinHeading" aria-busy="true">
+                                <div class="db-panel-heading">
+                                    <div><p class="db-eyebrow">TRONG 60 PHÚT TỚI</p><h2 id="dbCheckinHeading">Sắp đến giờ check-in</h2></div>
+                                </div>
+                                <div id="dbCheckinList" class="db-side-list">
+                                    <span class="db-skeleton db-skeleton-line"></span>
+                                </div>
+                            </section>
+
+                            <section class="db-panel db-side-panel" aria-labelledby="dbAvailableRoomsHeading" aria-busy="true">
+                                <div class="db-panel-heading">
+                                    <div><p class="db-eyebrow">KHẢ DỤNG NGAY</p><h2 id="dbAvailableRoomsHeading">Phòng trống trong 60 phút</h2></div>
+                                    <span id="dbRoomCount" class="db-count">--</span>
+                                </div>
+                                <div id="dbAvailableRoomsList" class="db-side-list">
+                                    <span class="db-skeleton db-skeleton-line"></span>
+                                    <span class="db-skeleton db-skeleton-line"></span>
+                                </div>
+                            </section>
+                        </aside>
                     </section>
 
-                    <section class="stats-grid overview-stats-grid" aria-label="Thống kê phòng họp">
-                        <article class="stat-card overview-stat-card">
-                            <div class="overview-stat-heading">
-                                <span class="stat-title">Tổng phòng họp</span>
-                                <span class="overview-stat-icon overview-stat-icon--blue" aria-hidden="true">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                                        stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M3 21h18M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16M9 7h2m2 0h2M9 11h2m2 0h2m-6 4h2m2 0h2" />
-                                    </svg>
-                                </span>
-                            </div>
-                            <div class="stat-value overview-stat-value" id="statTotal"><span id="statTotalRooms">-</span></div>
-                            <span class="stat-sub text-gray" id="statTotalRoomsSub">-</span>
-                        </article>
-                        <article class="stat-card overview-stat-card">
-                            <div class="overview-stat-heading">
-                                <span class="stat-title">Đang sử dụng</span>
-                                <span class="overview-stat-icon overview-stat-icon--amber" aria-hidden="true">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                                        stroke-linecap="round" stroke-linejoin="round">
-                                        <circle cx="12" cy="12" r="9" />
-                                        <path d="M12 7v5l3 2" />
-                                    </svg>
-                                </span>
-                            </div>
-                            <div class="stat-value overview-stat-value text-orange" id="statInUse"><span id="statInUseRooms">-</span></div>
-                            <span class="stat-sub text-orange" id="statCapacityText"><span id="statOccupancyRate">-</span></span>
-                        </article>
-                        <article class="stat-card overview-stat-card">
-                            <div class="overview-stat-heading">
-                                <span class="stat-title">Còn trống hôm nay</span>
-                                <span class="overview-stat-icon overview-stat-icon--green" aria-hidden="true">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                                        stroke-linecap="round" stroke-linejoin="round">
-                                        <circle cx="12" cy="12" r="9" />
-                                        <path d="m8 12 2.5 2.5L16 9" />
-                                    </svg>
-                                </span>
-                            </div>
-                            <div class="stat-value overview-stat-value text-green" id="statAvailable"><span id="statAvailableRooms">-</span></div>
-                            <span class="stat-sub text-gray" id="statRatioText"><span id="statAvailableRoomsSub">-</span></span>
-                        </article>
-                        <article class="stat-card overview-stat-card">
-                            <div class="overview-stat-heading">
-                                <span class="stat-title">Lượt đặt trong tuần</span>
-                                <span class="overview-stat-icon overview-stat-icon--indigo" aria-hidden="true">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                                        stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="3" y="5" width="18" height="16" rx="2" />
-                                        <path d="M16 3v4M8 3v4M3 10h18m-13 5 2 2 4-4" />
-                                    </svg>
-                                </span>
-                            </div>
-                            <div class="stat-value overview-stat-value" id="statBookings"><span id="statWeeklyBookings">-</span></div>
-                            <span class="stat-sub text-gray" id="statWeeklyBookingsSub">-</span>
-                        </article>
-                    </section>
-
-                    <div class="filter-wrapper">
-                        <div class="filter-left">
-                            <button class="btn-filter-date" type="button" onclick="filterToday()">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                    <rect x="3" y="5" width="18" height="16" rx="2"></rect>
-                                    <path d="M16 3v4M8 3v4M3 10h18"></path>
-                                </svg>
-                                <span>Hôm nay</span>
-                                <span class="overview-filter-date" id="filterDateLabel">26/09/2026</span>
-                            </button>
-                            <select class="select-capacity" id="capacitySelect" aria-label="Lọc phòng theo sức chứa"
-                                onchange="applyFilters()">
-                                <option value="all">Tất cả sức chứa</option>
-                                <option value="small">Nhỏ (1 - 5 người)</option>
-                                <option value="medium">Vừa (6 - 12 người)</option>
-                                <option value="large">Lớn (15+ người)</option>
-                            </select>
-                            <div class="filter-chips">
-                                <button class="chip active" onclick="setFilter('all', this)">Tất cả</button>
-                                <button class="chip" onclick="setFilter('Màn hình', this)">Màn hình</button>
-                                <button class="chip" onclick="setFilter('Wifi', this)">Wifi</button>
-                                <button class="chip" onclick="setFilter('Video', this)">Video</button>
-                                <button class="chip" onclick="setFilter('Đồ uống', this)">Đồ uống</button>
-                            </div>
-                        </div>
-                        <div class="filter-right">
-                            <span class="status-summary"><strong id="summaryAvailable">0</strong> còn trống</span>
-                            <span class="status-summary"><strong id="summaryInUse">0</strong> đã đặt</span>
-                        </div>
+                    <p id="dbServerNotice" class="db-server-notice" role="status" aria-live="polite" hidden>
+                        Máy chủ đang khởi động, vui lòng chờ trong giây lát...
+                    </p>
+                    <div class="db-company-metrics-cache" hidden aria-hidden="true">
+                        <span id="statTotalRooms"></span><span id="statTotalRoomsSub"></span>
+                        <span id="statInUseRooms"></span><span id="statOccupancyRate"></span>
+                        <span id="statAvailableRooms"></span><span id="statAvailableRoomsSub"></span>
+                        <span id="statWeeklyBookings"></span><span id="statWeeklyBookingsSub"></span>
+                        <span id="summaryAvailable"></span><span id="summaryInUse"></span>
                     </div>
-
-                    <div class="room-grid" id="roomGridOverview"></div>
                 </div>
 
                 <!-- VIEW 2: PHÒNG HỌP -->
@@ -516,6 +548,40 @@
                         <div id="invitedBookingsList" class="booking-list"></div>
                     </section>
                 </div>
+
+                <section id="viewNotifications" class="tab-view notification-center-view" style="display: none;"
+                    aria-labelledby="notificationsPageTitle">
+                    <header class="notification-center-heading">
+                        <div>
+                            <h1 id="notificationsPageTitle">Trung tâm thông báo</h1>
+                            <p>Xem lời mời, nhắc lịch và cập nhật cuộc họp của bạn.</p>
+                        </div>
+                        <button id="pageMarkAllNotifications" class="notification-mark-all-button" type="button"
+                            data-mark-all-notifications>Đánh dấu tất cả là đã đọc</button>
+                    </header>
+                    <div id="pageNotifTabs" class="notification-center-tabs" role="tablist"
+                        aria-label="Lọc thông báo">
+                        <button type="button" class="notification-center-tab active" role="tab"
+                            aria-selected="true" data-notification-category="all">
+                            <span>Tất cả</span><span class="notification-center-tab-count" data-category-count="all">0</span>
+                        </button>
+                        <button type="button" class="notification-center-tab" role="tab"
+                            aria-selected="false" tabindex="-1" data-notification-category="reminder">
+                            <span>Nhắc lịch</span><span class="notification-center-tab-count" data-category-count="reminder">0</span>
+                        </button>
+                        <button type="button" class="notification-center-tab" role="tab"
+                            aria-selected="false" tabindex="-1" data-notification-category="response">
+                            <span>Phản hồi</span><span class="notification-center-tab-count" data-category-count="response">0</span>
+                        </button>
+                        <button type="button" class="notification-center-tab" role="tab"
+                            aria-selected="false" tabindex="-1" data-notification-category="change">
+                            <span>Thay đổi &amp; Hủy</span><span class="notification-center-tab-count" data-category-count="change">0</span>
+                        </button>
+                    </div>
+                    <div id="pageNotifList" class="notification-center-list" aria-live="polite" aria-busy="true">
+                        <div class="notification-center-loading">Đang tải thông báo...</div>
+                    </div>
+                </section>
 
                 <!-- VIEW 5: BÁO CÁO SỬ DỤNG PHÒNG HỌP (TAB BÁO CÁO CHÍNH THỨC) -->
                 <div id="viewReport" class="tab-view" style="display: none;">
@@ -1760,9 +1826,314 @@
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="js/user-list.bundle.js?v=3"></script>
-    <script src="js/app.js?v=35"></script>
-    <script src="js/chatbot-meeting-flow.js?v=1"></script>
+    <script src="js/user-list.bundle.js?v=5"></script>
+    <script src="js/app.js?v=41"></script>
+    <script src="js/notifications.js?v=3"></script>
+    <script>
+        (() => {
+            const element = id => document.getElementById(id);
+            const apiV1Base = /\/v1$/.test(API_BASE) ? API_BASE : `${API_BASE}/v1`;
+            const localDateTime = date => {
+                const part = value => String(value).padStart(2, '0');
+                return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`;
+            };
+            const formatDateTime = value => {
+                const date = new Date(value);
+                return Number.isNaN(date.getTime()) ? 'Chưa có thời gian' : date.toLocaleString('vi-VN', {
+                    weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                });
+            };
+            const setPanelReady = node => node?.setAttribute('aria-busy', 'false');
+            let dashboardMeetings = [];
+            let personalSummary = null;
+            let nextMeetingStart = null;
+            let summaryTimeout = null;
+            let countdownTimer = null;
+
+            function renderHero(meeting) {
+                const skeleton = element('dbHeroSkeleton');
+                const content = element('dbHeroContent');
+                const type = element('dbNextMeetingType');
+                if (!meeting) {
+                    skeleton.hidden = true;
+                    content.hidden = false;
+                    element('dbNextMeetingTitle').textContent = 'Chưa có cuộc họp sắp tới';
+                    element('dbNextCountdown').textContent = '';
+                    element('dbNextMeetingTime').textContent = 'Khoảng thời gian của bạn đang trống.';
+                    element('dbNextMeetingLocation').textContent = '';
+                    type.textContent = 'LỊCH TRỐNG';
+                    element('dbNextMeetingActions').innerHTML = '<button type="button" onclick="openCreateMeeting()">Tạo cuộc họp</button>';
+                    setPanelReady(element('dbNextMeeting'));
+                    return;
+                }
+
+                const start = new Date(meeting.start_time);
+                nextMeetingStart = Number.isNaN(start.getTime()) ? null : start;
+                const online = String(meeting.meeting_type || '').toLowerCase() === 'online';
+                const location = online
+                    ? 'Trực tuyến'
+                    : meeting.room_name ? `Phòng ${meeting.room_name}` : 'Phòng họp';
+                const actions = [];
+                if (online) {
+                    try {
+                        const link = new URL(meeting.meeting_link || '');
+                        if (['http:', 'https:'].includes(link.protocol)) {
+                            actions.push(`<a href="${escapeHtml(link.href)}" target="_blank" rel="noopener noreferrer">Tham gia</a>`);
+                        }
+                    } catch (error) {
+                        // Keep the hero usable when an online meeting has no valid link.
+                    }
+                } else if (meeting.room_id) {
+                    actions.push(`<button type="button" onclick="openScheduleModal(${Number(meeting.room_id)})">Xem phòng</button>`);
+                }
+                if (typeof meetingQrActions === 'function') {
+                    actions.push(meetingQrActions(meeting, meeting.is_organizer || meeting.my_response_status === 'accepted'));
+                }
+
+                element('dbNextMeetingTitle').textContent = meeting.title || 'Cuộc họp';
+                const rsvpSummary = meeting.rsvp_summary;
+                const rsvpChip = element('dbNextRsvpSummary');
+                if (rsvpSummary && rsvpSummary.total > 0) {
+                    const declinedNames = meeting.rsvp_declined_names || [];
+                    rsvpChip.textContent = `${rsvpSummary.accepted}/${rsvpSummary.total} đã xác nhận`;
+                    rsvpChip.title = declinedNames.length
+                        ? `Đã từ chối: ${declinedNames.join(', ')}`
+                        : 'Không có người tham dự từ chối';
+                    rsvpChip.hidden = false;
+                } else {
+                    rsvpChip.hidden = true;
+                }
+                element('dbNextMeetingTime').textContent = formatDateTime(meeting.start_time);
+                element('dbNextMeetingLocation').textContent = location;
+                element('dbNextMeetingActions').innerHTML = actions.filter(Boolean).join('');
+                type.textContent = online ? 'TRỰC TUYẾN' : 'TẠI PHÒNG';
+                skeleton.hidden = true;
+                content.hidden = false;
+                setPanelReady(element('dbNextMeeting'));
+                updateCountdown();
+                if (countdownTimer) window.clearInterval(countdownTimer);
+                countdownTimer = window.setInterval(updateCountdown, 30_000);
+            }
+
+            function updateCountdown() {
+                const output = element('dbNextCountdown');
+                if (!output || !nextMeetingStart) return;
+                const remaining = nextMeetingStart.getTime() - Date.now();
+                if (remaining <= 0) {
+                    output.textContent = 'Cuộc họp đã bắt đầu';
+                    return;
+                }
+                const minutes = Math.floor(remaining / 60_000);
+                const days = Math.floor(minutes / 1440);
+                const hours = Math.floor((minutes % 1440) / 60);
+                const rest = minutes % 60;
+                output.textContent = `Bắt đầu sau ${days ? `${days} ngày ` : ''}${hours ? `${hours} giờ ` : ''}${rest} phút`;
+            }
+
+            function renderSummary(data) {
+                personalSummary = data;
+                element('dbTodayTotal').textContent = String(data.today_total ?? 0);
+                element('dbTodaySub').textContent = `${data.today_remaining ?? 0} cuộc họp còn lại hôm nay`;
+                element('dbWeekTotal').textContent = String(data.week_total ?? 0);
+                element('dbMonthHours').textContent = Number(data.month_hours ?? 0).toFixed(1);
+                element('dbPendingInvites').textContent = String(data.pending_invites ?? 0);
+                element('dbMetrics').setAttribute('aria-busy', 'false');
+                renderHero(data.next_meeting);
+                if (element('dbCompanyMode').checked) renderCompanyMetrics();
+            }
+
+            function renderInvites(meetings) {
+                const pending = meetings.filter(meeting => !meeting.is_organizer
+                    && String(meeting.my_response_status || meeting.response_status || '').toLowerCase() === 'pending'
+                    && new Date(meeting.end_time).getTime() >= Date.now());
+                element('dbInviteCount').textContent = String(pending.length);
+                element('dbInvitesList').innerHTML = pending.length ? pending.slice(0, 5).map(meeting => `
+                    <article class="db-side-item">
+                        <strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong>
+                        <span>${escapeHtml(formatDateTime(meeting.start_time))} · ${escapeHtml(meeting.room_name || 'Trực tuyến')}</span>
+                        <div class="db-side-actions">
+                            <button type="button" data-db-rsvp="accepted" data-meeting-id="${Number(meeting.id)}">Đồng ý</button>
+                            <button type="button" class="db-reject-button" data-db-rsvp="rejected" data-meeting-id="${Number(meeting.id)}">Từ chối</button>
+                        </div>
+                    </article>`).join('') : '<p class="db-empty-state">Không có lời mời nào cần phản hồi.</p>';
+                setPanelReady(element('dbInvitesHeading').closest('.db-side-panel'));
+            }
+
+            function renderCheckins(meetings) {
+                const upcoming = meetings.filter(meeting => {
+                    if (String(meeting.status || '').toUpperCase() !== 'SCHEDULED') return false;
+                    if (!meeting.is_organizer && meeting.my_response_status !== 'accepted') return false;
+                    const start = new Date(meeting.start_time).getTime();
+                    return start >= Date.now() && start <= Date.now() + 60 * 60_000;
+                }).slice(0, 4);
+                element('dbCheckinList').innerHTML = upcoming.length ? upcoming.map(meeting => `
+                    <article class="db-side-item">
+                        <strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong>
+                        <span>${escapeHtml(formatDateTime(meeting.start_time))} · ${escapeHtml(meeting.room_name || 'Trực tuyến')}</span>
+                        <div class="db-side-actions">${meetingQrActions(meeting, true) || '<span>Chuẩn bị tham gia</span>'}</div>
+                    </article>`).join('') : '<p class="db-empty-state">Chưa có cuộc họp cần check-in trong 60 phút tới.</p>';
+                setPanelReady(element('dbCheckinHeading').closest('.db-side-panel'));
+            }
+
+            async function loadAvailableRooms() {
+                const now = new Date();
+                const end = new Date(now.getTime() + 60 * 60_000);
+                const params = new URLSearchParams({ start_time: localDateTime(now), end_time: localDateTime(end) });
+                const panel = element('dbAvailableRoomsHeading').closest('.db-side-panel');
+                try {
+                    const response = await fetchAPI(`${apiV1Base}/rooms/available?${params}`);
+                    if (!response.ok) throw new Error('Không thể tải phòng trống.');
+                    const rooms = await response.json();
+                    element('dbRoomCount').textContent = String(rooms.length);
+                    element('dbAvailableRoomsList').innerHTML = rooms.length ? rooms.slice(0, 5).map(room => `
+                        <article class="db-side-item">
+                            <strong>${escapeHtml(room.name || 'Phòng họp')}</strong>
+                            <span>${escapeHtml(room.location || 'Chưa có vị trí')} · ${Number(room.capacity) || 0} chỗ</span>
+                            <div class="db-side-actions"><button type="button" onclick="openCreateMeeting({ roomId: ${Number(room.id)} })">Đặt phòng</button></div>
+                        </article>`).join('') : '<p class="db-empty-state">Không có phòng trống trong 60 phút tới.</p>';
+                } catch (error) {
+                    element('dbRoomCount').textContent = '–';
+                    element('dbAvailableRoomsList').innerHTML = '<p class="db-empty-state">Không thể tải danh sách phòng trống.</p>';
+                } finally {
+                    setPanelReady(panel);
+                }
+            }
+
+            function renderCompanyMetrics() {
+                const labels = document.querySelectorAll('.db-metric-label');
+                labels.forEach(label => {
+                    label.textContent = element('dbCompanyMode').checked
+                        ? label.dataset.companyLabel : label.dataset.personalLabel;
+                });
+                const companyMode = element('dbCompanyMode').checked;
+                const ids = companyMode
+                    ? ['statTotalRooms', 'statInUseRooms', 'statAvailableRooms', 'statWeeklyBookings']
+                    : [];
+                const subs = companyMode
+                    ? ['statTotalRoomsSub', 'statOccupancyRate', 'statAvailableRoomsSub', 'statWeeklyBookingsSub']
+                    : [];
+                const values = ids.map(id => element(id)?.textContent?.trim() || '–');
+                const details = subs.map(id => element(id)?.textContent?.trim() || '');
+                const valuesToRender = companyMode ? values : [
+                    String(personalSummary?.today_total ?? '–'),
+                    String(personalSummary?.week_total ?? '–'),
+                    Number.isFinite(Number(personalSummary?.month_hours)) ? Number(personalSummary.month_hours).toFixed(1) : '–',
+                    String(personalSummary?.pending_invites ?? '–'),
+                ];
+                const detailsToRender = companyMode ? details : [
+                    `${personalSummary?.today_remaining ?? 0} cuộc họp còn lại hôm nay`,
+                    'cuộc họp trong tuần',
+                    'giờ',
+                    'cần phản hồi',
+                ];
+                ['dbTodayTotal', 'dbWeekTotal', 'dbMonthHours', 'dbPendingInvites'].forEach((id, index) => {
+                    element(id).textContent = valuesToRender[index];
+                    element(['dbTodaySub', 'dbWeekSub', 'dbMonthSub', 'dbPendingSub'][index]).textContent = detailsToRender[index];
+                });
+            }
+
+            async function refreshInvites() {
+                const response = await fetchAPI(`${apiV1Base}/meetings/mine`);
+                if (!response.ok) throw new Error('Không thể tải danh sách lời mời.');
+                dashboardMeetings = await response.json();
+                if (!Array.isArray(dashboardMeetings)) dashboardMeetings = [];
+                myBookings = dashboardMeetings;
+                renderInvites(dashboardMeetings);
+                renderCheckins(dashboardMeetings);
+                renderBookingCalendar();
+                const calendar = element('bookingPanelCalendar');
+                calendar.hidden = false;
+                element('dbCalendarHost').querySelector('.db-calendar-skeleton')?.remove();
+                element('dbCalendarHost').setAttribute('aria-busy', 'false');
+            }
+
+            function initializeDashboardCalendar() {
+                const calendar = element('bookingPanelCalendar');
+                const host = element('dbCalendarHost');
+                if (!calendar || !host) return;
+                host.append(calendar);
+                host.setAttribute('aria-busy', 'true');
+                calendar.hidden = true;
+                const mobile = window.matchMedia('(max-width: 767px)').matches;
+                setBookingCalendarView(mobile ? 'day' : 'week');
+                const overview = element('viewOverview');
+                if (overview && !overview.dataset.calendarObserver) {
+                    overview.dataset.calendarObserver = 'true';
+                    new MutationObserver(() => {
+                        if (overview.style.display !== 'none') {
+                            calendar.hidden = false;
+                            renderBookingCalendar();
+                        }
+                    }).observe(overview, { attributes: true, attributeFilter: ['style'] });
+                }
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                const isAdmin = String(localStorage.getItem('role') || '').toLowerCase() === 'admin';
+                if (isAdmin) element('dbAdminToggle').hidden = false;
+                element('dbCompanyMode').addEventListener('change', renderCompanyMetrics);
+                if (isAdmin) {
+                    const companyKpis = [
+                        'statTotalRooms', 'statInUseRooms', 'statAvailableRooms', 'statWeeklyBookings',
+                        'statTotalRoomsSub', 'statOccupancyRate', 'statAvailableRoomsSub', 'statWeeklyBookingsSub',
+                    ].map(element).filter(Boolean);
+                    const companyKpiObserver = new MutationObserver(() => {
+                        if (element('dbCompanyMode').checked) renderCompanyMetrics();
+                    });
+                    companyKpis.forEach(kpi => companyKpiObserver.observe(kpi, {
+                        childList: true,
+                        characterData: true,
+                        subtree: true,
+                    }));
+                }
+                initializeDashboardCalendar();
+                window.addEventListener('resize', () => {
+                    const nextView = window.matchMedia('(max-width: 767px)').matches ? 'day' : 'week';
+                    if (bookingCalendarView !== nextView) setBookingCalendarView(nextView);
+                });
+                element('dbInvitesList').addEventListener('click', async event => {
+                    const button = event.target.closest('button[data-db-rsvp]');
+                    if (!button) return;
+                    const meetingId = Number(button.dataset.meetingId);
+                    element('dbInvitesList').querySelectorAll(`[data-meeting-id="${meetingId}"]`).forEach(item => { item.disabled = true; });
+                    await respondToMeeting(meetingId, button.dataset.dbRsvp);
+                    try { await refreshInvites(); } catch (error) { console.error('Không thể cập nhật lời mời:', error); }
+                });
+                summaryTimeout = window.setTimeout(() => { element('dbServerNotice').hidden = false; }, 3000);
+                fetchAPI(`${apiV1Base}/meetings/mine/summary`)
+                    .then(response => {
+                        if (!response.ok) throw new Error('Không thể tải tổng quan lịch họp.');
+                        return response.json();
+                    })
+                    .then(renderSummary)
+                    .catch(error => {
+                        element('dbMetrics').setAttribute('aria-busy', 'false');
+                        element('dbHeroSkeleton').hidden = true;
+                        element('dbHeroContent').hidden = false;
+                        element('dbNextMeetingTitle').textContent = 'Chưa thể tải lịch họp';
+                        element('dbNextMeetingTime').textContent = 'Vui lòng thử tải lại trang.';
+                        setPanelReady(element('dbNextMeeting'));
+                        console.error('Không thể tải tổng quan:', error);
+                    })
+                    .finally(() => {
+                        window.clearTimeout(summaryTimeout);
+                        element('dbServerNotice').hidden = true;
+                    });
+                refreshInvites().catch(error => {
+                    element('dbInvitesList').innerHTML = '<p class="db-empty-state">Không thể tải lời mời.</p>';
+                    setPanelReady(element('dbInvitesHeading').closest('.db-side-panel'));
+                    element('dbCheckinList').innerHTML = '<p class="db-empty-state">Không thể tải lịch check-in.</p>';
+                    setPanelReady(element('dbCheckinHeading').closest('.db-side-panel'));
+                    element('dbCalendarHost').querySelector('.db-calendar-skeleton')?.remove();
+                    element('bookingPanelCalendar').hidden = false;
+                    element('dbCalendarHost').setAttribute('aria-busy', 'false');
+                    console.error('Không thể tải lịch của tôi:', error);
+                });
+                loadAvailableRooms();
+            });
+        })();
+    </script>
+    <script src="js/chatbot-meeting-flow.js?v=3"></script>
     <script src="js/create-meeting.js?v=9"></script>
     <div id="appToastContainer" class="app-toast-container" aria-live="polite" aria-atomic="true"></div>
     <script src="js/pwa.js?v=2"></script>

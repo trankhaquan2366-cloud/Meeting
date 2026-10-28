@@ -1,4 +1,4 @@
-const API_URL = (window.API_URL || 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '');
+const API_URL = (window.API_URL || '/api').replace(/\/+$/, '');
 
 function attachLoginFormHandler() {
     const loginForm = document.getElementById('loginForm');
@@ -40,9 +40,16 @@ function attachLoginFormHandler() {
             const result = await res.json();
 
             if (res.ok) {
-                // Lưu Token vào LocalStorage[cite: 5]
                 const token = result.access_token || result.token;
+                if (typeof token !== 'string' || !token.trim()) {
+                    if (errorAlert) {
+                        errorAlert.textContent = 'Máy chủ không trả về phiên đăng nhập hợp lệ.';
+                        errorAlert.classList.remove('hidden');
+                    }
+                    return;
+                }
                 localStorage.setItem('token', token);
+                localStorage.removeItem('access_token');
 
                 if (result.full_name) localStorage.setItem('user_name', result.full_name);
                 const email = result.email || result.user?.email;

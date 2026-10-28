@@ -1,8 +1,7 @@
-import asyncio
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -45,11 +44,6 @@ from app.routers.auth import issue_token
 from app.schemas.auth import LoginRequest
 from app.routers import reports
 from app.schemas.equipment import EquipmentResponse
-from app.services.scheduler import (
-    process_auto_checkouts,
-    process_meeting_reminders,
-    process_no_show_meetings,
-)
 # 3. Khởi tạo Mapper & Tạo bảng Database
 try:
     configure_mappers()
@@ -196,28 +190,6 @@ logger = logging.getLogger(__name__)
 MEETING_SCHEDULER_INTERVAL_SECONDS = 30
 
 
-def _run_meeting_scheduler_cycle() -> None:
-    for job in (
-        process_meeting_reminders,
-        process_no_show_meetings,
-        process_auto_checkouts,
-    ):
-        db = SessionLocal()
-        try:
-            job(db)
-        except Exception:
-            db.rollback()
-            logger.exception("Meeting scheduler job failed: %s", job.__name__)
-        finally:
-            db.close()
-
-
-async def _meeting_scheduler_loop() -> None:
-    while True:
-        await asyncio.sleep(MEETING_SCHEDULER_INTERVAL_SECONDS)
-        await asyncio.to_thread(_run_meeting_scheduler_cycle)
-
-
 def seed_initial_rooms(force: bool = False) -> None:
     """Tự động kiểm tra và chèn dữ liệu phòng họp mẫu nếu bảng rooms trống."""
     if not force and ("pytest" in sys.modules or os.getenv("TESTING")):
@@ -314,16 +286,14 @@ def seed_initial_directories(force: bool = False) -> None:
 async def lifespan(app: FastAPI):
     seed_initial_rooms()
     seed_initial_directories()
-    scheduler_task = asyncio.create_task(_meeting_scheduler_loop())
+    from app.services.reminder_service import (
+        shutdown_reminder_scheduler,
+        start_reminder_scheduler,
+    )
+    start_reminder_scheduler(interval_seconds=MEETING_SCHEDULER_INTERVAL_SECONDS)
     try:
-        from app.services.reminder_service import start_reminder_scheduler
-        start_reminder_scheduler(interval_seconds=MEETING_SCHEDULER_INTERVAL_SECONDS)
         yield
     finally:
-        scheduler_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await scheduler_task
-        from app.services.reminder_service import shutdown_reminder_scheduler
         shutdown_reminder_scheduler()
 
 

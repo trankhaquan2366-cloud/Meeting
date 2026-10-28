@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+import calendar
 import json
 import logging
 import re
@@ -21,6 +22,15 @@ logger = logging.getLogger(__name__)
 VIETNAM_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+def _add_month(dt: datetime) -> datetime:
+    """Thêm đúng 1 tháng theo lịch chuẩn calendar."""
+    year = dt.year + (dt.month // 12)
+    month = (dt.month % 12) + 1
+    max_days = calendar.monthrange(year, month)[1]
+    day = min(dt.day, max_days)
+    return dt.replace(year=year, month=month, day=day)
+
+
 def generate_jitsi_meeting_link() -> str:
     return f"https://meet.jit.si/RoomSync-{uuid.uuid4().hex}"
 
@@ -34,6 +44,152 @@ def _vietnam_now() -> datetime:
 
 
 class MeetingService:
+
+    @staticmethod
+    def summarize_rsvp_participants(participants) -> dict:
+        summary = {"accepted": 0, "declined": 0, "pending": 0, "total": 0}
+        for participant in participants:
+            response = str(participant.response_status or "pending").strip().lower()
+            summary["total"] += 1
+            if response == "accepted":
+                summary["accepted"] += 1
+            elif response in {"rejected", "declined", "decline"}:
+                summary["declined"] += 1
+            else:
+                summary["pending"] += 1
+        return summary
+
+    @staticmethod
+    def get_rsvp_summary(db: Session, meeting_id: int) -> dict:
+        participants = (
+            db.query(MeetingParticipant)
+            .filter(MeetingParticipant.meeting_id == meeting_id)
+            .all()
+        )
+        return MeetingService.summarize_rsvp_participants(participants)
+
+    @staticmethod
+    def get_user_summary_data(user_id: int, db: Session) -> dict:
+        """Tính toán các chỉ số tổng quan cá nhân của user theo múi giờ Asia/Ho_Chi_Minh."""
+        now_vn = datetime.now(VIETNAM_TIMEZONE).replace(tzinfo=None)
+        today_start = datetime(now_vn.year, now_vn.month, now_vn.day, 0, 0, 0)
+        today_end = datetime(now_vn.year, now_vn.month, now_vn.day, 23, 59, 59)
+
+        # Tuần hiện tại (Thứ 2 đến Chủ Nhật)
+        weekday = now_vn.weekday()
+        monday_start = today_start - timedelta(days=weekday)
+        sunday_end = monday_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+        # Tháng hiện tại
+        month_start = datetime(now_vn.year, now_vn.month, 1, 0, 0, 0)
+        _, max_days = calendar.monthrange(now_vn.year, now_vn.month)
+        month_end = datetime(now_vn.year, now_vn.month, max_days, 23, 59, 59)
+
+        active_statuses = ["CANCELLED", "canceled", "cancelled", "CANCELLED_NO_SHOW"]
+
+        user_meetings_base = (
+            db.query(Meeting)
+            .outerjoin(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .filter(
+                (Meeting.organizer_id == user_id)
+                | (
+                    (MeetingParticipant.user_id == user_id)
+                    & (func.lower(MeetingParticipant.response_status) != "rejected")
+                )
+            )
+            .filter(Meeting.status.notin_(active_statuses))
+            .distinct()
+        )
+
+        # 1. today_total: Tổng cuộc họp trong ngày của user
+        today_meetings = user_meetings_base.filter(
+            Meeting.start_time <= today_end,
+            Meeting.end_time >= today_start,
+        ).all()
+        today_total = len(today_meetings)
+
+        # 2. today_remaining: Số cuộc họp từ thời điểm hiện tại đến hết ngày
+        today_remaining = sum(
+            1 for m in today_meetings if m.end_time > now_vn
+        )
+
+        # 3. week_total: Tổng cuộc họp từ Thứ 2 đến Chủ Nhật tuần này
+        week_total = user_meetings_base.filter(
+            Meeting.start_time <= sunday_end,
+            Meeting.end_time >= monday_start,
+        ).count()
+
+        # 4. month_hours: Tổng số giờ họp trong tháng (làm tròn 1 chữ số thập phân)
+        month_meetings = user_meetings_base.filter(
+            Meeting.start_time <= month_end,
+            Meeting.end_time >= month_start,
+        ).all()
+        total_seconds = sum(
+            max(0.0, (m.end_time - m.start_time).total_seconds())
+            for m in month_meetings
+            if m.start_time and m.end_time
+        )
+        month_hours = round(total_seconds / 3600.0, 1)
+
+        # 5. pending_invites: Số lời mời tham gia cuộc họp đang ở trạng thái chờ (pending)
+        pending_invites = (
+            db.query(MeetingParticipant)
+            .join(Meeting, Meeting.id == MeetingParticipant.meeting_id)
+            .filter(
+                MeetingParticipant.user_id == user_id,
+                func.lower(MeetingParticipant.response_status) == "pending",
+                Meeting.organizer_id != user_id,
+                Meeting.status.notin_(active_statuses),
+                Meeting.end_time >= now_vn,
+            )
+            .count()
+        )
+
+        # 6. next_meeting: Thông tin cuộc họp gần nhất sắp diễn ra
+        upcoming = (
+            user_meetings_base.filter(Meeting.start_time > now_vn)
+            .order_by(Meeting.start_time.asc())
+            .first()
+        )
+        next_meeting_data = None
+        if upcoming:
+            next_meeting_data = {
+                "id": upcoming.id,
+                "title": upcoming.title,
+                "start_time": upcoming.start_time.isoformat() if hasattr(upcoming.start_time, "isoformat") else str(upcoming.start_time),
+                "end_time": upcoming.end_time.isoformat() if hasattr(upcoming.end_time, "isoformat") else str(upcoming.end_time),
+                "meeting_type": upcoming.meeting_type or "offline",
+                "room_id": upcoming.room_id,
+                "room_name": upcoming.room.name if upcoming.room else None,
+                "meeting_link": upcoming.meeting_link or upcoming.online_link,
+                "status": upcoming.status,
+                "is_organizer": upcoming.organizer_id == user_id,
+                "my_response_status": next(
+                    (
+                        participant.response_status
+                        for participant in upcoming.participants
+                        if participant.user_id == user_id
+                    ),
+                    None,
+                ),
+                "rsvp_summary": MeetingService.summarize_rsvp_participants(upcoming.participants),
+                "rsvp_declined_names": [
+                    participant.user.full_name or participant.user.username
+                    for participant in upcoming.participants
+                    if participant.response_status
+                    and participant.response_status.strip().lower() in {"rejected", "declined", "decline"}
+                    and participant.user is not None
+                ],
+            }
+
+        return {
+            "today_total": today_total,
+            "today_remaining": today_remaining,
+            "week_total": week_total,
+            "month_hours": month_hours,
+            "pending_invites": pending_invites,
+            "next_meeting": next_meeting_data,
+        }
 
     @staticmethod
     def extend_meeting(
@@ -185,8 +341,9 @@ class MeetingService:
                     current_start += timedelta(weeks=1)
                     current_end += timedelta(weeks=1)
                 elif recurrence_type in {"monthly", "until_changed"}:
-                    current_start += timedelta(days=30)
-                    current_end += timedelta(days=30)
+                    duration = current_end - current_start
+                    current_start = _add_month(current_start)
+                    current_end = current_start + duration
                 else:
                     break
 
@@ -320,15 +477,18 @@ class MeetingService:
                     .first()
                 )
                 if room_conflict is not None:
-                    blocking_errors.append({
-                        "type": "RoomConflictError",
-                        "message": (
-                            f"Phòng họp '{room.name}' đã có cuộc họp trong "
-                            f"khung giờ này ({start_time:%d/%m/%Y %H:%M})."
-                        ),
-                        "meeting_id": room_conflict.id,
-                    })
-                    break
+                    if recurrence_type not in (None, "none") and recurrence_end_date:
+                        pass
+                    else:
+                        blocking_errors.append({
+                            "type": "RoomConflictError",
+                            "message": (
+                                f"Phòng họp '{room.name}' đã có cuộc họp trong "
+                                f"khung giờ này ({start_time:%d/%m/%Y %H:%M})."
+                            ),
+                            "meeting_id": room_conflict.id,
+                        })
+                        break
 
             for item in payload.equipments or []:
                 available_qty = check_equipment_availability(
@@ -528,8 +688,11 @@ class MeetingService:
                 db.add(
                     Notification(
                         user_id=meeting.organizer_id,
+                        meeting_id=meeting.id,
                         title="Check-in cuộc họp thành công",
                         content=f"Cuộc họp '{meeting.title}' đã check-in thành công và bắt đầu.",
+                        category="system",
+                        group_key=f"check-in-confirmed:{meeting.id}",
                     )
                 )
             action = "CHECK_IN"
@@ -718,10 +881,13 @@ class MeetingService:
             db.add(
                 Notification(
                     user_id=meeting.organizer_id,
+                    meeting_id=meeting.id,
                     title="Check-in cuộc họp thành công",
                     content=(
                         f"Cuộc họp '{meeting.title}' đã check-in thành công và bắt đầu."
                     ),
+                    category="system",
+                    group_key=f"check-in-confirmed:{meeting.id}",
                 )
             )
         try:
@@ -828,6 +994,8 @@ class MeetingService:
                         f"Cuộc họp '{meeting.title}' đã bị người tổ chức hủy."
                     )
                     notification.is_read = False
+                    notification.category = "change"
+                    notification.group_key = f"change:{meeting.id}"
 
                 db.commit()
                 db.refresh(meeting)
@@ -880,8 +1048,6 @@ class MeetingService:
             or getattr(payload, 'online_link', None)
             or ''
         ).strip() or None
-        if meeting_type == 'online' and not meeting_link:
-            meeting_link = generate_jitsi_meeting_link()
         room_id = payload.room_id
 
         if meeting_type == 'offline':
@@ -901,12 +1067,17 @@ class MeetingService:
                     detail="Phòng họp không tồn tại hoặc đã ngưng hoạt động!"
                 )
         elif meeting_type == 'online':
+            if not meeting_link:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cuộc họp trực tuyến (online) bắt buộc phải có meeting_link!",
+                )
             room_id = None
             room = None
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="meeting_type must be 'offline' or 'online'",
+                detail="meeting_type phải là 'offline' hoặc 'online'",
             )
 
         # 2. Xử lý danh sách các mốc thời gian (Hỗ trợ cả lịch đơn và lịch định kỳ tuần/tháng)
@@ -924,7 +1095,7 @@ class MeetingService:
         if not recurrence_type or recurrence_type == "none" or not recurrence_end_date:
             meeting_dates.append((start_date, end_date))
         else:
-            # Vòng lặp sinh ra các khoảng thời gian lặp định kỳ
+            # Vòng lặp sinh ra các khoảng thời gian lặp định kỳ dùng chuẩn calendar
             current_start = start_date
             current_end = end_date
             while current_start <= recurrence_end_date:
@@ -932,33 +1103,35 @@ class MeetingService:
                 if recurrence_type == "weekly":
                     current_start += timedelta(weeks=1)
                     current_end += timedelta(weeks=1)
-                elif recurrence_type == "monthly":
-                    current_start += timedelta(days=30)
-                    current_end += timedelta(days=30)
-                elif recurrence_type == "until_changed":
-                    current_start += timedelta(days=30)
-                    current_end += timedelta(days=30)
+                elif recurrence_type in {"monthly", "until_changed"}:
+                    duration = current_end - current_start
+                    current_start = _add_month(current_start)
+                    current_end = current_start + duration
                 else:
                     break
 
         validation = MeetingService.validate_meeting_booking(
             db, payload, organizer_id
         )
-        if validation["blocking_errors"]:
-            first_error = validation["blocking_errors"][0]
+        blocking_errors = [
+            err for err in validation.get("blocking_errors", [])
+            if err.get("type") != "RoomConflictError"
+        ]
+        if blocking_errors:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=first_error["message"],
+                detail=blocking_errors[0]["message"],
             )
-        if validation["warnings"] and not payload.force_book:
+        if validation.get("warnings") and not payload.force_book:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=validation,
             )
 
-        # 3. Vòng lặp kiểm tra trùng phòng & quản lý Transaction (Rollback nếu dính bất kỳ ngày nào)
+        # 3. Vòng lặp kiểm tra trùng phòng & quản lý Transaction
         try:
             created_meetings = []
+            skipped_slots = []
             requested_equipments = getattr(payload, "equipments", []) or []
             
             for s_time, e_time in meeting_dates:
@@ -976,16 +1149,13 @@ class MeetingService:
                     ).first()
 
                     if overlapping_meeting:
-                        db.rollback()
                         date_str = s_time.strftime("%d/%m/%Y lúc %H:%M")
-                        if not recurrence_type or recurrence_type == "none":
-                            detail_msg = f"Phòng họp '{room.name}' đã có cuộc họp trong khung giờ này."
-                        else:
-                            detail_msg = f"Phòng họp '{room.name}' đã bị trùng lịch vào ngày {date_str}."
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=detail_msg
-                        )
+                        skipped_slots.append({
+                            "start_time": s_time.isoformat() if hasattr(s_time, "isoformat") else str(s_time),
+                            "end_time": e_time.isoformat() if hasattr(e_time, "isoformat") else str(e_time),
+                            "reason": f"Phòng họp '{room.name}' đã bị trùng lịch vào ngày {date_str}.",
+                        })
+                        continue
 
                 # Tạo bản ghi cuộc họp
                 new_meeting = Meeting(
@@ -1016,17 +1186,17 @@ class MeetingService:
                         )
                         db.add(me)
 
-                # Lưu participants — D2: skip organizer, atomic flush
+                # Lưu thông tin người tham gia vào MeetingParticipant sau khi db.flush()
                 participant_ids_list = getattr(payload, 'participant_ids', []) or []
                 for pid in participant_ids_list:
-                    if pid == organizer_id:  # D2: organizer đã track qua organizer_id, skip
+                    if pid == organizer_id:  # organizer đã track qua organizer_id, skip
                         continue
                     mp = MeetingParticipant(meeting_id=new_meeting.id, user_id=pid)
                     db.add(mp)
 
-                if participant_ids_list:
+                if participant_ids_list or requested_equipments:
                     try:
-                        db.flush()  # một flush duy nhất, atomic với transaction
+                        db.flush()  # flush atomic với transaction
                     except IntegrityError:
                         db.rollback()
                         raise HTTPException(
@@ -1037,11 +1207,17 @@ class MeetingService:
                 created_meetings.append(new_meeting)
 
             # Tiến hành commit lưu tất cả vào database
-            db.commit()
-            for m in created_meetings:
-                db.refresh(m)
-                
-            return created_meetings
+            if created_meetings:
+                db.commit()
+                for m in created_meetings:
+                    db.refresh(m)
+            else:
+                db.rollback()
+
+            return {
+                "created": created_meetings,
+                "skipped": skipped_slots,
+            }
 
         except Exception as e:
             db.rollback()

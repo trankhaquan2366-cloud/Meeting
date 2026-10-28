@@ -11,14 +11,35 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.meeting import Meeting
 from app.models.meeting_reminder import MeetingReminder
-from app.models.notification import Notification
 from app.models.user import User
 from app.services.email_service import send_meeting_reminder_email
+from app.services.notification_service import NotificationService
+from app.services.scheduler import (
+    process_auto_checkouts,
+    process_meeting_reminders,
+    process_no_show_meetings,
+)
 
 logger = logging.getLogger(__name__)
 
 # Singleton scheduler instance
 _scheduler: Optional[BackgroundScheduler] = None
+
+
+def _run_meeting_lifecycle_cycle() -> None:
+    for job in (
+        process_meeting_reminders,
+        process_no_show_meetings,
+        process_auto_checkouts,
+    ):
+        db: Session = SessionLocal()
+        try:
+            job(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Meeting scheduler job failed: %s", job.__name__)
+        finally:
+            db.close()
 
 
 def _normalize_datetime(value: Optional[datetime]) -> Optional[datetime]:
@@ -129,12 +150,15 @@ def check_and_send_meeting_reminders() -> Dict[str, int]:
                         f"Cuộc họp '{meeting.title}' sẽ diễn ra {time_label} "
                         f"(lúc {start_str}) tại {location_str}. Vui lòng chuẩn bị tham gia."
                     )
-                    db.add(Notification(
+                    NotificationService.send_notification(
+                        db=db,
                         user_id=user_id,
                         meeting_id=meeting.id,
                         title=notif_title,
                         content=notif_content,
-                    ))
+                        category="reminder",
+                        group_key=f"reminder:{meeting.id}",
+                    )
                     stats["reminders_sent"] += 1
 
                     if user.email:
@@ -182,6 +206,13 @@ def start_reminder_scheduler(interval_seconds: int = 30) -> BackgroundScheduler:
         trigger="interval",
         seconds=interval_seconds,
         id="meeting_reminder_worker",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _run_meeting_lifecycle_cycle,
+        trigger="interval",
+        seconds=interval_seconds,
+        id="meeting_lifecycle_worker",
         replace_existing=True,
     )
     _scheduler.start()

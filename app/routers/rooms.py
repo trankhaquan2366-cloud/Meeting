@@ -115,9 +115,10 @@ def get_all_rooms_with_status(
 # GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian
 @router.get("/available", response_model=List[RoomResponse], summary="Tìm phòng trống")
 def get_available_rooms(
-    start_time: datetime,
-    end_time: datetime,
-    db: Session = Depends(get_db)
+    start_time: datetime = Query(..., description="Thời gian bắt đầu"),
+    end_time: datetime = Query(..., description="Thời gian kết thúc"),
+    min_capacity: Optional[int] = Query(0, description="Sức chứa tối thiểu"),
+    db: Session = Depends(get_db),
 ):
     # 1. Kiểm tra thời gian đầu vào hợp lệ
     if start_time >= end_time:
@@ -126,26 +127,12 @@ def get_available_rooms(
             detail="Thời gian kết thúc phải lớn hơn thời gian bắt đầu."
         )
 
-    # 2. Tìm danh sách ID các phòng BỊ TRÙNG LỊCH 
-    busy_rooms_query = db.query(Meeting.room_id).filter(
-        func.upper(Meeting.status).notin_(
-            ["CANCELLED", "CANCELLED_NO_SHOW", "COMPLETED"]
-        ),
-        Meeting.check_out_time.is_(None),
-        and_(
-            Meeting.start_time < end_time,
-            Meeting.end_time > start_time
-        )
-    ).subquery()
-
-    # 3. Lấy danh sách phòng ĐANG HOẠT ĐỘNG và KHÔNG BỊ TRÙNG LỊCH
-    available_rooms = db.query(Room).filter(
-        Room.is_active.is_(True),
-        Room.room_status == "active",
-        Room.id.notin_(busy_rooms_query)
-    ).all()
-
-    return available_rooms
+    return room_service.get_available_rooms(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        min_capacity=min_capacity or 0,
+    )
 
 
 # POST /api/rooms/: Thêm phòng mới (Chỉ Admin)
@@ -271,25 +258,4 @@ def delete_room(
     room.is_active = False
     room.room_status = "locked"
     db.commit()
-    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}  
-@router.get("/available/", response_model=List[RoomResponse])
-def read_available_rooms(
-    start_time: datetime = Query(..., description="Thời gian bắt đầu"),
-    end_time: datetime = Query(..., description="Thời gian kết thúc"),
-    min_capacity: Optional[int] = Query(0, description="Sức chứa tối thiểu"),
-    db: Session = Depends(get_db),
-):
-    if start_time >= end_time:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Thời gian bắt đầu phải nhỏ hơn thời gian kết thúc!",
-        )
-
-    rooms = room_service.get_available_rooms(
-        db=db,
-        start_time=start_time,
-        end_time=end_time,
-        min_capacity=min_capacity,
-    )
-
-    return rooms
+    return {"status": "success", "message": f"Đã chuyển trạng thái phòng '{room.name}' thành ngưng hoạt động."}  

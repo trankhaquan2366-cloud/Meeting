@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.models.meeting import MeetingParticipant
+from app.models.notification import Notification
 from tests.helpers import (
     _add_participant,
     _auth_header,
@@ -107,3 +108,11 @@ class TestRSVPSuccess:
         db_session.expire_all()
         updated = db_session.query(MeetingParticipant).filter_by(id=participant.id).one()
         assert updated.response_status == "accepted"
+        organizer_notification = (
+            db_session.query(Notification)
+            .filter(Notification.user_id == organizer.id)
+            .one()
+        )
+        assert organizer_notification.meeting_id == meeting.id
+        assert organizer_notification.category == "response"
+        assert organizer_notification.group_key == f"response:{meeting.id}:{invitee.id}"

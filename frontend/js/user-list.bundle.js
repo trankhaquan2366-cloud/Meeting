@@ -28,9 +28,9 @@ var RoomSyncUserList = (() => {
 
   // src/features/us2_user_list/userListService.ts
   function getDefaultApiUrl() {
-    if (typeof window === "undefined") return "https://roomsync-app.onrender.com/api/v1/users/";
+    if (typeof window === "undefined") return "/api/v1/users/";
     const configuredApiUrl = window.API_URL;
-    return `${(configuredApiUrl ?? "https://roomsync-app.onrender.com/api").replace(/\/+$/, "")}/v1/users/`;
+    return `${(configuredApiUrl ?? "/api").replace(/\/+$/, "")}/v1/users/`;
   }
   var MOCK_USERS = [
     { id: "USR-001", fullName: "Nguy\u1EC5n Minh Tu\u1EA5n", email: "tuan.nguyen@example.com", role: "ADMIN", status: "ACTIVE", createdAt: "2025-01-08T09:15:00.000Z" },
@@ -163,7 +163,7 @@ var RoomSyncUserList = (() => {
       if (this.useMock) return this.getMockUsers({ ...normalizedQuery, page, limit });
       const url = new URL(
         this.baseUrl,
-        typeof window === "undefined" ? "https://roomsync-app.onrender.com" : window.location.origin
+        typeof window === "undefined" ? "http://localhost" : window.location.origin
       );
       url.searchParams.set("page", String(page));
       url.searchParams.set("limit", String(limit));
@@ -209,7 +209,7 @@ var RoomSyncUserList = (() => {
   // src/features/us3_assign_permissions/permissionService.ts
   function getDefaultApiBaseUrl() {
     const configuredApiUrl = typeof window === "undefined" ? void 0 : window.API_URL;
-    return `${(configuredApiUrl ?? "https://roomsync-app.onrender.com/api").replace(/\/+$/, "")}/v1`;
+    return `${(configuredApiUrl ?? "/api").replace(/\/+$/, "")}/v1`;
   }
   var MOCK_PERMISSIONS = /* @__PURE__ */ new Map();
   function requireUserId(userId) {
@@ -292,7 +292,7 @@ var RoomSyncUserList = (() => {
     apiUrl(path) {
       return new URL(
         `${this.baseUrl}${path}`,
-        typeof window === "undefined" ? "https://roomsync-app.onrender.com" : window.location.origin
+        typeof window === "undefined" ? "http://localhost" : window.location.origin
       ).toString();
     }
     headers() {
@@ -509,9 +509,9 @@ var RoomSyncUserList = (() => {
 
   // src/features/us4_room_booking_restriction/restrictionService.ts
   function getDefaultApiBaseUrl2() {
-    if (typeof window === "undefined") return "https://roomsync-app.onrender.com/api";
+    if (typeof window === "undefined") return "/api";
     const configuredApiUrl = window.API_URL;
-    return configuredApiUrl ?? "https://roomsync-app.onrender.com/api";
+    return configuredApiUrl ?? "/api";
   }
   var MOCK_ROOMS = [
     { id: "room-a1", name: "Ph\xF2ng h\u1ECDp A1", location: "T\u1EA7ng 1" },
@@ -1135,7 +1135,7 @@ ${failures.join("\n")}`;
   // src/features/us2_user_list/UserListTable.ts
   function getUserListApiBase() {
     const configuredApiUrl = typeof window === "undefined" ? void 0 : window.API_URL;
-    return (configuredApiUrl ?? "https://roomsync-app.onrender.com/api").replace(/\/+$/, "");
+    return (configuredApiUrl ?? "/api").replace(/\/+$/, "");
   }
   var TABLE_STYLES = `
   .us2-user-list { color: #172033; font: 14px/1.5 system-ui, sans-serif; }
@@ -1628,7 +1628,7 @@ ${failures.join("\n")}`;
       return this.profileHost;
     }
     async fetchProfileJson(url) {
-      const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
+      const token = localStorage.getItem("token") ?? "";
       const response = await fetch(url, {
         headers: {
           Accept: "application/json",
@@ -1653,7 +1653,7 @@ ${failures.join("\n")}`;
       this.renderUserProfileModal();
       host.querySelector("[data-profile-dialog]")?.focus();
       try {
-        const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
+        const token = localStorage.getItem("token") ?? "";
         const headers = {
           Accept: "application/json",
           ...token ? { Authorization: `Bearer ${token}` } : {}
@@ -1832,7 +1832,7 @@ ${failures.join("\n")}`;
         saveButton.textContent = "\u0110ang l\u01B0u...";
       }
       try {
-        const token = localStorage.getItem("token") ?? localStorage.getItem("access_token") ?? "";
+        const token = localStorage.getItem("token") ?? "";
         const response = await fetch(`${getUserListApiBase()}/v1/users/${encodeURIComponent(userId)}`, {
           method: "PUT",
           headers: {

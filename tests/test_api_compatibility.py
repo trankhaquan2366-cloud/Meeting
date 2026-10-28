@@ -66,6 +66,36 @@ def test_current_user_profile_includes_department_and_project_groups(
     assert response.json()["project_groups"][0]["code"] == "QIP"
 
 
+def test_login_token_authenticates_dashboard_endpoints(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    user = _create_user(db_session, "dashboard-login-token", password="password123")
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": user.username, "password": "password123"},
+    )
+
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+    headers = _auth_header(token)
+    responses = {
+        "user profile": client.get("/api/v1/users/me", headers=headers),
+        "meeting summary": client.get("/api/v1/meetings/mine/summary", headers=headers),
+        "notification counts": client.get("/api/v1/notifications/unread-count", headers=headers),
+    }
+
+    assert {name: response.status_code for name, response in responses.items()} == {
+        name: 200 for name in responses
+    }
+    assert responses["user profile"].json()["id"] == user.id
+    assert responses["meeting summary"].json()["today_total"] == 0
+    assert responses["notification counts"].json() == {
+        "total": 0,
+        "by_category": {"reminder": 0, "response": 0, "change": 0, "system": 0},
+    }
+
+
 def test_unhandled_exception_returns_json_500_and_error_id() -> None:
     """Unexpected route failures get a JSON response without exposing exception text."""
     def raise_unhandled_error() -> None:

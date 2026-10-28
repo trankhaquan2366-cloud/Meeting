@@ -84,6 +84,13 @@ class MeetingExtendRequest(BaseModel):
     extend_minutes: Literal[15, 30]
 
 
+class RSVPSummary(BaseModel):
+    accepted: int
+    declined: int
+    pending: int
+    total: int
+
+
 # 1. Schema cho dữ liệu gửi lên khi đặt lịch họp mới (Request)
 class MeetingCreateRequest(BaseModel):
     title: str
@@ -145,6 +152,7 @@ class MeetingResponse(BaseModel):
     check_out_time: Optional[datetime] = None
     equipments: Optional[List[MeetingEquipmentItemOutput]] = Field(default_factory=list)
     participant_ids: Optional[List[int]] = Field(default_factory=list)
+    rsvp_summary: Optional[RSVPSummary] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -166,6 +174,11 @@ class MeetingResponse(BaseModel):
                     'note': getattr(item, 'note', None)
                 })
         return res
+
+
+class MeetingCreateResponse(BaseModel):
+    created: List[MeetingResponse]
+    skipped: List[dict] = Field(default_factory=list)
 
 
 # 3. Schema phản hồi người dùng thường xuyên họp
@@ -190,6 +203,7 @@ class NotificationResponse(BaseModel):
     content: str
     is_read: bool
     created_at: datetime
+    category: str = "system"
 
     model_config = ConfigDict(from_attributes=True)
 

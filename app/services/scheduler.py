@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_smtp_settings
 from app.models.meeting import Meeting, MeetingParticipant
-from app.models.notification import Notification
 from app.models.user import User
+from app.services.notification_service import NotificationService
 from app.services.email_service import smtp_connection
 
 logger = logging.getLogger(__name__)
@@ -81,15 +81,17 @@ def process_meeting_reminders(db: Session, now: datetime | None = None) -> int:
     for meeting in meetings:
         recipients = _meeting_recipients(db, meeting, accepted_only=True)
         for user in recipients:
-            db.add(
-                Notification(
-                    user_id=user.id,
-                    title="Nhắc check-in cuộc họp",
-                    content=(
-                        f"Cuộc họp '{meeting.title}' đã bắt đầu. "
-                        "Vui lòng quét mã QR của phòng để check-in."
-                    ),
-                )
+            NotificationService.send_notification(
+                db=db,
+                user_id=user.id,
+                meeting_id=meeting.id,
+                title="Nhắc check-in cuộc họp",
+                content=(
+                    f"Cuộc họp '{meeting.title}' đã bắt đầu. "
+                    "Vui lòng quét mã QR của phòng để check-in."
+                ),
+                category="reminder",
+                group_key=f"check-in:{meeting.id}",
             )
         meeting.reminder_sent = True
 

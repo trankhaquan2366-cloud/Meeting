@@ -17,6 +17,7 @@ from app.schemas.meeting import (
     MeetingCheckOutRequest,
     MeetingCancelRequest,
     MeetingCreateRequest,
+    MeetingCreateResponse,
     MeetingExtendRequest,
     MeetingParticipationResponse,
     MeetingResponse,
@@ -74,15 +75,6 @@ def _schedule_cancellation_emails(
         )
 
 
-@router.get(
-    "",
-    response_model=List[RoomResponse],
-    summary="Lấy danh sách phòng họp",
-    description="Trả về danh sách các phòng họp đang sẵn sàng cho người dùng chọn.",
-)
-def list_rooms(db: Session = Depends(get_db)):
-    return MeetingService.get_all_active_rooms(db)
-
 
 @router.post(
     "/validate",
@@ -102,7 +94,7 @@ def validate_meeting_booking(
 
 @router.post(
     "/book",
-    response_model=List[MeetingResponse],
+    response_model=MeetingCreateResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Đặt lịch họp mới (Đơn & Định kỳ)",
     description="Tạo cuộc họp mới hoặc chuỗi lịch định kỳ (bao gồm mượn thiết bị). Hệ thống tự động kiểm tra trùng lịch, tồn kho thiết bị và rollback toàn bộ nếu có xung đột.",
@@ -114,25 +106,27 @@ def create_meeting(
     current_user: User = Depends(get_current_user),
 ):
     # 1. Gọi Service tạo cuộc họp
-    created_meetings = MeetingService.create_meeting(
+    result = MeetingService.create_meeting(
         db=db,
         payload=payload,
         organizer_id=current_user.id,
     )
+    created_meetings = result.get("created", [])
 
     # Use the same invitation, calendar, and email pipeline for all meeting entry points.
-    schedule_meeting_invitations(
-        background_tasks=background_tasks,
-        db=db,
-        meetings=created_meetings,
-        participant_ids=payload.participant_ids or [],
-        organizer=current_user,
-        calendar_sync=sync_user_meetings_to_google,
-        calendar_access_request=request_calendar_access_for_invitees,
-        email_sender=send_meeting_invitation_email,
-    )
+    if created_meetings:
+        schedule_meeting_invitations(
+            background_tasks=background_tasks,
+            db=db,
+            meetings=created_meetings,
+            participant_ids=payload.participant_ids or [],
+            organizer=current_user,
+            calendar_sync=sync_user_meetings_to_google,
+            calendar_access_request=request_calendar_access_for_invitees,
+            email_sender=send_meeting_invitation_email,
+        )
 
-    return created_meetings
+    return result
 
 
 @router.post(
@@ -251,6 +245,35 @@ def get_meetings(
 
 
 @router.get(
+    "/mine/summary",
+    summary="Tổng quan lịch họp cá nhân",
+    description="Trả về các chỉ số tổng quan cá nhân: số cuộc họp hôm nay, tuần này, giờ họp trong tháng, lời mời chờ và cuộc họp tiếp theo.",
+)
+def get_my_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return MeetingService.get_user_summary_data(user_id=current_user.id, db=db)
+
+
+@router.get(
+    "/{meeting_id}",
+    response_model=MeetingResponse,
+    summary="Chi tiết cuộc họp",
+    description="Lấy thông tin chi tiết của một cuộc họp theo ID.",
+)
+def get_meeting_by_id(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc họp.")
+    return meeting
+
+
+@router.get(
     "/mine",
     summary="Lịch họp của người dùng hiện tại",
     description="Trả về cuộc họp do người dùng chủ trì hoặc được mời, kèm trạng thái phản hồi của từng khách mời.",
@@ -280,6 +303,14 @@ def get_my_meetings(
         results = []
         for meeting in meetings:
             item = MeetingResponse.model_validate(meeting).model_dump(mode="json")
+            item["rsvp_summary"] = MeetingService.summarize_rsvp_participants(meeting.participants)
+            item["rsvp_declined_names"] = [
+                participant.user.full_name or participant.user.username
+                for participant in meeting.participants
+                if participant.response_status
+                and participant.response_status.strip().lower() in {"rejected", "declined", "decline"}
+                and participant.user is not None
+            ]
             item["is_organizer"] = meeting.organizer_id == current_user.id
             item["organizer_name"] = (
                 meeting.organizer.full_name or meeting.organizer.username
@@ -420,6 +451,8 @@ def respond_to_meeting_invitation(
                 title=title_notif,
                 content=content_notif,
                 meeting_id=meeting.id,
+                category="response",
+                group_key=f"response:{meeting.id}:{current_user.id}",
             )
 
             # 2. Gửi Email thông báo ngược lại cho organizer

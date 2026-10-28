@@ -385,7 +385,7 @@
         const response = await fetchAPI(`${API_BASE}/v1/chatbot/meetings`, {
             method: 'POST',
             headers: {
-                Authorization: `Bearer ${localStorage.getItem('token') || localStorage.getItem('access_token') || ''}`,
+                Authorization: `Bearer ${getAuthToken()}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(payload),

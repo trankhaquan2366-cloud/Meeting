@@ -337,6 +337,11 @@ function resetCreateMeeting() {
     renderFixedAmenityOptions();
     renderRoomResults();
     renderEquipment();
+    const noticeEl = cmEl('cmSkippedNotice');
+    if (noticeEl) {
+        noticeEl.style.display = 'none';
+        noticeEl.innerHTML = '';
+    }
     updateEquipmentSectionVisibility();
     hideCmAlerts();
     updateCreateMeetingSummary();
@@ -1563,6 +1568,16 @@ function validateCreateMeeting() {
         invalidFields.push(endInput);
         showFormError('Giờ kết thúc phải sau giờ bắt đầu.');
         ok = false;
+    } else if (date && start && end) {
+        const startDt = new Date(`${date}T${start}:00`);
+        const endDt = new Date(`${date}T${end}:00`);
+        const diffMinutes = (endDt.getTime() - startDt.getTime()) / (1000 * 60);
+        if (diffMinutes < 15) {
+            setValidationError(endInput, 'cmEndError', 'Thời lượng cuộc họp tối thiểu là 15 phút.');
+            invalidFields.push(endInput);
+            showFormError('Thời lượng cuộc họp tối thiểu là 15 phút.');
+            ok = false;
+        }
     }
 
     if (cmState.mode === 'online') {
@@ -1790,8 +1805,10 @@ async function handleCreateMeetingSubmit(event) {
                         body: JSON.stringify(payload),
                     });
                     if (confirmedResponse.ok) {
+                        const confirmedData = await confirmedResponse.json().catch(() => ({}));
+                        const skipped = confirmedData?.skipped || [];
                         rememberAttendees(realParticipantIds);
-                        showCreateMeetingSuccess();
+                        showCreateMeetingSuccess(skipped);
                         if (typeof fetchRooms === 'function') fetchRooms(localStorage.getItem('role') === 'admin');
                         if (typeof fetchMyBookings === 'function') fetchMyBookings();
                         return;
@@ -1803,8 +1820,10 @@ async function handleCreateMeetingSubmit(event) {
             }
             throw new Error(meetingResponseMessage(err, 'Không thể tạo cuộc họp.'));
         }
+        const resData = await res.json().catch(() => ({}));
+        const skipped = resData?.skipped || [];
         rememberAttendees(realParticipantIds);
-        showCreateMeetingSuccess();
+        showCreateMeetingSuccess(skipped);
         if (typeof fetchRooms === 'function') fetchRooms(localStorage.getItem('role') === 'admin');
         if (typeof fetchMyBookings === 'function') fetchMyBookings();
     } catch (error) {
@@ -1825,11 +1844,35 @@ function findFallbackRoomId() {
     return room ? room.id : NaN;
 }
 
-function showCreateMeetingSuccess() {
+function showCreateMeetingSuccess(skipped = []) {
     const dialog = cmEl('cmDialog');
     if (!dialog) return;
     dialog.classList.add('is-success');
     dialog.scrollTop = 0;
+
+    let noticeEl = cmEl('cmSkippedNotice');
+    if (skipped && skipped.length > 0) {
+        if (!noticeEl) {
+            noticeEl = document.createElement('div');
+            noticeEl.id = 'cmSkippedNotice';
+            noticeEl.className = 'cm-skipped-notice';
+            const successView = cmEl('cmSuccessView');
+            const helpText = successView?.querySelector('.cm-help');
+            if (helpText && helpText.parentNode) {
+                helpText.parentNode.insertBefore(noticeEl, helpText.nextSibling);
+            } else if (successView) {
+                successView.appendChild(noticeEl);
+            }
+        }
+        noticeEl.innerHTML = `<strong>Lưu ý:</strong> Một số mốc thời gian bị bỏ qua do trùng lịch:
+            <ul>
+                ${skipped.map(s => `<li>${escapeHtml(s.reason || `${s.start_time}: Trùng phòng`)}</li>`).join('')}
+            </ul>`;
+        noticeEl.style.display = 'block';
+    } else if (noticeEl) {
+        noticeEl.style.display = 'none';
+        noticeEl.innerHTML = '';
+    }
 }
 
 function showOnlineLocalSuccess() {

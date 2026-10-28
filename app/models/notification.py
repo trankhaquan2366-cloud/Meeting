@@ -13,4 +13,6 @@ class Notification(Base):
     content = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    category = Column(String(20), nullable=False, default="system")
+    group_key = Column(String(80), nullable=True, index=True)
     meeting = relationship("Meeting", lazy="joined")

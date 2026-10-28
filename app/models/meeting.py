@@ -24,8 +24,8 @@ class Meeting(Base):
     cancellation_reason = Column(Text, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
     # meeting_type: 'online' | 'offline' — online meetings do not require a room
-    meeting_type = Column(String(20), nullable=False, default="offline", server_default="offline")
-    meeting_link = Column(String(255), nullable=True)
+    meeting_type = Column(String(10), nullable=False, default="offline", server_default="offline")
+    meeting_link = Column(String(500), nullable=True)
     online_link = synonym("meeting_link")
     is_recurring = Column(Boolean, nullable=False, default=False, server_default="0")
     recurring_type = Column(String(20), nullable=True)

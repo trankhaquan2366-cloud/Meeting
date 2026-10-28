@@ -1,8 +1,8 @@
 /* ==========================================================================
    GLOBAL CONFIGURATION & STATE MANAGEMENT
    ========================================================================== */
-const API_BASE = (window.API_URL || 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '');
-const API_ORIGIN = new URL(API_BASE).origin;
+const API_BASE = (window.API_URL || '/api').replace(/\/+$/, '');
+const API_ORIGIN = new URL(API_BASE, window.location.origin).origin;
 const ROOM_THUMBNAILS = [
     'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80',
     'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=800&q=80',
@@ -28,7 +28,6 @@ let equipmentAvailabilityTimer = null;
 let googleCalendarOAuthError = null;
 let userNotifications = [];
 let notificationFetchVersion = 0;
-let notificationMarkAllInProgress = false;
 const notificationRsvpOverrides = new Map();
 let activeQrScanner = null;
 let quickQrScanner = null;
@@ -47,12 +46,17 @@ let userDirectoryLoadPromise = null;
 
 // Trích xuất access_token từ URL hash hoặc query param nếu có (sau khi Google OAuth redirect)
 (function initAuthFromUrl() {
+    const legacyToken = localStorage.getItem('access_token');
+    if (!localStorage.getItem('token') && legacyToken) {
+        localStorage.setItem('token', legacyToken);
+    }
+    localStorage.removeItem('access_token');
+
     const hashParams = window.location.hash ? new URLSearchParams(window.location.hash.slice(1)) : null;
     const queryParams = window.location.search ? new URLSearchParams(window.location.search) : null;
     const token = hashParams?.get('access_token') || hashParams?.get('token') || queryParams?.get('token') || queryParams?.get('access_token');
     if (token) {
         localStorage.setItem('token', token);
-        localStorage.setItem('access_token', token);
         const params = (hashParams && (hashParams.get('access_token') || hashParams.get('token'))) ? hashParams : queryParams;
         if (params) {
             const userFields = {
@@ -72,7 +76,7 @@ let userDirectoryLoadPromise = null;
 
 // Hàm bổ trợ lấy Auth Token
 function getAuthToken() {
-    return localStorage.getItem('token') || localStorage.getItem('access_token') || '';
+    return localStorage.getItem('token') || '';
 }
 
 async function fetchAPI(...args) {
@@ -83,13 +87,17 @@ async function fetchAPI(...args) {
     if (token && !headers.has('Authorization')) {
         headers.set('Authorization', `Bearer ${token}`);
     }
+    if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+    if (!headers.has('Content-Type')
+        && !(typeof FormData !== 'undefined' && init.body instanceof FormData)) {
+        headers.set('Content-Type', 'application/json');
+    }
     const requestInput = typeof input === 'string' && input.startsWith('/')
         ? new URL(input, `${API_ORIGIN}/`).href
         : input;
     const response = await window.fetch(requestInput, { ...init, headers });
     if (response.status === 401 && getAuthToken()) {
         localStorage.removeItem('token');
-        localStorage.removeItem('access_token');
 
         const pathname = window.location.pathname;
         const loginPath = pathname.endsWith('/dashboard.html')
@@ -208,7 +216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const now = new Date();
     const dateStr = `Thứ ${now.getDay() + 1}, ${now.getDate()} tháng ${now.getMonth() + 1} năm ${now.getFullYear()}`;
     const currentDateText = document.getElementById('currentDateText');
-    if (currentDateText) currentDateText.innerText = `${dateStr} · Đang hiển thị danh sách phòng`;
+    if (currentDateText) currentDateText.innerText = `${dateStr} · Tổng quan lịch họp`;
 
     const filterDateLabel = document.getElementById('filterDateLabel');
     if (filterDateLabel) filterDateLabel.innerText = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
@@ -340,6 +348,13 @@ function switchToOverview() {
     switchMainTab('overview', overviewTab);
 }
 
+function switchView(viewName, element = null) {
+    const navItem = element || (viewName === 'notifications'
+        ? document.getElementById('sidebarNotifLink')
+        : null);
+    switchMainTab(viewName, navItem);
+}
+
 function switchMainTab(tabName, el) {
     if (tabName === 'users' && !isCurrentUserAdmin()) {
         showAppToast('Bạn không có quyền truy cập mục quản trị này.', 'error');
@@ -381,6 +396,14 @@ function switchMainTab(tabName, el) {
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         fetchMyBookings();
+    } else if (tabName === 'notifications') {
+        const view = document.getElementById('viewNotifications');
+        if (view) view.style.display = 'block';
+        if (searchContainer) searchContainer.style.display = 'none';
+        const notificationPopup = document.getElementById('notificationPopup');
+        if (notificationPopup) notificationPopup.style.display = 'none';
+        document.getElementById('notificationBellBtn')?.setAttribute('aria-expanded', 'false');
+        if (typeof loadNotificationsPage === 'function') loadNotificationsPage();
     } else if (tabName === 'report') {
         const view = document.getElementById('viewReport');
         if (view) view.style.display = 'block';
@@ -920,93 +943,6 @@ async function updateUserSettings() {
     }
 }
 
-/* ==========================================================================
-   NOTIFICATION MANAGEMENT
-   ========================================================================== */
-function initializeNotifications() {
-    const popup = document.getElementById('notificationPopup');
-    if (popup) {
-        popup.addEventListener('click', event => {
-            const markAllButton = event.target.closest('button[data-mark-all-notifications]');
-            if (markAllButton) {
-                markAllNotificationsAsRead();
-                return;
-            }
-            const action = event.target.closest('button[data-notification-rsvp]');
-            if (action) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (action.disabled) return;
-                respondToMeeting(
-                    Number(action.dataset.rsvpMeeting),
-                    action.dataset.notificationRsvp,
-                    Number(action.dataset.notificationId)
-                );
-                return;
-            }
-            const item = event.target.closest('button[data-notification-id]');
-            if (item) markNotificationAsRead(Number(item.dataset.notificationId));
-        });
-    }
-    fetchNotifications();
-    window.setInterval(fetchNotifications, 30000);
-}
-
-async function fetchNotifications() {
-    const requestVersion = ++notificationFetchVersion;
-    const token = getAuthToken();
-    if (!token) {
-        redirectToLogin();
-        return false;
-    }
-
-    try {
-        const res = await fetchAPI(`${API_BASE}/notifications/`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (handleUnauthorizedResponse(res)) return false;
-        if (res.ok) {
-            const notifications = await res.json();
-            if (requestVersion !== notificationFetchVersion) return false;
-            userNotifications = notifications;
-            renderNotifications(userNotifications);
-            return true;
-        } else {
-            const message = await apiErrorMessage(res, 'Không thể tải thông báo.');
-            if (requestVersion === notificationFetchVersion) renderNotificationError(message);
-        }
-    } catch (err) {
-        console.error("Lỗi lấy danh sách thông báo:", err);
-        if (requestVersion === notificationFetchVersion) {
-            renderNotificationError('Không thể kết nối máy chủ để tải thông báo.');
-        }
-    }
-    return false;
-}
-
-async function markNotificationAsRead(notificationId) {
-    const notification = userNotifications.find(item => Number(item.id) === notificationId);
-    if (!notification || notification.is_read) return;
-
-    try {
-        const res = await fetch(`${API_BASE}/notifications/${notificationId}/read`, {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
-        });
-        if (handleUnauthorizedResponse(res)) return;
-        if (!res.ok) {
-            alert(await apiErrorMessage(res, 'Không thể đánh dấu thông báo đã đọc.'));
-            return;
-        }
-        notification.is_read = true;
-        renderNotifications(userNotifications);
-    } catch (err) {
-        console.error('Lỗi cập nhật trạng thái thông báo:', err);
-        alert('Không thể kết nối máy chủ để cập nhật thông báo.');
-    }
-}
-
 function handleUnauthorizedResponse(response) {
     if (response.status !== 401) return false;
     redirectToLogin();
@@ -1033,289 +969,6 @@ async function apiErrorMessage(response, fallback) {
             : fallback;
     }
 }
-
-function linkifyNotificationContent(content) {
-    const text = String(content || '');
-    const urlPattern = /https?:\/\/[^\s<>"']+/gi;
-    const trailingPunctuationPattern = /[.,!?;:)\]}]+$/;
-    let html = '';
-    let cursor = 0;
-    let match;
-
-    while ((match = urlPattern.exec(text)) !== null) {
-        const rawUrl = match[0];
-        const trailingPunctuation = rawUrl.match(trailingPunctuationPattern)?.[0] || '';
-        const candidate = rawUrl.slice(0, rawUrl.length - trailingPunctuation.length);
-        let safeUrl = '';
-        try {
-            const parsed = new URL(candidate);
-            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-                safeUrl = parsed.href;
-            }
-        } catch (error) {
-            safeUrl = '';
-        }
-        if (!safeUrl) continue;
-
-        html += escapeHtml(text.slice(cursor, match.index));
-        html += `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer"
-            class="text-blue-600 underline hover:text-blue-800"
-            onclick="event.stopPropagation()">${escapeHtml(candidate)}</a>${escapeHtml(trailingPunctuation)}`;
-        cursor = match.index + rawUrl.length;
-    }
-    return html + escapeHtml(text.slice(cursor));
-}
-
-function notificationMeetingLink(notification) {
-    const candidate = notification?.meeting_link;
-    if (candidate) {
-        try {
-            const parsed = new URL(candidate);
-            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
-        } catch (error) {
-            // Fall through and look for a Google Meet URL in the message.
-        }
-    }
-    const content = String(notification?.content || '');
-    const urls = content.match(/https?:\/\/[^\s<>"']+/gi) || [];
-    for (const rawUrl of urls) {
-        const candidateUrl = rawUrl.replace(/[.,!?;:)\]}]+$/, '');
-        try {
-            const parsed = new URL(candidateUrl);
-            if (parsed.protocol === 'http:' && parsed.hostname === 'meet.google.com'
-                || parsed.protocol === 'https:' && parsed.hostname === 'meet.google.com') {
-                return parsed.href;
-            }
-        } catch (error) {
-            continue;
-        }
-    }
-    return '';
-}
-
-function renderNotifications(notifications) {
-    const popup = document.getElementById('notificationPopup');
-    if (!popup) return;
-
-    if (!notifications || notifications.length === 0) {
-        updateNotificationDot(0);
-        popup.innerHTML = `
-            ${notificationHeaderHTML(0)}
-            <div class="notification-list">
-                <div class="notification-empty">Không có thông báo nào.</div>
-            </div>
-        `;
-        return;
-    }
-
-    const unreadCount = notifications.filter(n => !n.is_read).length;
-    updateNotificationDot(unreadCount);
-
-    popup.innerHTML = `
-        ${notificationHeaderHTML(unreadCount)}
-        <div class="notification-list">
-            ${notifications.map(n => {
-                const cancelled = ['cancelled', 'canceled'].includes(
-                    String(n.meeting_status || '').trim().toLowerCase()
-                );
-                const timestampValue = String(n.created_at || '');
-                const utcTimestamp = /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestampValue)
-                    ? timestampValue
-                    : `${timestampValue}Z`;
-                const timestamp = new Date(utcTimestamp);
-                const localTimestamp = Number.isNaN(timestamp.getTime())
-                    ? 'Thời gian không xác định'
-                    : timestamp.toLocaleString();
-                const linkedMeeting = cancelled ? null : resolveNotificationMeeting(n);
-                const actions = linkedMeeting ? renderNotificationRsvpActions(n, linkedMeeting) : '';
-                const meetingLink = notificationMeetingLink(n);
-                const joinAction = !cancelled && meetingLink
-                    ? `<a class="notification-join-meeting" href="${escapeHtml(meetingLink)}"
-                        target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">
-                        📹 Tham gia họp
-                    </a>`
-                    : '';
-                const itemTitle = cancelled ? 'Cuộc họp đã bị hủy' : n.title;
-                const itemContent = cancelled
-                    ? `Cuộc họp '${n.meeting_title || 'này'}' đã bị người tổ chức hủy. Bạn không cần tham gia.`
-                    : n.content;
-                return `<article class="notification-entry ${n.is_read ? '' : 'unread'}">
-                    <button type="button" class="notification-item ${n.is_read ? '' : 'unread'}"
-                        data-notification-id="${Number(n.id)}">
-                        <span class="notification-item-title">${escapeHtml(itemTitle)}</span>
-                        <span class="notification-item-time">${escapeHtml(localTimestamp)}</span>
-                    </button>
-                    <div class="notification-item-content">${linkifyNotificationContent(itemContent)}</div>
-                    ${joinAction ? `<div class="notification-join-row">${joinAction}</div>` : ''}
-                    ${actions}
-                </article>`;
-            }).join('')}
-        </div>
-    `;
-}
-
-function notificationHeaderHTML(unreadCount) {
-    return `
-        <header class="notification-popup-header">
-            <div class="notification-popup-heading">
-                <h2>Thông báo</h2>
-                <span id="notificationUnreadCount" class="notification-unread-count"
-                    aria-live="polite">${unreadCount} chưa đọc</span>
-            </div>
-            <button class="notification-mark-all" type="button" data-mark-all-notifications
-                ${unreadCount === 0 ? 'disabled' : ''}>
-                Đánh dấu tất cả là đã đọc
-            </button>
-        </header>
-    `;
-}
-
-async function markAllNotificationsAsRead() {
-    if (notificationMarkAllInProgress) return;
-
-    const unreadNotifications = userNotifications.filter(notification => !notification.is_read);
-    if (unreadNotifications.length === 0) {
-        updateNotificationDot(0);
-        return;
-    }
-
-    const previousReadStates = unreadNotifications.map(notification => ({
-        notification,
-        isRead: notification.is_read,
-    }));
-    notificationMarkAllInProgress = true;
-    unreadNotifications.forEach(notification => { notification.is_read = true; });
-    renderNotifications(userNotifications);
-
-    try {
-        const token = getAuthToken();
-        if (!token) {
-            previousReadStates.forEach(({ notification, isRead }) => { notification.is_read = isRead; });
-            renderNotifications(userNotifications);
-            redirectToLogin();
-            return;
-        }
-
-        const res = await fetch(`${API_BASE}/notifications/read-all`, {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (handleUnauthorizedResponse(res)) {
-            previousReadStates.forEach(({ notification, isRead }) => { notification.is_read = isRead; });
-            renderNotifications(userNotifications);
-            return;
-        }
-        if (!res.ok) {
-            throw new Error(await apiErrorMessage(res, 'Không thể đánh dấu tất cả thông báo đã đọc.'));
-        }
-
-        await fetchNotifications();
-    } catch (error) {
-        previousReadStates.forEach(({ notification, isRead }) => { notification.is_read = isRead; });
-        renderNotifications(userNotifications);
-        renderNotificationError(error.message || 'Không thể đánh dấu tất cả thông báo đã đọc.');
-        console.error('Lỗi đánh dấu tất cả thông báo đã đọc:', error);
-        showAppToast(error.message || 'Không thể đánh dấu tất cả thông báo đã đọc.', 'error');
-    } finally {
-        notificationMarkAllInProgress = false;
-    }
-}
-
-function resolveNotificationMeeting(notification) {
-    if (!notification || !String(notification.title || '').toLowerCase().includes('lời mời')) return null;
-    const meetingId = Number(notification.meeting_id);
-    if (Number.isInteger(meetingId) && meetingId > 0) {
-        return myBookings.find(meeting => Number(meeting.id) === meetingId && !meeting.is_organizer)
-            || { id: meetingId, is_organizer: false, my_response_status: 'pending' };
-    }
-
-    const titleMatch = String(notification.content || '').match(/cuộc họp ['‘](.+?)['’]/i);
-    if (!titleMatch) return null;
-    const candidates = myBookings.filter(meeting =>
-        !meeting.is_organizer && String(meeting.title || '') === titleMatch[1]
-    );
-    return candidates.length === 1 ? candidates[0] : null;
-}
-
-function renderNotificationRsvpActions(notification, meeting) {
-    const normalizedResponse = getMeetingRsvpStatus(meeting);
-    const notificationId = Number(notification.id);
-    const meetingId = Number(meeting.id);
-    if (normalizedResponse === 'accepted') {
-        return `<div class="notification-rsvp-actions">
-            <span class="badge-status accepted">Đã đồng ý</span>
-            <button type="button" class="btn-rsvp btn-reject" data-rsvp-meeting="${meetingId}"
-                data-notification-id="${notificationId}" data-notification-rsvp="rejected">Đổi sang từ chối</button>
-        </div>`;
-    }
-    if (normalizedResponse === 'rejected') {
-        return `<div class="notification-rsvp-actions">
-            <span class="badge-status rejected">Đã từ chối</span>
-            <button type="button" class="btn-rsvp btn-accept" data-rsvp-meeting="${meetingId}"
-                data-notification-id="${notificationId}" data-notification-rsvp="accepted">Đổi sang chấp nhận</button>
-        </div>`;
-    }
-    return `<div class="notification-rsvp-actions">
-        <button type="button" class="btn-rsvp btn-accept" data-rsvp-meeting="${meetingId}"
-            data-notification-id="${notificationId}" data-notification-rsvp="accepted">Chấp nhận</button>
-        <button type="button" class="btn-rsvp btn-reject" data-rsvp-meeting="${meetingId}"
-            data-notification-id="${notificationId}" data-notification-rsvp="rejected">Từ chối</button>
-    </div>`;
-}
-
-function renderNotificationError(message) {
-    const popup = document.getElementById('notificationPopup');
-    if (!popup) return;
-    if (userNotifications.length === 0) {
-        popup.innerHTML = `<div class="notification-empty" role="alert">${escapeHtml(message)}</div>`;
-        return;
-    }
-    const previousError = popup.querySelector('[data-notification-error]');
-    if (previousError) previousError.remove();
-    popup.insertAdjacentHTML(
-        'afterbegin',
-        `<div class="notification-empty" role="alert" data-notification-error>${escapeHtml(message)}</div>`
-    );
-}
-
-function updateNotificationDot(unreadCount) {
-    const dot = document.getElementById('notificationDot');
-    if (!dot) return;
-    dot.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
-    dot.style.display = unreadCount > 0 ? 'block' : 'none';
-    const bell = document.getElementById('notificationBellBtn');
-    if (bell) bell.setAttribute('aria-label', unreadCount > 0 ? `Thông báo, ${unreadCount} chưa đọc` : 'Thông báo');
-}
-
-function toggleNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (!popup) return;
-
-    const isHidden = popup.style.display === 'none' || !popup.style.display;
-    popup.style.display = isHidden ? 'flex' : 'none';
-    const bell = document.getElementById('notificationBellBtn');
-    if (bell) bell.setAttribute('aria-expanded', String(isHidden));
-
-    if (isHidden) {
-        fetchNotifications().then(loaded => {
-            if (loaded) markAllNotificationsAsRead();
-        });
-    }
-}
-
-document.addEventListener('click', function (e) {
-    const wrapper = document.querySelector('.notification-wrapper');
-    const popup = document.getElementById('notificationPopup');
-    if (!wrapper || !popup) return;
-    if (!wrapper.contains(e.target) && popup.style.display !== 'none') {
-        popup.style.display = 'none';
-        const bell = document.getElementById('notificationBellBtn');
-        if (bell) bell.setAttribute('aria-expanded', 'false');
-    }
-});
-
-window.fetchNotifications = fetchNotifications;
-window.updateNotificationDot = updateNotificationDot;
 
 /* ==========================================================================
    MANUAL GUEST INVITE
@@ -1872,6 +1525,7 @@ async function fetchMyBookings() {
         await fetchMeetings();
         renderMyBookings();
         if (userNotifications.length) renderNotifications(userNotifications);
+        if (typeof renderNotificationCenter === 'function') renderNotificationCenter();
     } catch (err) {
         console.error('Lỗi lấy danh sách lịch họp:', err);
         ['myBookingsTableBody', 'invitedBookingsList', 'bookingCalendarGrid'].forEach(id => {
@@ -2004,6 +1658,17 @@ function renderOrganizerBookings(meetings) {
             : date;
         const time = start && end ? `${bookingTime(start)} – ${bookingTime(end)}` : 'Chưa có thời gian';
         const participants = (meeting.participants || []).filter(person => person.user_id !== meeting.organizer_id);
+        const rsvpSummary = meeting.rsvp_summary || {
+            accepted: participants.filter(person => person.response_status === 'accepted').length,
+            declined: participants.filter(person => ['rejected', 'declined'].includes(String(person.response_status || '').toLowerCase())).length,
+            total: participants.length,
+        };
+        const declinedNames = meeting.rsvp_declined_names || participants
+            .filter(person => ['rejected', 'declined'].includes(String(person.response_status || '').toLowerCase()))
+            .map(person => person.name || person.email || 'Người tham dự');
+        const rsvpChip = rsvpSummary.total > 0
+            ? `<details class="rsvp-summary-chip"><summary>${rsvpSummary.accepted}/${rsvpSummary.total} đã xác nhận</summary><span class="rsvp-summary-tooltip">${declinedNames.length ? `Đã từ chối: ${escapeHtml(declinedNames.join(', '))}` : 'Không có người tham dự từ chối'}</span></details>`
+            : '';
         const attendeeMarkup = participants.length ? participants.map(person => {
             const response = person.response_status === 'declined' ? 'rejected'
                 : ['accepted', 'rejected'].includes(person.response_status) ? person.response_status : 'pending';
@@ -2026,6 +1691,7 @@ function renderOrganizerBookings(meetings) {
             <div class="booking-list-main">
                 <strong>${escapeHtml(meeting.title || 'Cuộc họp')}</strong>
                 <span>${escapeHtml(summary)}</span>
+                ${rsvpChip}
                 ${bookingMeetingDetailsMarkup(meeting)}
             </div>
             <div class="booking-list-time">${escapeHtml(time)}</div>
@@ -3905,13 +3571,13 @@ window.toggleSidebar = toggleSidebar;
 window.toggleMobileMenu = toggleMobileMenu;
 window.closeMobileMenu = closeMobileMenu;
 window.switchToOverview = switchToOverview;
+window.switchView = switchView;
 window.switchMainTab = switchMainTab;
 window.switchReportTab = switchReportTab;
 window.showUserManagementSection = showUserManagementSection;
 window.navigateToSettings = navigateToSettings;
 window.handleAdminCreateUser = handleAdminCreateUser;
 window.scrollToRooms = scrollToRooms;
-window.toggleNotificationPopup = toggleNotificationPopup;
 window.openScheduleModal = openScheduleModal;
 window.closeScheduleModal = closeScheduleModal;
 window.openQrCheckModal = openQrCheckModal;

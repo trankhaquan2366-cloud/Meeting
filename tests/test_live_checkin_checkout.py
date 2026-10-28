@@ -107,6 +107,8 @@ def test_live_checkin_notification_and_checkout(
         None,
     )
     if check_in_notification is not None:
+        assert check_in_notification.meeting_id == meeting.id
+        assert check_in_notification.category == "system"
         print(
             "[NOTIFICATION] Đã gửi phản hồi tới Chủ trì: "
             f"{organizer_user.full_name} — {check_in_notification.title}"

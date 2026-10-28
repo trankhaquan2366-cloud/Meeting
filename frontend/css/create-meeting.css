@@ -1801,3 +1801,24 @@
         transition: none;
     }
 }
+
+.cm-skipped-notice {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--cm-warning-soft);
+    color: var(--cm-warning);
+    border: 1px solid var(--cm-warning);
+    border-radius: var(--cm-radius);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: left;
+}
+
+.cm-skipped-notice ul {
+    margin: 6px 0 0 18px;
+    padding: 0;
+}
+
+.cm-skipped-notice li {
+    margin-bottom: 4px;
+}

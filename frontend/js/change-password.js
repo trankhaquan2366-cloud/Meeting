@@ -1,4 +1,4 @@
-const CHANGE_PASSWORD_API_BASE = (window.API_URL || 'https://roomsync-app.onrender.com/api')
+const CHANGE_PASSWORD_API_BASE = (window.API_URL || '/api')
     .replace(/\/+$/, '');
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
             new_password: String(formData.get('new_password') || ''),
             confirm_password: String(formData.get('confirm_password') || ''),
         };
-        const token = localStorage.getItem('token') || localStorage.getItem('access_token') || '';
+        const token = localStorage.getItem('token') || '';
         if (submitButton instanceof HTMLButtonElement) {
             submitButton.disabled = true;
             submitButton.textContent = 'Đang cập nhật...';

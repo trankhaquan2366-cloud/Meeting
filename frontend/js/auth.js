@@ -1,4 +1,4 @@
-const AUTH_API_BASE = (window.AUTH_API_BASE || window.API_URL || 'https://roomsync-app.onrender.com/api')
+const AUTH_API_BASE = (window.AUTH_API_BASE || window.API_URL || '/api')
     .replace(/\/+$/, '');
 
 function handleGoogleAuthCallback() {
@@ -7,7 +7,7 @@ function handleGoogleAuthCallback() {
 
     if (accessToken) {
         localStorage.setItem('token', accessToken);
-        localStorage.setItem('access_token', accessToken);
+        localStorage.removeItem('access_token');
 
         const valuesToStore = {
             role: callbackValues.get('role'),
