@@ -499,6 +499,22 @@ body {
 .booking-guest-status.rejected, .booking-guest-status.declined { color: #b91c1c; }
 .booking-guest-status.pending { color: #94a3b8; }
 .booking-list-empty { padding: 28px 16px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 10px; text-align: center; font-size: 13px; }
+.booking-empty-state { display: grid; justify-items: center; gap: 8px; padding: 32px 18px; background: #f8fafc; }
+.booking-empty-state strong { color: #334155; font-size: 14px; }
+.booking-empty-state span { max-width: 420px; line-height: 1.5; }
+.booking-empty-action {
+    margin-top: 6px;
+    min-height: 36px;
+    padding: 8px 16px;
+    color: #fff;
+    background: #1d4ed8;
+    border: 0;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.booking-empty-action:hover { background: #1e40af; }
 
 .booking-qr-button { min-height: 34px; padding: 7px 11px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 7px; font-size: 12px; font-weight: 600; }
 .booking-qr-button:hover { background: #dbeafe; }

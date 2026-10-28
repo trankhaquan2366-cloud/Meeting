@@ -33,7 +33,7 @@ def test_create_offline_meeting_with_room(client: TestClient, db_session: Sessio
     )
 
     assert response.status_code == 201
-    meeting = response.json()[0]
+    meeting = response.json()["created"][0]
     assert meeting["meeting_type"] == "offline"
     assert meeting["room_id"] == room.id
 
@@ -76,15 +76,20 @@ def test_create_online_meeting_with_link(client: TestClient, db_session: Session
     )
 
     assert response.status_code == 201
-    meeting = response.json()[0]
+    meeting = response.json()["created"][0]
     assert meeting["meeting_type"] == "online"
     assert meeting["meeting_link"] == "https://meet.test/room"
     assert meeting["room_id"] is None
 
 
-def test_create_online_meeting_without_link_generates_jitsi_link(
+def test_create_online_meeting_without_link_returns_400(
     client: TestClient, db_session: Session
 ):
+    """Online meetings bắt buộc phải có meeting_link.
+
+    Frontend (create-meeting.js) tự sinh link Jitsi trước khi gửi, backend
+    không tự điền để tránh tạo phòng họp "mồ côi" không ai mở.
+    """
     organizer = _create_user(db_session, "create-online-no-link")
     start, end = _future_window()
 
@@ -99,11 +104,8 @@ def test_create_online_meeting_without_link_generates_jitsi_link(
         headers=_auth_header(_make_token(organizer)),
     )
 
-    assert response.status_code == 201
-    meeting = response.json()[0]
-    assert meeting["meeting_type"] == "online"
-    assert meeting["meeting_link"].startswith("https://meet.jit.si/RoomSync-")
-    assert meeting["room_id"] is None
+    assert response.status_code == 400
+    assert "meeting_link" in response.json()["detail"]
 
 
 def test_create_meeting_with_available_equipment_and_availability_id(
@@ -362,7 +364,7 @@ def test_create_meeting_schedules_invitation_email_for_invitee(
         "start_time_str": start.strftime("%H:%M %d/%m/%Y"),
         "location_str": f"Phòng {room.name}",
         "meeting_link": None,
-        "meeting_id": response.json()[0]["id"],
+        "meeting_id": response.json()["created"][0]["id"],
         "start_time": start,
         "end_time": end,
         "organizer_email": organizer.email,

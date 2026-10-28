@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.security import get_current_user, normalize_role, require_role
 from app.models.equipment import Equipment, RoomEquipment
 from app.models.room import Room
 from app.models.meeting import Meeting
@@ -103,13 +103,22 @@ def get_all_rooms(db: Session = Depends(get_db)):
 @router.get(
     "/all-status/",
     response_model=List[RoomResponse],
-    summary="Lấy tất cả phòng, bao gồm phòng bảo trì (Admin)",
+    summary="Lấy trạng thái tất cả phòng (Admin thấy cả phòng bảo trì)",
 )
 def get_all_rooms_with_status(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(get_current_user),
 ):
-    return db.query(Room).order_by(Room.name).all()
+    """Mọi tài khoản đã đăng nhập đều xem được trạng thái phòng.
+
+    Admin/Manager nhận toàn bộ phòng (kể cả bảo trì/khóa) để quản trị; người
+    dùng thường chỉ nhận phòng đang hoạt động, tránh lộ danh sách phòng nội bộ
+    không dùng được.
+    """
+    query = db.query(Room)
+    if normalize_role(current_user.role) not in {"admin", "manager"}:
+        query = query.filter(Room.is_active.is_(True), Room.room_status == "active")
+    return query.order_by(Room.name).all()
 
 
 # GET /api/rooms/available: Tìm phòng trống theo khoảng thời gian

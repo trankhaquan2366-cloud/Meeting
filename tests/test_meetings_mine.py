@@ -220,9 +220,11 @@ def test_missing_rsvp_column_returns_actionable_service_error(
     db_session.commit()
 
     headers = _auth_header(_make_token(invitee))
+    # Trang "Đặt lịch của tôi" phải luôn nhận JSON hợp lệ: trả danh sách rỗng
+    # thay vì HTTP 500/503 để frontend dựng được Empty State.
     mine_response = client.get("/api/meetings/mine", headers=headers)
-    assert mine_response.status_code == 503
-    assert "schema/migration" in mine_response.json()["detail"]
+    assert mine_response.status_code == 200
+    assert mine_response.json() == []
 
     list_response = client.get("/api/meetings/")
     assert list_response.status_code == 503

@@ -1809,7 +1809,7 @@ async function handleCreateMeetingSubmit(event) {
                         const skipped = confirmedData?.skipped || [];
                         rememberAttendees(realParticipantIds);
                         showCreateMeetingSuccess(skipped);
-                        if (typeof fetchRooms === 'function') fetchRooms(localStorage.getItem('role') === 'admin');
+                        if (typeof fetchRooms === 'function') fetchRooms(typeof isCurrentUserAdmin === 'function' ? isCurrentUserAdmin() : false);
                         if (typeof fetchMyBookings === 'function') fetchMyBookings();
                         return;
                     }
@@ -1824,7 +1824,7 @@ async function handleCreateMeetingSubmit(event) {
         const skipped = resData?.skipped || [];
         rememberAttendees(realParticipantIds);
         showCreateMeetingSuccess(skipped);
-        if (typeof fetchRooms === 'function') fetchRooms(localStorage.getItem('role') === 'admin');
+        if (typeof fetchRooms === 'function') fetchRooms(typeof isCurrentUserAdmin === 'function' ? isCurrentUserAdmin() : false);
         if (typeof fetchMyBookings === 'function') fetchMyBookings();
     } catch (error) {
         const box = cmEl('cmApiError');

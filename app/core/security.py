@@ -90,12 +90,24 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
+def normalize_role(role: str | None) -> str:
+    """Chuẩn hóa vai trò về chữ thường để so sánh an toàn.
+
+    Dữ liệu thực tế trong DB có thể lưu "ADMIN", "Admin" hoặc "admin"; nếu so
+    sánh nguyên chuỗi, tài khoản Admin sẽ bị 403 dù frontend đã nhận đúng vai trò.
+    """
+    return str(role or "").strip().casefold()
+
+
 def require_role(required_role: str):
+    normalized_required = normalize_role(required_role)
+
     def role_checker(current_user: User = Depends(get_current_user)):
-        if current_user.role != required_role and current_user.role != "admin":
+        current_role = normalize_role(current_user.role)
+        if current_role != normalized_required and current_role != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Quyền hạn không đủ! Yêu cầu vai trò {required_role.upper()}.",
+                detail=f"Quyền hạn không đủ! Yêu cầu vai trò {normalized_required.upper()}.",
             )
         return current_user
 

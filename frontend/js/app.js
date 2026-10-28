@@ -17,6 +17,8 @@ let allRooms = [];
 let roomEquipmentCatalog = [];
 let roomEquipmentLoaded = false;
 let myBookings = [];
+let myBookingsLoadFailed = false;
+let activeBookingTab = 'calendar';
 let allMeetings = [];
 let overviewRoomsLoaded = false;
 let overviewMeetingsLoaded = false;
@@ -74,9 +76,70 @@ let userDirectoryLoadPromise = null;
     }
 })();
 
-// Hàm bổ trợ lấy Auth Token
+// Hàm bổ trợ lấy Auth Token (hỗ trợ cả khóa cũ access_token và tiền tố Bearer)
 function getAuthToken() {
-    return localStorage.getItem('token') || '';
+    const stored = localStorage.getItem('token') || localStorage.getItem('access_token') || '';
+    const token = String(stored).trim().replace(/^Bearer\s+/i, '');
+    if (token && localStorage.getItem('token') !== token) {
+        localStorage.setItem('token', token);
+    }
+    return token;
+}
+
+let authRedirectPending = false;
+
+function isLoginPage() {
+    const pathname = window.location.pathname.replace(/\/+$/, '');
+    return pathname === ''
+        || pathname.endsWith('/index.html')
+        || pathname.endsWith('/login.html')
+        || pathname === '/static'
+        || pathname === '/app';
+}
+
+function resolveLoginPath() {
+    const pathname = window.location.pathname;
+    if (pathname.endsWith('/dashboard.html')) {
+        return pathname.replace(/dashboard\.html$/, 'index.html');
+    }
+    if (pathname === '/dashboard') return '/app';
+    return 'index.html';
+}
+
+function clearAuthSession() {
+    ['token', 'access_token', 'role', 'user_name', 'user_email', 'user_id']
+        .forEach(key => localStorage.removeItem(key));
+}
+
+function redirectToLogin() {
+    if (authRedirectPending || isLoginPage()) return;
+    authRedirectPending = true;
+    clearAuthSession();
+    window.location.replace(resolveLoginPath());
+}
+
+// Xử lý phiên đăng nhập hết hạn: 401 luôn đăng xuất; 403 chỉ đăng xuất khi
+// không phải lỗi phân quyền (lỗi phân quyền thì token vẫn còn giá trị).
+async function handleAuthFailure(response) {
+    if (!getAuthToken()) return;
+    if (response.status === 401) {
+        redirectToLogin();
+        return;
+    }
+    if (response.status !== 403) return;
+    let detail = '';
+    try {
+        const data = await response.clone().json();
+        detail = typeof data?.detail === 'string'
+            ? data.detail
+            : JSON.stringify(data?.detail || '');
+    } catch (error) {
+        detail = '';
+    }
+    const isPermissionError = /quy[ềe]n|vai tr[òo]|ph[âa]n quy[ềe]n|permission|forbidden/i.test(detail);
+    if (!isPermissionError) {
+        redirectToLogin();
+    }
 }
 
 async function fetchAPI(...args) {
@@ -96,17 +159,7 @@ async function fetchAPI(...args) {
         ? new URL(input, `${API_ORIGIN}/`).href
         : input;
     const response = await window.fetch(requestInput, { ...init, headers });
-    if (response.status === 401 && getAuthToken()) {
-        localStorage.removeItem('token');
-
-        const pathname = window.location.pathname;
-        const loginPath = pathname.endsWith('/dashboard.html')
-            ? pathname.replace(/dashboard\.html$/, 'index.html')
-            : pathname === '/dashboard'
-                ? '/app'
-                : 'index.html';
-        window.location.replace(loginPath);
-    }
+    await handleAuthFailure(response);
     return response;
 }
 
@@ -174,6 +227,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const userData = await profileRes.json();
             userName = userData.full_name || userName;
             userEmail = userData.email || userEmail;
+            // Đồng bộ vai trò thật từ DB (có thể là "ADMIN"/"Admin") về chữ thường
+            // để phân quyền giao diện và gọi API nhất quán.
+            const profileRole = String(userData.role || '').trim().toLowerCase();
+            if (profileRole) {
+                role = profileRole;
+                localStorage.setItem('role', profileRole);
+            }
             localStorage.setItem('user_name', userName);
             localStorage.setItem('user_email', userEmail);
         }
@@ -378,6 +438,8 @@ function switchMainTab(tabName, el) {
         const view = document.getElementById('viewOverview');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'flex';
+        mountBookingCalendarPanel(document.getElementById('dbCalendarHost'));
+        renderBookingCalendar();
     } else if (tabName === 'rooms') {
         const view = document.getElementById('viewRooms');
         if (view) view.style.display = 'block';
@@ -387,14 +449,17 @@ function switchMainTab(tabName, el) {
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
         fetchEquipmentAvailability();
-        const role = localStorage.getItem('role') || 'user';
-        if (role === 'admin') {
+        if (isCurrentUserAdmin()) {
             fetchAdminEquipments();
         }
     } else if (tabName === 'my-bookings') {
         const view = document.getElementById('viewMyBookings');
         if (view) view.style.display = 'block';
         if (searchContainer) searchContainer.style.display = 'none';
+        // Trả panel lịch về đúng view và dựng lại giao diện trước khi gọi API.
+        mountBookingCalendarPanel(view);
+        switchBookingTab(activeBookingTab);
+        if (Array.isArray(myBookings) && myBookings.length) renderMyBookings();
         fetchMyBookings();
     } else if (tabName === 'notifications') {
         const view = document.getElementById('viewNotifications');
@@ -949,11 +1014,6 @@ function handleUnauthorizedResponse(response) {
     return true;
 }
 
-function redirectToLogin() {
-    alert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
-    window.location.href = 'index.html';
-}
-
 async function apiErrorMessage(response, fallback) {
     if (response.status === 401) return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
     if (response.status === 403) return 'Bạn không được mời tham gia cuộc họp này.';
@@ -1154,24 +1214,39 @@ async function fetchMeetings() {
 }
 
 async function fetchRooms(isAdmin) {
-    try {
-        const token = getAuthToken();
-        const roomsEndpoint = isAdmin ? `${API_BASE}/rooms/all-status/` : `${API_BASE}/rooms/`;
-        const res = await fetchAPI(roomsEndpoint, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+    const token = getAuthToken();
+    // Admin ưu tiên all-status (gồm phòng bảo trì); nếu endpoint bị chặn thì
+    // vẫn hạ cấp về danh sách phòng công khai để Dashboard không bị trắng số liệu.
+    const endpoints = isAdmin
+        ? [`${API_BASE}/rooms/all-status/`, `${API_BASE}/rooms/`]
+        : [`${API_BASE}/rooms/`];
 
-        if (res.ok) {
+    for (const roomsEndpoint of endpoints) {
+        try {
+            const res = await fetchAPI(roomsEndpoint, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!res.ok) {
+                console.warn(`Không lấy được danh sách phòng từ ${roomsEndpoint}: ${res.status}`);
+                continue;
+            }
+
             const rooms = await res.json();
             if (!Array.isArray(rooms)) throw new Error('Dữ liệu danh sách phòng họp không hợp lệ.');
             allRooms = rooms;
             overviewRoomsLoaded = true;
             renderRooms(allRooms, isAdmin);
             updateStats(allRooms);
+            return;
+        } catch (err) {
+            console.error(`Lỗi lấy danh sách phòng từ ${roomsEndpoint}:`, err);
         }
-    } catch (err) {
-        console.error("Lỗi lấy danh sách phòng:", err);
     }
+
+    overviewRoomsLoaded = true;
+    renderRooms([], isAdmin);
+    updateStats([]);
 }
 
 function renderRooms(rooms, isAdmin) {
@@ -1501,7 +1576,7 @@ async function submitCancelBooking() {
         closeCancelMeetingModal();
         alert('Đã hủy lịch họp!');
         await fetchMyBookings();
-        fetchRooms(localStorage.getItem('role') === 'admin');
+        fetchRooms(isCurrentUserAdmin());
     } catch (err) {
         alert(`Lỗi: ${err.message || 'Không thể hủy lịch họp.'}`);
     } finally {
@@ -1513,6 +1588,7 @@ async function fetchMyBookings() {
         redirectToLogin();
         return;
     }
+    myBookingsLoadFailed = false;
     try {
         const res = await fetchAPI(`${API_BASE}/meetings/mine`, {
             headers: { 'Authorization': 'Bearer ' + getAuthToken() }
@@ -1522,23 +1598,65 @@ async function fetchMyBookings() {
         const meetings = await res.json();
         if (!Array.isArray(meetings)) throw new Error('Dữ liệu danh sách lịch họp không hợp lệ.');
         myBookings = meetings;
-        await fetchMeetings();
-        renderMyBookings();
-        if (userNotifications.length) renderNotifications(userNotifications);
-        if (typeof renderNotificationCenter === 'function') renderNotificationCenter();
     } catch (err) {
         console.error('Lỗi lấy danh sách lịch họp:', err);
-        ['myBookingsTableBody', 'invitedBookingsList', 'bookingCalendarGrid'].forEach(id => {
-            const element = document.getElementById(id);
-            if (element) element.innerHTML = '<div class="booking-list-empty">Không thể tải lịch họp. Vui lòng thử lại.</div>';
-        });
+        myBookingsLoadFailed = true;
+        // Giữ lại dữ liệu cũ nếu có, chỉ hiển thị Empty State khi thực sự trống.
+        if (!Array.isArray(myBookings)) myBookings = [];
+    }
+
+    // Luôn dựng lại giao diện, kể cả khi API lỗi, để không bao giờ trắng trang.
+    try {
+        await fetchMeetings();
+    } catch (error) {
+        console.error('Lỗi lấy dữ liệu KPI cuộc họp:', error);
+    }
+    renderMyBookings();
+    if (Array.isArray(userNotifications) && userNotifications.length) renderNotifications(userNotifications);
+    if (typeof renderNotificationCenter === 'function') renderNotificationCenter();
+}
+
+function bookingEmptyState(kind, failed = false) {
+    const messages = {
+        organizer: 'Bạn chưa có cuộc họp nào trong mục này.',
+        invited: 'Bạn chưa được mời tham gia cuộc họp nào.',
+        calendar: 'Không có cuộc họp nào trong khoảng thời gian này.',
+    };
+    const title = failed ? 'Không thể tải lịch họp' : 'Danh sách đang trống';
+    const message = failed
+        ? 'Máy chủ đang bận hoặc dữ liệu chưa đồng bộ. Vui lòng thử lại sau ít phút.'
+        : messages[kind] || messages.organizer;
+    return `<div class="booking-list-empty booking-empty-state">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(message)}</span>
+        <button type="button" class="booking-empty-action" onclick="openCreateMeeting()">+ Tạo cuộc họp</button>
+    </div>`;
+}
+
+function renderBookingSection(renderer, containerId, kind) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    try {
+        renderer();
+    } catch (error) {
+        console.error(`Lỗi dựng ${containerId}:`, error);
+        container.innerHTML = bookingEmptyState(kind, true);
     }
 }
 
 function renderMyBookings() {
-    renderOrganizerBookings(myBookings.filter(meeting => meeting.is_organizer));
-    renderInvitedBookings(myBookings.filter(meeting => !meeting.is_organizer));
-    renderBookingCalendar();
+    const bookings = Array.isArray(myBookings) ? myBookings.filter(Boolean) : [];
+    renderBookingSection(
+        () => renderOrganizerBookings(bookings.filter(meeting => meeting.is_organizer)),
+        'myBookingsTableBody',
+        'organizer',
+    );
+    renderBookingSection(
+        () => renderInvitedBookings(bookings.filter(meeting => !meeting.is_organizer)),
+        'invitedBookingsList',
+        'invited',
+    );
+    renderBookingSection(() => renderBookingCalendar(), 'bookingCalendarGrid', 'calendar');
 }
 
 function bookingRoomName(meeting) {
@@ -1645,11 +1763,13 @@ function bookingDateKey(date) {
 function renderOrganizerBookings(meetings) {
     const container = document.getElementById('myBookingsTableBody');
     if (!container) return;
-    if (!meetings.length) {
-        container.innerHTML = '<div class="booking-list-empty">Bạn chưa chủ trì cuộc họp nào.</div>';
+    const list = Array.isArray(meetings) ? meetings.filter(Boolean) : [];
+    if (!list.length) {
+        container.innerHTML = bookingEmptyState('organizer', myBookingsLoadFailed);
         return;
     }
-    container.innerHTML = meetings.map(meeting => {
+    try {
+    container.innerHTML = list.map(meeting => {
         const start = bookingDate(meeting.start_time);
         const end = bookingDate(meeting.end_time);
         const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
@@ -1698,6 +1818,10 @@ function renderOrganizerBookings(meetings) {
             <div class="booking-list-actions"><button class="booking-guest-toggle" type="button" aria-expanded="false" onclick="toggleBookingGuests(${meeting.id}, this)">Người được mời (${participants.length})</button>${joinLink}${qrActions}${extendActions}${cancel}</div>
         </div><div id="bookingGuests${meeting.id}" class="booking-guest-list" hidden>${attendeeMarkup}</div></article>`;
     }).join('');
+    } catch (error) {
+        console.error('Lỗi dựng danh sách cuộc họp chủ trì:', error);
+        container.innerHTML = bookingEmptyState('organizer', true);
+    }
 }
 
 async function copyMeetingLink(button) {
@@ -1782,11 +1906,13 @@ async function extendMeeting(meetingId, extendMinutes, button) {
 function renderInvitedBookings(meetings) {
     const container = document.getElementById('invitedBookingsList');
     if (!container) return;
-    if (!meetings.length) {
-        container.innerHTML = '<div class="booking-list-empty">Bạn chưa được mời tham gia cuộc họp nào.</div>';
+    const list = Array.isArray(meetings) ? meetings.filter(Boolean) : [];
+    if (!list.length) {
+        container.innerHTML = bookingEmptyState('invited', myBookingsLoadFailed);
         return;
     }
-    container.innerHTML = meetings.map(meeting => {
+    try {
+    container.innerHTML = list.map(meeting => {
         const start = bookingDate(meeting.start_time);
         const end = bookingDate(meeting.end_time);
         const date = start ? start.toLocaleDateString('vi-VN') : 'Chưa có ngày';
@@ -1811,6 +1937,10 @@ function renderInvitedBookings(meetings) {
             </div>
         </div></article>`;
     }).join('');
+    } catch (error) {
+        console.error('Lỗi dựng danh sách cuộc họp được mời:', error);
+        container.innerHTML = bookingEmptyState('invited', true);
+    }
 }
 
 function getMeetingRsvpStatus(meeting) {
@@ -2341,8 +2471,25 @@ function toggleBookingGuests(meetingId, button) {
     button.setAttribute('aria-expanded', String(!list.hidden));
 }
 
+function mountBookingCalendarPanel(container) {
+    const panel = document.getElementById('bookingPanelCalendar');
+    if (!panel || !container) return;
+    if (container.id === 'dbCalendarHost') {
+        if (panel.parentElement !== container) container.appendChild(panel);
+        panel.hidden = false;
+        return;
+    }
+    if (panel.parentElement !== container) {
+        const tabs = container.querySelector('.booking-tabs');
+        if (tabs) container.insertBefore(panel, tabs.nextSibling);
+        else container.appendChild(panel);
+    }
+}
+
 function switchBookingTab(tab) {
     const tabs = { calendar: ['bookingTabCalendar', 'bookingPanelCalendar'], mine: ['bookingTabMine', 'bookingPanelMine'], invited: ['bookingTabInvited', 'bookingPanelInvited'] };
+    if (!tabs[tab]) tab = 'calendar';
+    activeBookingTab = tab;
     Object.entries(tabs).forEach(([name, ids]) => {
         const active = name === tab;
         const button = document.getElementById(ids[0]);
@@ -2353,6 +2500,9 @@ function switchBookingTab(tab) {
         }
         if (panel) panel.hidden = !active;
     });
+    // Panel lịch có thể đang được "mượn" ở Tổng quan — luôn trả về đúng chỗ.
+    const view = document.getElementById('viewMyBookings');
+    if (view && view.style.display !== 'none') mountBookingCalendarPanel(view);
     if (tab === 'calendar') renderBookingCalendar();
 }
 
@@ -2378,6 +2528,18 @@ function setBookingCalendarView(view) {
 }
 
 function renderBookingCalendar() {
+    try {
+        _renderBookingCalendarUnsafe();
+    } catch (error) {
+        console.error('Lỗi dựng lịch họp:', error);
+        const grid = document.getElementById('bookingCalendarGrid');
+        if (grid) grid.innerHTML = bookingEmptyState('calendar', true);
+        const agenda = document.getElementById('bookingDayAgenda');
+        if (agenda) agenda.innerHTML = bookingEmptyState('calendar', true);
+    }
+}
+
+function _renderBookingCalendarUnsafe() {
     const grid = document.getElementById('bookingCalendarGrid');
     if (!grid) return;
     const title = document.getElementById('bookingCalendarTitle');
@@ -2517,7 +2679,7 @@ function applyFilters() {
         return matchesSearch && matchesCapacity && matchesAmenity;
     });
 
-    renderRooms(filtered, localStorage.getItem('role') === 'admin');
+    renderRooms(filtered, isCurrentUserAdmin());
 }
 
 function setFilter(amenity, btn) {
@@ -2637,7 +2799,7 @@ async function handleFormSubmit(e) {
 
         if (res.ok) {
             closeRoomModal();
-            fetchRooms(localStorage.getItem('role') === 'admin');
+            fetchRooms(isCurrentUserAdmin());
             alert(editId ? "Cập nhật phòng thành công!" : "Thêm phòng thành công!");
         } else {
             const err = await res.json();
@@ -2657,7 +2819,7 @@ async function deleteRoom(roomId) {
 
         if (res.ok) {
             allRooms = allRooms.filter(r => r.id !== roomId);
-            renderRooms(allRooms, localStorage.getItem('role') === 'admin');
+            renderRooms(allRooms, isCurrentUserAdmin());
             updateStats(allRooms);
             alert("Xóa phòng thành công!");
         } else {

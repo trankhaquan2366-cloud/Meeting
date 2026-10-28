@@ -18,6 +18,7 @@ from app.core.security import (
     create_access_token,
     get_current_user,
     hash_password,
+    normalize_role,
     require_role,
     verify_password,
 )
@@ -461,7 +462,7 @@ def google_callback(
                             status_code=status.HTTP_409_CONFLICT,
                             content={"detail": "Could not create Google account"},
                         )
-            if email in admin_emails and user.role != "admin":
+            if email in admin_emails and normalize_role(user.role) != "admin":
                 user.role = "admin"
                 db.commit()
         except Exception as db_exc:

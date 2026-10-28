@@ -266,7 +266,7 @@ def test_room_can_be_booked_again_after_cancel(client: TestClient, db_session: S
         headers=_auth_header(_make_token(organizer)),
     )
     assert booking.status_code == 201
-    assert len(booking.json()) == 1
+    assert len(booking.json()["created"]) == 1
 
     available = client.get(
         "/api/rooms/available/",

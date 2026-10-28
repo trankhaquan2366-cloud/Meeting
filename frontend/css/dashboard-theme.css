@@ -718,6 +718,17 @@
     font-size: 14px;
 }
 
+.dashboard-page .notification-center-alert {
+    margin-bottom: 12px;
+    padding: 12px 16px;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
 @media (max-width: 640px) {
     .dashboard-page .notification-center-heading {
         align-items: flex-start;

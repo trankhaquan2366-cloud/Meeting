@@ -27,7 +27,9 @@ document.addEventListener('DOMContentLoaded', () => {
             new_password: String(formData.get('new_password') || ''),
             confirm_password: String(formData.get('confirm_password') || ''),
         };
-        const token = localStorage.getItem('token') || '';
+        const token = typeof getAuthToken === 'function'
+            ? getAuthToken()
+            : (localStorage.getItem('token') || localStorage.getItem('access_token') || '');
         if (submitButton instanceof HTMLButtonElement) {
             submitButton.disabled = true;
             submitButton.textContent = 'Đang cập nhật...';

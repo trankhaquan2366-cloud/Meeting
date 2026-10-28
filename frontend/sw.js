@@ -1,4 +1,4 @@
-const CACHE_NAME = 'roomsync-shell-v2';
+const CACHE_NAME = 'roomsync-shell-v3';
 const APP_SHELL = ['/', '/manifest.json'];
 
 self.addEventListener('install', event => {

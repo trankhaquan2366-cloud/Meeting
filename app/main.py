@@ -55,6 +55,14 @@ from sqlalchemy import text
 Base.metadata.create_all(bind=engine)
 
 # Tự động cập nhật các cột mới nếu các bảng đã tồn tại từ schema cũ
+def _schema_log(message: str) -> None:
+    """In log an toàn kể cả khi console không hỗ trợ tiếng Việt/emoji."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        print(message.encode("ascii", "replace").decode("ascii"))
+
+
 def _auto_migrate_schema():
     try:
         with engine.begin() as conn:
@@ -103,6 +111,17 @@ def _auto_migrate_schema():
                     conn.execute(text(
                         "ALTER TABLE rooms ADD COLUMN layout_type VARCHAR(30) NULL"
                     ))
+                if "qr_token" not in room_columns:
+                    conn.execute(text(
+                        "ALTER TABLE rooms ADD COLUMN qr_token VARCHAR(64) NULL"
+                    ))
+                    try:
+                        conn.execute(text(
+                            "CREATE UNIQUE INDEX ix_rooms_qr_token ON rooms (qr_token)"
+                        ))
+                    except Exception:
+                        # MySQL không hỗ trợ IF NOT EXISTS cho CREATE INDEX.
+                        _schema_log("[schema] ix_rooms_qr_token đã tồn tại, bỏ qua.")
 
             if "equipments" in inspect(conn).get_table_names():
                 equipment_columns = {
@@ -151,38 +170,87 @@ def _auto_migrate_schema():
                     ))
 
             if "notifications" in inspect(conn).get_table_names():
-                notification_columns = {
-                    column["name"]
-                    for column in inspect(conn).get_columns("notifications")
-                }
-                if "meeting_id" not in notification_columns:
-                    conn.execute(text(
+                def notification_columns_now():
+                    return {
+                        column["name"]
+                        for column in inspect(conn).get_columns("notifications")
+                    }
+
+                def run_notification_step(label, statement):
+                    """Each schema step is isolated so one failure never blocks the rest."""
+                    try:
+                        conn.execute(text(statement))
+                        _schema_log(f"[schema] {label}")
+                    except Exception as step_error:
+                        _schema_log(f"[schema] skipped: {label} ({step_error})")
+
+                notification_columns = notification_columns_now()
+                # Các cột bắt buộc cho trung tâm thông báo 4 tab.
+                if "category" not in notification_columns:
+                    run_notification_step(
+                        "Đã thêm cột notifications.category",
                         "ALTER TABLE notifications "
-                        "ADD COLUMN meeting_id INTEGER NULL"
-                    ))
+                        "ADD COLUMN category VARCHAR(20) NOT NULL DEFAULT 'system'",
+                    )
+                if "group_key" not in notification_columns:
+                    run_notification_step(
+                        "Đã thêm cột notifications.group_key",
+                        "ALTER TABLE notifications ADD COLUMN group_key VARCHAR(80) NULL",
+                    )
+                if "meeting_id" not in notification_columns:
+                    run_notification_step(
+                        "Đã thêm cột notifications.meeting_id",
+                        "ALTER TABLE notifications ADD COLUMN meeting_id INTEGER NULL",
+                    )
+
                 notification_indexes = {
                     index["name"]
                     for index in inspect(conn).get_indexes("notifications")
                 }
+                if "idx_notifications_group_key" not in notification_indexes:
+                    run_notification_step(
+                        "Đã tạo index idx_notifications_group_key",
+                        "CREATE INDEX idx_notifications_group_key "
+                        "ON notifications (group_key)",
+                    )
                 if "ix_notifications_meeting_id" not in notification_indexes:
-                    conn.execute(text(
+                    run_notification_step(
+                        "Đã tạo index ix_notifications_meeting_id",
                         "CREATE INDEX ix_notifications_meeting_id "
-                        "ON notifications (meeting_id)"
-                    ))
-                notification_foreign_keys = {
-                    foreign_key["name"]
-                    for foreign_key in inspect(conn).get_foreign_keys("notifications")
-                }
-                if "fk_notifications_meeting_id" not in notification_foreign_keys:
-                    conn.execute(text(
-                        "ALTER TABLE notifications "
-                        "ADD CONSTRAINT fk_notifications_meeting_id "
-                        "FOREIGN KEY (meeting_id) REFERENCES meetings (id) "
-                        "ON DELETE SET NULL"
-                    ))
-                    print("Added notifications.meeting_id relationship.")
+                        "ON notifications (meeting_id)",
+                    )
+
+                if engine.dialect.name == "mysql":
+                    notification_foreign_keys = {
+                        foreign_key["name"]
+                        for foreign_key in inspect(conn).get_foreign_keys("notifications")
+                    }
+                    if "fk_notifications_meeting_id" not in notification_foreign_keys:
+                        run_notification_step(
+                            "Đã thêm khóa ngoại notifications.meeting_id",
+                            "ALTER TABLE notifications "
+                            "ADD CONSTRAINT fk_notifications_meeting_id "
+                            "FOREIGN KEY (meeting_id) REFERENCES meetings (id) "
+                            "ON DELETE SET NULL",
+                        )
+
+                # Phân loại lại các thông báo cũ để 4 tab hiển thị đúng.
+                backfill_rules = (
+                    ("reminder", "title LIKE '%Nhắc nhở%' OR title LIKE '%[Nhắc nhở]%'"),
+                    ("response", "title LIKE '%đồng ý%' OR title LIKE '%từ chối%' "
+                                 "OR title LIKE '%xác nhận%'"),
+                    ("change", "title LIKE '%Lời mời%' OR title LIKE '%bị hủy%' "
+                               "OR title LIKE '%thay đổi%'"),
+                )
+                for category, condition in backfill_rules:
+                    run_notification_step(
+                        f"Đã phân loại thông báo cũ vào nhóm '{category}'",
+                        "UPDATE notifications SET category = "
+                        f"'{category}' WHERE (category IS NULL OR category = '' "
+                        f"OR category = 'system') AND ({condition})",
+                    )
     except Exception as e:
-        print(f"⚠️ Thông báo cập nhật schema: {e}")
+        _schema_log(f"[schema] migration notice: {e}")
 
 _auto_migrate_schema()
 

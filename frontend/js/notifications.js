@@ -118,26 +118,43 @@ async function fetchNotifications() {
         if (handleUnauthorizedResponse(response) || handleUnauthorizedResponse(countsResponse)) return false;
         if (!response.ok) {
             const message = await apiErrorMessage(response, 'Không thể tải thông báo.');
-            if (requestVersion === notificationFetchVersion) renderNotificationError(message);
+            if (requestVersion === notificationFetchVersion) {
+                notificationUnreadCounts = emptyNotificationCounts();
+                renderNotifications(userNotifications);
+                renderNotificationCenter();
+                renderNotificationError(message);
+            }
             return false;
         }
 
         const notifications = await response.json();
         if (requestVersion !== notificationFetchVersion) return false;
-        userNotifications = Array.isArray(notifications) ? notifications : [];
+        userNotifications = Array.isArray(notifications) ? notifications.filter(Boolean) : [];
         notificationUnreadCounts = countsResponse.ok
-            ? await countsResponse.json()
-            : countUnreadNotifications(userNotifications);
+            ? await countsResponse.json().catch(() => null)
+            : null;
+        if (!notificationUnreadCounts || typeof notificationUnreadCounts !== 'object') {
+            notificationUnreadCounts = countUnreadNotifications(userNotifications);
+        }
+        clearNotificationError();
         renderNotifications(userNotifications);
         renderNotificationCenter();
         return true;
     } catch (error) {
         console.error('Lỗi lấy danh sách thông báo:', error);
         if (requestVersion === notificationFetchVersion) {
+            // Không để trang trắng: dựng lại khung + Empty State kèm cảnh báo.
+            notificationUnreadCounts = emptyNotificationCounts();
+            renderNotifications(userNotifications);
+            renderNotificationCenter();
             renderNotificationError('Không thể kết nối máy chủ để tải thông báo.');
         }
         return false;
     }
+}
+
+function emptyNotificationCounts() {
+    return { total: 0, by_category: { reminder: 0, response: 0, change: 0, system: 0 } };
 }
 
 function countUnreadNotifications(notifications) {
@@ -233,11 +250,12 @@ function renderNotifications(notifications) {
     const popup = document.getElementById('notificationPopup');
     if (!popup) return;
 
-    const unreadCount = Number(notificationUnreadCounts.total ?? notifications.filter(item => !item.is_read).length);
+    const items = Array.isArray(notifications) ? notifications.filter(Boolean) : [];
+    const unreadCount = Number(notificationUnreadCounts?.total ?? items.filter(item => !item.is_read).length) || 0;
     updateNotificationDot(unreadCount);
     const filtered = activeNotificationCategory === 'all'
-        ? notifications
-        : notifications.filter(item => (item.category || 'system') === activeNotificationCategory);
+        ? items
+        : items.filter(item => (item.category || 'system') === activeNotificationCategory);
     popup.innerHTML = `
         ${notificationHeaderHTML(unreadCount)}
         <div class="notification-list">
@@ -272,7 +290,7 @@ function renderNotifications(notifications) {
                     ${joinAction ? `<div class="notification-join-row">${joinAction}</div>` : ''}
                     ${actions}
                 </article>`;
-            }).join('') : `<div class="notification-empty">${notifications.length ? 'Không có thông báo trong mục này.' : 'Không có thông báo nào.'}</div>`}
+            }).join('') : `<div class="notification-empty">${items.length ? 'Không có thông báo trong mục này.' : 'Không có thông báo nào.'}</div>`}
         </div>
     `;
 }
@@ -283,15 +301,42 @@ function loadNotificationsPage() {
     renderNotificationCenter();
     const requests = [fetchNotifications()];
     if (typeof fetchMyBookings === 'function') requests.push(fetchMyBookings());
-    return Promise.all(requests);
+    return Promise.all(requests)
+        .catch(error => {
+            console.error('Lỗi tải trang thông báo:', error);
+            renderNotificationCenter();
+            renderNotificationError('Không thể tải thông báo. Vui lòng thử lại.');
+            return [];
+        })
+        .finally(() => {
+            const currentList = document.getElementById('pageNotifList');
+            if (currentList) currentList.setAttribute('aria-busy', 'false');
+        });
 }
 
 function renderNotificationCenter() {
+    try {
+        renderNotificationCenterUnsafe();
+    } catch (error) {
+        console.error('Lỗi dựng trung tâm thông báo:', error);
+        const list = document.getElementById('pageNotifList');
+        if (list) {
+            list.innerHTML = `<div class="notification-center-empty" role="alert">
+                <strong>Không thể hiển thị thông báo.</strong>
+                <span>Vui lòng tải lại trang hoặc thử lại sau.</span>
+            </div>`;
+            list.setAttribute('aria-busy', 'false');
+        }
+    }
+}
+
+function renderNotificationCenterUnsafe() {
     const list = document.getElementById('pageNotifList');
     if (!list) return;
 
+    const items = Array.isArray(userNotifications) ? userNotifications.filter(Boolean) : [];
     const categories = ['all', 'reminder', 'response', 'change'];
-    const counts = notificationUnreadCounts.by_category || {};
+    const counts = (notificationUnreadCounts && notificationUnreadCounts.by_category) || {};
     document.querySelectorAll('#pageNotifTabs [data-notification-category]').forEach(tab => {
         const category = tab.dataset.notificationCategory;
         const selected = category === activeNotificationPageCategory;
@@ -308,13 +353,13 @@ function renderNotificationCenter() {
     const markAllButton = document.getElementById('pageMarkAllNotifications');
     if (markAllButton) markAllButton.disabled = Number(notificationUnreadCounts.total || 0) === 0;
     const filtered = activeNotificationPageCategory === 'all'
-        ? userNotifications
-        : userNotifications.filter(notification =>
+        ? items
+        : items.filter(notification =>
             (notification.category || 'system') === activeNotificationPageCategory);
 
     if (!filtered.length) {
         list.innerHTML = `<div class="notification-center-empty">
-            <strong>${userNotifications.length ? 'Không có thông báo trong mục này.' : 'Chưa có thông báo mới.'}</strong>
+            <strong>${items.length ? 'Không có thông báo trong mục này.' : 'Chưa có thông báo mới.'}</strong>
             <span>Thông tin cuộc họp sẽ xuất hiện tại đây.</span>
         </div>`;
         list.setAttribute('aria-busy', 'false');
@@ -344,18 +389,20 @@ function renderNotificationCenter() {
         }[category] || 'Hệ thống';
         const actions = [];
 
-        if (meeting && category === 'change' && String(notification.title || '').toLowerCase().includes('lời mời')) {
+        const isInvitation = /lời mời|mời tham dự|mời tham gia/i.test(
+            `${notification.title || ''} ${notification.content || ''}`);
+        if (meeting && isInvitation) {
             actions.push(renderNotificationRsvpActions(notification, meeting));
         }
         const joinLink = notificationMeetingLink(notification)
             || (meeting ? bookingSafeLink(meeting.meeting_link || meeting.online_link) : '');
         if (!cancelled && joinLink) {
             actions.push(`<a class="notification-card-action notification-card-action-primary"
-                href="${escapeHtml(joinLink)}" target="_blank" rel="noopener noreferrer">Tham gia họp ngay</a>`);
+                href="${escapeHtml(joinLink)}" target="_blank" rel="noopener noreferrer">Tham gia</a>`);
         } else if (meeting && meeting.room_id && typeof meetingQrActions === 'function') {
             const checkinAction = meetingQrActions(meeting, meeting.is_organizer
                 || meeting.my_response_status === 'accepted');
-            if (checkinAction) actions.push(checkinAction.replace('Check-in QR', 'Check-in ngay'));
+            if (checkinAction) actions.push(checkinAction.replace('Check-in QR', 'Check-in'));
         }
 
         const sender = meeting?.organizer_name || (category === 'response' ? 'Thành viên cuộc họp' : 'RoomSync');
@@ -461,21 +508,23 @@ async function markAllNotificationsAsRead() {
 
 function resolveNotificationMeeting(notification) {
     if (!notification || !String(notification.title || '').toLowerCase().includes('lời mời')) return null;
+    const bookings = Array.isArray(myBookings) ? myBookings.filter(Boolean) : [];
     const meetingId = Number(notification.meeting_id);
     if (Number.isInteger(meetingId) && meetingId > 0) {
-        return myBookings.find(meeting => Number(meeting.id) === meetingId && !meeting.is_organizer)
+        return bookings.find(meeting => Number(meeting.id) === meetingId && !meeting.is_organizer)
             || { id: meetingId, is_organizer: false, my_response_status: 'pending' };
     }
     const titleMatch = String(notification.content || '').match(/cuộc họp ['‘](.+?)['’]/i);
     if (!titleMatch) return null;
-    const candidates = myBookings.filter(meeting => !meeting.is_organizer && String(meeting.title || '') === titleMatch[1]);
+    const candidates = bookings.filter(meeting => !meeting.is_organizer && String(meeting.title || '') === titleMatch[1]);
     return candidates.length === 1 ? candidates[0] : null;
 }
 
     function getNotificationMeeting(notification) {
+        const bookings = Array.isArray(myBookings) ? myBookings.filter(Boolean) : [];
         const meetingId = Number(notification?.meeting_id);
         if (Number.isInteger(meetingId) && meetingId > 0) {
-            const meeting = myBookings.find(item => Number(item.id) === meetingId);
+            const meeting = bookings.find(item => Number(item.id) === meetingId);
             if (meeting) return meeting;
         }
         return resolveNotificationMeeting(notification);
@@ -488,15 +537,15 @@ function renderNotificationRsvpActions(notification, meeting) {
     if (response === 'accepted') {
         return `<div class="notification-rsvp-actions"><span class="badge-status accepted">Đã đồng ý</span>
             <button type="button" class="btn-rsvp btn-reject" data-rsvp-meeting="${meetingId}"
-                data-notification-id="${notificationId}" data-notification-rsvp="rejected">Đổi sang từ chối</button></div>`;
+                data-notification-id="${notificationId}" data-notification-rsvp="rejected">Từ chối</button></div>`;
     }
     if (response === 'rejected') {
         return `<div class="notification-rsvp-actions"><span class="badge-status rejected">Đã từ chối</span>
             <button type="button" class="btn-rsvp btn-accept" data-rsvp-meeting="${meetingId}"
-                data-notification-id="${notificationId}" data-notification-rsvp="accepted">Đổi sang chấp nhận</button></div>`;
+                data-notification-id="${notificationId}" data-notification-rsvp="accepted">Đồng ý</button></div>`;
     }
     return `<div class="notification-rsvp-actions"><button type="button" class="btn-rsvp btn-accept"
-        data-rsvp-meeting="${meetingId}" data-notification-id="${notificationId}" data-notification-rsvp="accepted">Chấp nhận</button>
+        data-rsvp-meeting="${meetingId}" data-notification-id="${notificationId}" data-notification-rsvp="accepted">Đồng ý</button>
         <button type="button" class="btn-rsvp btn-reject" data-rsvp-meeting="${meetingId}"
         data-notification-id="${notificationId}" data-notification-rsvp="rejected">Từ chối</button></div>`;
 }
@@ -509,10 +558,27 @@ function renderNotificationError(message) {
         popup.insertAdjacentHTML('afterbegin', `<div class="notification-empty" role="alert" data-notification-error>${escapeHtml(message)}</div>`);
     }
     const pageList = document.getElementById('pageNotifList');
-    if (pageList) {
-        pageList.innerHTML = `<div class="notification-center-empty" role="alert">${escapeHtml(message)}</div>`;
-        pageList.setAttribute('aria-busy', 'false');
+    if (!pageList) return;
+    // Giữ nguyên khung danh sách (Empty State) và chỉ chèn cảnh báo phía trên.
+    let alertBox = pageList.previousElementSibling;
+    if (!alertBox || !alertBox.hasAttribute('data-notification-error')) {
+        alertBox = document.createElement('div');
+        alertBox.className = 'notification-center-alert';
+        alertBox.setAttribute('role', 'alert');
+        alertBox.setAttribute('data-notification-error', '');
+        pageList.before(alertBox);
     }
+    alertBox.textContent = message;
+    pageList.setAttribute('aria-busy', 'false');
+}
+
+function clearNotificationError() {
+    document.getElementById('notificationPopup')
+        ?.querySelector('[data-notification-error]')
+        ?.remove();
+    const pageList = document.getElementById('pageNotifList');
+    const alertBox = pageList?.previousElementSibling;
+    if (alertBox && alertBox.hasAttribute('data-notification-error')) alertBox.remove();
 }
 
 function updateNotificationDot(unreadCount) {

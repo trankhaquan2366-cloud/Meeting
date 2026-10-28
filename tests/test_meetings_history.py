@@ -146,6 +146,6 @@ class TestResponseShape:
             "start_time", "end_time", "status",
             "cancellation_reason", "check_in_time", "check_out_time",
             "is_recurring", "recurring_type",
-            "equipments", "participant_ids",
+            "equipments", "participant_ids", "rsvp_summary",
         }
         assert set(item.keys()) == expected

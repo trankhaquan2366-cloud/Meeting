@@ -244,6 +244,87 @@ def get_meetings(
         ) from exc
 
 
+def _serialize_my_meeting(meeting: Meeting, current_user: User) -> dict:
+    """Chuyển một cuộc họp thành payload cho tab "Đặt lịch của tôi"."""
+    item = MeetingResponse.model_validate(meeting).model_dump(mode="json")
+    item["rsvp_summary"] = MeetingService.summarize_rsvp_participants(meeting.participants)
+    item["rsvp_declined_names"] = [
+        participant.user.full_name or participant.user.username
+        for participant in meeting.participants
+        if participant.response_status
+        and participant.response_status.strip().lower() in {"rejected", "declined", "decline"}
+        and participant.user is not None
+    ]
+    item["is_organizer"] = meeting.organizer_id == current_user.id
+    item["organizer_name"] = (
+        meeting.organizer.full_name or meeting.organizer.username
+        if meeting.organizer
+        else "Người tổ chức"
+    )
+    item["room_name"] = meeting.room.name if meeting.room else None
+    if meeting.room:
+        try:
+            amenities = json.loads(meeting.room.amenities or "[]")
+        except (TypeError, json.JSONDecodeError):
+            amenities = [
+                amenity.strip()
+                for amenity in (meeting.room.amenities or "").split(",")
+                if amenity.strip()
+            ]
+        if not isinstance(amenities, list):
+            amenities = []
+        item["room_details"] = {
+            "id": meeting.room.id,
+            "name": meeting.room.name,
+            "capacity": meeting.room.capacity,
+            "location": meeting.room.location,
+            "description": meeting.room.description,
+            "amenities": [str(amenity) for amenity in amenities if amenity],
+            "equipment": [
+                {
+                    "name": room_equipment.equipment.name,
+                    "quantity": room_equipment.quantity,
+                }
+                for room_equipment in meeting.room.default_equipments
+                if room_equipment.equipment is not None
+            ],
+        }
+    else:
+        item["room_details"] = None
+    item["my_response_status"] = next(
+        (
+            participant.response_status
+            for participant in meeting.participants
+            if participant.user_id == current_user.id
+        ),
+        None,
+    )
+    item["participants"] = [
+        {
+            "user_id": participant.user_id,
+            "name": (
+                participant.user.full_name or participant.user.username
+                if participant.user
+                else "Người tham dự"
+            ),
+            "email": participant.user.email if participant.user else None,
+            "response_status": participant.response_status,
+        }
+        for participant in meeting.participants
+    ]
+    return item
+
+
+EMPTY_MY_SUMMARY = {
+    "today_total": 0,
+    "today_remaining": 0,
+    "week_total": 0,
+    "month_hours": 0.0,
+    "pending_invites": 0,
+    "next_meeting": None,
+}
+
+
 @router.get(
     "/mine/summary",
     summary="Tổng quan lịch họp cá nhân",
@@ -253,11 +334,23 @@ def get_my_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return MeetingService.get_user_summary_data(user_id=current_user.id, db=db)
+    try:
+        return MeetingService.get_user_summary_data(user_id=current_user.id, db=db)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("Rollback failed while loading summary")
+        logger.exception(
+            "Falling back to empty summary for user_id=%s", current_user.id
+        )
+        return dict(EMPTY_MY_SUMMARY)
 
 
 @router.get(
-    "/{meeting_id}",
+    # Dùng converter :int để các route tĩnh như /mine, /history không bị
+    # route động này "nuốt" mất (gây lỗi 422 và trắng trang "Đặt lịch của tôi").
+    "/{meeting_id:int}",
     response_model=MeetingResponse,
     summary="Chi tiết cuộc họp",
     description="Lấy thông tin chi tiết của một cuộc họp theo ID.",
@@ -302,82 +395,24 @@ def get_my_meetings(
 
         results = []
         for meeting in meetings:
-            item = MeetingResponse.model_validate(meeting).model_dump(mode="json")
-            item["rsvp_summary"] = MeetingService.summarize_rsvp_participants(meeting.participants)
-            item["rsvp_declined_names"] = [
-                participant.user.full_name or participant.user.username
-                for participant in meeting.participants
-                if participant.response_status
-                and participant.response_status.strip().lower() in {"rejected", "declined", "decline"}
-                and participant.user is not None
-            ]
-            item["is_organizer"] = meeting.organizer_id == current_user.id
-            item["organizer_name"] = (
-                meeting.organizer.full_name or meeting.organizer.username
-                if meeting.organizer
-                else "Người tổ chức"
-            )
-            item["room_name"] = meeting.room.name if meeting.room else None
-            if meeting.room:
-                try:
-                    amenities = json.loads(meeting.room.amenities or "[]")
-                except (TypeError, json.JSONDecodeError):
-                    amenities = [
-                        amenity.strip()
-                        for amenity in (meeting.room.amenities or "").split(",")
-                        if amenity.strip()
-                    ]
-                if not isinstance(amenities, list):
-                    amenities = []
-                item["room_details"] = {
-                    "id": meeting.room.id,
-                    "name": meeting.room.name,
-                    "capacity": meeting.room.capacity,
-                    "location": meeting.room.location,
-                    "description": meeting.room.description,
-                    "amenities": [str(amenity) for amenity in amenities if amenity],
-                    "equipment": [
-                        {
-                            "name": room_equipment.equipment.name,
-                            "quantity": room_equipment.quantity,
-                        }
-                        for room_equipment in meeting.room.default_equipments
-                        if room_equipment.equipment is not None
-                    ],
-                }
-            else:
-                item["room_details"] = None
-            item["my_response_status"] = next(
-                (
-                    participant.response_status
-                    for participant in meeting.participants
-                    if participant.user_id == current_user.id
-                ),
-                None,
-            )
-            item["participants"] = [
-                {
-                    "user_id": participant.user_id,
-                    "name": (
-                        participant.user.full_name or participant.user.username
-                        if participant.user
-                        else "Người tham dự"
-                    ),
-                    "email": participant.user.email if participant.user else None,
-                    "response_status": participant.response_status,
-                }
-                for participant in meeting.participants
-            ]
-            results.append(item)
+            try:
+                results.append(_serialize_my_meeting(meeting, current_user))
+            except Exception:
+                # Một bản ghi lỗi không được làm sập toàn bộ tab "Đặt lịch của tôi".
+                logger.exception(
+                    "Skipping malformed meeting id=%s while loading my bookings",
+                    getattr(meeting, "id", "unknown"),
+                )
         return results
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.exception("Database error while loading meetings for user_id=%s", current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Không thể tải lịch họp do lỗi cơ sở dữ liệu. "
-            "Vui lòng kiểm tra schema/migration của meeting_participants.",
-        ) from exc
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("Rollback failed while loading my meetings")
+        logger.exception(
+            "Falling back to empty meetings for user_id=%s", current_user.id
+        )
+        return []
 
 
 @router.put(

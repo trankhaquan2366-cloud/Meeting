@@ -30,7 +30,7 @@ def test_admin_can_create_room_with_amenities(client: TestClient, db_session: Se
 
 
 def test_admin_can_list_rooms_including_maintenance(client: TestClient, db_session: Session):
-    admin = _create_user(db_session, "room-status-admin", role="admin")
+    admin = _create_user(db_session, "room-status-admin", role="ADMIN")
     user = _create_user(db_session, "room-status-user", role="user")
     db_session.add_all([
         Room(name="Active room", capacity=8, is_active=True),
@@ -42,17 +42,35 @@ def test_admin_can_list_rooms_including_maintenance(client: TestClient, db_sessi
     all_rooms_response = client.get("/api/rooms/all-status/", headers=headers)
     active_rooms_response = client.get("/api/rooms/", headers=headers)
     unauthorized_response = client.get("/api/rooms/all-status/")
-    forbidden_response = client.get(
+    user_status_response = client.get(
         "/api/rooms/all-status/",
         headers=_auth_header(_make_token(user)),
     )
 
+    # Vai trò "ADMIN" (chữ hoa trong DB) vẫn phải được nhận diện là admin.
     assert all_rooms_response.status_code == 200
     assert {room["name"] for room in all_rooms_response.json()} == {"Active room", "Maintenance room"}
     assert active_rooms_response.status_code == 200
     assert {room["name"] for room in active_rooms_response.json()} == {"Active room"}
     assert unauthorized_response.status_code == 401
-    assert forbidden_response.status_code == 403
+    # Người dùng thường vẫn xem được trạng thái phòng, nhưng chỉ phòng đang hoạt động.
+    assert user_status_response.status_code == 200
+    assert {room["name"] for room in user_status_response.json()} == {"Active room"}
+
+
+def test_admin_routes_accept_uppercase_role_from_database(
+    client: TestClient,
+    db_session: Session,
+):
+    admin = _create_user(db_session, "room-status-uppercase-admin", role="ADMIN")
+
+    response = client.post(
+        "/api/rooms/",
+        json={"name": "Uppercase admin room", "capacity": 6},
+        headers=_auth_header(_make_token(admin)),
+    )
+
+    assert response.status_code == 201
 
 
 def test_admin_can_create_room_with_inventory_status_and_details(
