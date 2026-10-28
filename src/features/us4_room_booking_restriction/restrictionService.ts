@@ -11,9 +11,9 @@ export interface RestrictionServiceOptions {
 }
 
 function getDefaultApiBaseUrl(): string {
-  if (typeof window === 'undefined') return 'https://roomsync-app.onrender.com/api';
+  if (typeof window === 'undefined') return '/api';
   const configuredApiUrl = (window as Window & { API_URL?: string }).API_URL;
-  return configuredApiUrl ?? 'https://roomsync-app.onrender.com/api';
+  return configuredApiUrl ?? '/api';
 }
 
 const MOCK_ROOMS: RoomOption[] = [

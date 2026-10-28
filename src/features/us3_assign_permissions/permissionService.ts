@@ -14,7 +14,7 @@ function getDefaultApiBaseUrl(): string {
   const configuredApiUrl = typeof window === 'undefined'
     ? undefined
     : (window as Window & { API_URL?: string }).API_URL;
-  return `${(configuredApiUrl ?? 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '')}/v1`;
+  return `${(configuredApiUrl ?? '/api').replace(/\/+$/, '')}/v1`;
 }
 const MOCK_PERMISSIONS = new Map<string, UserPermissions>();
 
@@ -117,7 +117,7 @@ export class PermissionService {
   private apiUrl(path: string): string {
     return new URL(
       `${this.baseUrl}${path}`,
-      typeof window === 'undefined' ? 'https://roomsync-app.onrender.com' : window.location.origin,
+      typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
     ).toString();
   }
 

@@ -13,9 +13,9 @@ export interface UserListServiceOptions {
 }
 
 function getDefaultApiUrl(): string {
-  if (typeof window === 'undefined') return 'https://roomsync-app.onrender.com/api/v1/users/';
+  if (typeof window === 'undefined') return '/api/v1/users/';
   const configuredApiUrl = (window as Window & { API_URL?: string }).API_URL;
-  return `${(configuredApiUrl ?? 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '')}/v1/users/`;
+  return `${(configuredApiUrl ?? '/api').replace(/\/+$/, '')}/v1/users/`;
 }
 
 const MOCK_USERS: UserListItem[] = [
@@ -183,7 +183,7 @@ export class UserListService {
 
     const url = new URL(
       this.baseUrl,
-      typeof window === 'undefined' ? 'https://roomsync-app.onrender.com' : window.location.origin,
+      typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
     );
     url.searchParams.set('page', String(page));
     url.searchParams.set('limit', String(limit));

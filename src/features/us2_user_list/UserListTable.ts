@@ -14,7 +14,7 @@ function getUserListApiBase(): string {
   const configuredApiUrl = typeof window === 'undefined'
     ? undefined
     : (window as Window & { API_URL?: string }).API_URL;
-  return (configuredApiUrl ?? 'https://roomsync-app.onrender.com/api').replace(/\/+$/, '');
+  return (configuredApiUrl ?? '/api').replace(/\/+$/, '');
 }
 
 export interface UserListTableOptions {
@@ -593,7 +593,7 @@ export class UserListTable {
   }
 
   private async fetchProfileJson<T>(url: string): Promise<T> {
-    const token = localStorage.getItem('token') ?? localStorage.getItem('access_token') ?? '';
+    const token = localStorage.getItem('token') ?? '';
     const response = await fetch(url, {
       headers: {
         Accept: 'application/json',
@@ -624,7 +624,7 @@ export class UserListTable {
     host.querySelector<HTMLElement>('[data-profile-dialog]')?.focus();
 
     try {
-      const token = localStorage.getItem('token') ?? localStorage.getItem('access_token') ?? '';
+      const token = localStorage.getItem('token') ?? '';
       const headers = {
         Accept: 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -823,7 +823,7 @@ export class UserListTable {
     }
 
     try {
-      const token = localStorage.getItem('token') ?? localStorage.getItem('access_token') ?? '';
+      const token = localStorage.getItem('token') ?? '';
       const response = await fetch(`${getUserListApiBase()}/v1/users/${encodeURIComponent(userId)}`, {
         method: 'PUT',
         headers: {
